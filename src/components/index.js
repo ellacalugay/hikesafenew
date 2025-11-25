@@ -4,3 +4,4 @@ export { default as InputField } from './InputField';
 export { default as TabIcon } from './TabIcon';
 export { default as ServiceItem } from './ServiceItem';
 export { default as MenuOption } from './MenuOption';
+export { default as BleClient } from './BleClient';

@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, TextInput, Image, ImageBackground } from 
 import { styles } from '../styles';
 import { COLORS } from '../constants';
 import { InputField, MainButton } from '../components';
+import BleService from '../services/BleService';
 
 const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const [mode, setMode] = useState('join'); // 'join' or 'create'
@@ -14,8 +15,29 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const [maxMember, setMaxMember] = useState('');
 
   const handleCreateLobby = () => {
-    // Pass the lobby data when creating
-    onShowCreateSuccess({ lobbyName, groupId, maxMember });
+    // Try to send create lobby to connected device (auto-scan/connect if needed)
+    const lobbyId = groupId && groupId.length > 0 ? groupId : lobbyName;
+    if (!lobbyId || lobbyId.length === 0) {
+      // fallback to just call the app handler
+      onShowCreateSuccess({ lobbyName, groupId, maxMember });
+      return;
+    }
+    BleService.sendCreateLobby(lobbyId, '')
+      .then((ok) => {
+        if (ok) {
+          // notify app and proceed
+          onShowCreateSuccess({ lobbyName, groupId: lobbyId, maxMember });
+        } else {
+          // still call handler but warn
+          onShowCreateSuccess({ lobbyName, groupId: lobbyId, maxMember });
+          // developer log
+          console.warn('Create lobby BLE send failed');
+        }
+      })
+      .catch((e) => {
+        console.warn('Create lobby error', e);
+        onShowCreateSuccess({ lobbyName, groupId: lobbyId, maxMember });
+      });
   };
 
   if (mode === 'create') {
@@ -112,7 +134,22 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
           <View style={[styles.hrLine, { marginTop: 30 }]} />
         </View>
 
-        <MainButton title="Enter Lobby" onPress={onLogin} style={{ top: -30, width: '80%', alignSelf: 'center' }} />
+        <MainButton title="Enter Lobby" onPress={() => {
+          // When joining, attempt BLE join first
+          const lobbyIdField = '';
+          // If user filled Group ID, use it; otherwise rely on form inputs elsewhere
+          const lobbyToJoin = groupId && groupId.length > 0 ? groupId : '';
+          if (lobbyToJoin.length > 0) {
+            BleService.sendJoinLobby(lobbyToJoin)
+              .then((ok) => {
+                if (!ok) console.warn('Join lobby BLE failed');
+                onLogin();
+              })
+              .catch((e) => { console.warn('Join lobby err', e); onLogin(); });
+          } else {
+            onLogin();
+          }
+        }} style={{ top: -30, width: '80%', alignSelf: 'center' }} />
         
         <TouchableOpacity
           onPress={() => setMode('create')}

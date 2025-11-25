@@ -13,7 +13,7 @@ const HomeTab = ({ onChangeTab }) => (
         <Text style={styles.welcomeText}>Hello!</Text>
         <Text style={styles.usernameTitle}>John Doe</Text>
       </View>
-      <Trees size={30} color={COLORS.primary} />
+      <Trees size={30} color={COLORS.primary} style={{ marginTop: 1000 }} />
     </View>
 
     {/* Lobby ID Card */}

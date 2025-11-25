@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, createContext, useContext, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -16,12 +16,21 @@ import {
   Platform,
   Switch, 
   Alert,
+  ActivityIndicator,
+  Vibration,
+  KeyboardAvoidingView,
+  Keyboard,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 // IMPORTANT: Make sure you have installed these packages: 
-// npx expo install expo-location expo-sensors
+// npx expo install expo-location expo-sensors @react-native-async-storage/async-storage
 import * as Location from 'expo-location';
 import { Magnetometer } from 'expo-sensors';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+// BLE imports disabled for UI testing - uncomment when ready for native build
+// import bleService from './src/services/BleService';
 
 import { 
   Trees, 
@@ -35,13 +44,68 @@ import {
   AlertTriangle, 
   CheckCircle, 
   ChevronRight,
+  ChevronLeft,
   Menu,
   Send,
   HelpCircle,
-  AlertOctagon
+  AlertOctagon,
+  Wifi,
+  WifiOff,
+  RefreshCw,
+  Bell,
+  BellOff,
+  X,
+  Camera,
+  Mail,
+  Phone,
+  Shield,
+  Info,
+  FileText,
+  MessageSquare,
+  Navigation,
 } from 'lucide-react-native';
 
 const { width, height } = Dimensions.get('window');
+
+// ====== STORAGE KEYS ======
+const STORAGE_KEYS = {
+  REMEMBER_ME: '@hikesafe_remember_me',
+  SAVED_USERNAME: '@hikesafe_saved_username',
+  SAVED_GROUP_ID: '@hikesafe_saved_group_id',
+  USER_PROFILE: '@hikesafe_user_profile',
+  SETTINGS: '@hikesafe_settings',
+  NOTIFICATIONS: '@hikesafe_notifications',
+};
+
+// ====== NOTIFICATION CONTEXT ======
+const NotificationContext = createContext(null);
+
+const useNotifications = () => {
+  const context = useContext(NotificationContext);
+  if (!context) {
+    return { notifications: [], addNotification: () => {}, clearNotification: () => {}, unreadCount: 0 };
+  }
+  return context;
+};
+
+// ====== LORA CONTEXT (Integrated) ======
+const CONNECTION_STATES = {
+  DISCONNECTED: 'disconnected',
+  SCANNING: 'scanning',
+  CONNECTING: 'connecting',
+  CONNECTED: 'connected',
+  ERROR: 'error',
+};
+
+const LoRaContext = createContext(null);
+
+const useLoRa = () => {
+  const context = useContext(LoRaContext);
+  if (!context) {
+    throw new Error('useLoRa must be used within a LoRaProvider');
+  }
+  return context;
+};
 
 // --- THEME CONSTANTS ---
 const COLORS = {
@@ -53,6 +117,7 @@ const COLORS = {
   textLight: '#ffffff',
   gray: '#9ca3af',
   cardBg: 'rgba(255, 255, 255, 0.9)',
+  error: '#dc2626', // Red for errors/logout
 };
 
 // --- SHARED COMPONENTS ---
@@ -96,17 +161,18 @@ const MainButton = ({ title, onPress, variant = 'primary', style }) => (
 );
 
 // 3. Custom Input
-const InputField = ({ label, placeholder, value, onChangeText, secureTextEntry, keyboardType, error }) => (
+const InputField = ({ label, placeholder, value, onChangeText, secureTextEntry, keyboardType, error, maxLength }) => (
   <View style={styles.inputContainer}>
-    {label && <Text style={styles.inputLabel}>{label}</Text>}
+    {label && <Text style={[styles.inputLabel, error ? { color: '#ef4444' } : null]}>{label}</Text>}
     <TextInput
-      style={[styles.input, error ? { borderColor: 'red' } : null]}
+      style={[styles.input, error ? styles.inputError : null]}
       placeholder={placeholder}
       placeholderTextColor="#9CA3AF"
       value={value}
       onChangeText={onChangeText}
       secureTextEntry={secureTextEntry}
       keyboardType={keyboardType}
+      maxLength={maxLength}
     />
     {error ? <Text style={styles.errorText}>{error}</Text> : null}
   </View>
@@ -115,34 +181,425 @@ const InputField = ({ label, placeholder, value, onChangeText, secureTextEntry, 
 // --- SCREENS ---//
 
 // 1. ONBOARDING: NAME
-const OnboardingName = ({ next }) => (
-  <View style={styles.contentContainer}>
-    <View style={styles.headerSpacer} />
-    <Text style={styles.titleLarge}>
-      What do we{'\n'}call you?
-    </Text>
-  
-    <View style={[styles.formSection, styles.centeredForm, { top: 50 }]}>
-      <InputField label="First Name" placeholder="e.g. John" />
-      <InputField label="Last Name" placeholder="e.g. Doe" />
-      <InputField label="Nickname" placeholder="e.g. JD" />
-    </View>
+const OnboardingName = ({ next, onSaveName }) => {
+  const insets = useSafeAreaInsets();
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [nickname, setNickname] = useState('');
+  const [errors, setErrors] = useState({});
 
-    <View style={styles.illustrationSpace}>
-       <Trees size={120} color={COLORS.primary} style={{opacity: 0.5}} />
-    </View>
+  const validate = () => {
+    const newErrors = {};
+    if (!firstName.trim()) newErrors.firstName = 'First name is required';
+    if (!lastName.trim()) newErrors.lastName = 'Last name is required';
+    if (!nickname.trim()) newErrors.nickname = 'Nickname is required';
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
 
-    <View style={styles.footer}>
-      <MainButton title="NEXT" onPress={next} />
-      <TouchableOpacity style={styles.skipButton} onPress={next}>
-        <Text style={styles.skipText}>SKIP</Text>
-      </TouchableOpacity>
+  const handleNext = () => {
+    if (validate()) {
+      const displayName = nickname.trim() || `${firstName.trim()} ${lastName.trim()}`;
+      onSaveName?.({ firstName: firstName.trim(), lastName: lastName.trim(), nickname: nickname.trim(), displayName });
+      next();
+    }
+  };
+
+  return (
+    <View style={[styles.contentContainer, { paddingBottom: Math.max(insets.bottom + 20, 40) }]}>
+      <View style={styles.headerSpacer} />
+      <Text style={styles.titleLarge}>
+        What do we{'\n'}call you?
+      </Text>
+    
+      <View style={[styles.formSection, styles.centeredForm, { top: 50 }]}>
+        <InputField 
+          label="First Name *" 
+          placeholder="e.g. John" 
+          value={firstName}
+          onChangeText={(text) => { setFirstName(text); setErrors(prev => ({...prev, firstName: ''})); }}
+          error={errors.firstName}
+        />
+        <InputField 
+          label="Last Name *" 
+          placeholder="e.g. Doe"
+          value={lastName}
+          onChangeText={(text) => { setLastName(text); setErrors(prev => ({...prev, lastName: ''})); }}
+          error={errors.lastName}
+        />
+        <InputField 
+          label="Nickname *" 
+          placeholder="e.g. JD"
+          value={nickname}
+          onChangeText={(text) => { setNickname(text); setErrors(prev => ({...prev, nickname: ''})); }}
+          error={errors.nickname}
+        />
+      </View>
+
+      <View style={styles.illustrationSpace}>
+         <Trees size={120} color={COLORS.primary} style={{opacity: 0.5}} />
+      </View>
+
+      <View style={styles.footer}>
+        <MainButton title="NEXT" onPress={handleNext} />
+      </View>
     </View>
-  </View>
-);
+  );
+};
+
+// 0. INITIALIZATION SCREEN (BLE Connect to LoRa device)
+const Initialization = ({ onConnected, loraContext }) => {
+  const insets = useSafeAreaInsets();
+  const [selectedDevice, setSelectedDevice] = useState(null);
+  const [isScanning, setIsScanning] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [devices, setDevices] = useState([]);
+  const [statusText, setStatusText] = useState('Scanning for devices...');
+
+  // Auto-scan on mount
+  useEffect(() => {
+    scanForDevices();
+  }, []);
+
+  const scanForDevices = async () => {
+    setIsScanning(true);
+    setStatusText('Scanning for devices...');
+    setSelectedDevice(null);
+    
+    // TODO: Replace with actual BLE scanning when ready
+    // const scannedDevices = await bleService.scanOnce(8000);
+    
+    // Simulate scanning delay
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    
+    // Mock devices - will be replaced with real scanned devices
+    const scannedDevices = [
+      { id: '1', name: 'HikeSafe_102D', rssi: -45, online: true },
+      { id: '2', name: 'HikeSafe_143J', rssi: -72, online: false },
+      { id: '3', name: 'HikeSafe_722R', rssi: -55, online: true },
+      { id: '4', name: 'HikeSafe_122A', rssi: -80, online: false },
+      { id: '5', name: 'HikeSafe_091E', rssi: -68, online: false },
+      { id: '6', name: 'HikeSafe_148F', rssi: -50, online: true },
+    ];
+    
+    setDevices(scannedDevices);
+    setIsScanning(false);
+    setStatusText(scannedDevices.length > 0 ? 'Select a device to connect' : 'No devices found');
+  };
+
+  const handleConnect = async () => {
+    if (!selectedDevice) {
+      Alert.alert('No Device Selected', 'Please select a device to connect.');
+      return;
+    }
+    
+    const device = devices.find(d => d.id === selectedDevice);
+    if (!device) return;
+    
+    setIsConnecting(true);
+    setStatusText(`Connecting to ${device.name}...`);
+    
+    // TODO: Replace with actual BLE connection when ready
+    // const success = await bleService.connectToDevice(device);
+    
+    // Simulate connection delay
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Update LoRa context with connected device
+    if (loraContext) {
+      loraContext.setConnectedDevice(device);
+      loraContext.setConnectionState(CONNECTION_STATES.CONNECTED);
+    }
+    
+    setIsConnecting(false);
+    onConnected?.(device);
+  };
+
+  return (
+    <ImageBackground
+      source={require('./assets/intbg.png')}
+      style={initStyles.background}
+      resizeMode="cover"
+    >
+      <SafeAreaView style={[initStyles.container, { paddingBottom: Math.max(insets.bottom, 20) }]}>
+        {/* Logo */}
+        <View style={initStyles.logoContainer}>
+          <Image 
+            source={require('./assets/logoname.png')} 
+            style={initStyles.logo}
+            resizeMode="contain"
+          />
+        </View>
+
+        {/* Device Image */}
+        <View style={initStyles.deviceImageContainer}>
+          <Image 
+            source={require('./assets/lilygo.png')} 
+            style={initStyles.deviceImage}
+            resizeMode="contain"
+          />
+        </View>
+
+        {/* Status Text */}
+        <View style={initStyles.statusContainer}>
+          <Text style={initStyles.statusLabel}>Long Range Device</Text>
+          <View style={initStyles.statusRow}>
+            {(isScanning || isConnecting) && (
+              <ActivityIndicator size="small" color={COLORS.primary} style={{ marginRight: 8 }} />
+            )}
+            <Text style={initStyles.statusTitle}>{statusText}</Text>
+          </View>
+        </View>
+
+        {/* Device List Card */}
+        <View style={[initStyles.deviceListCard, { marginBottom: Math.max(insets.bottom + 20, 60) }]}>
+          {/* Refresh Button */}
+          <TouchableOpacity 
+            style={initStyles.refreshButton} 
+            onPress={scanForDevices}
+            disabled={isScanning || isConnecting}
+          >
+            <RefreshCw size={18} color={isScanning ? COLORS.gray : COLORS.primary} />
+            <Text style={[initStyles.refreshText, isScanning && { color: COLORS.gray }]}>
+              {isScanning ? 'Scanning...' : 'Rescan'}
+            </Text>
+          </TouchableOpacity>
+
+          <ScrollView style={initStyles.deviceList} showsVerticalScrollIndicator={false}>
+            {devices.length === 0 && !isScanning ? (
+              <View style={initStyles.emptyState}>
+                <WifiOff size={40} color={COLORS.gray} />
+                <Text style={initStyles.emptyText}>No devices found</Text>
+                <Text style={initStyles.emptySubtext}>Make sure your LoRa device is powered on</Text>
+              </View>
+            ) : (
+              devices.map((device) => (
+                <TouchableOpacity
+                  key={device.id}
+                  style={[
+                    initStyles.deviceItem,
+                    selectedDevice === device.id && initStyles.deviceItemSelected
+                  ]}
+                  onPress={() => !isConnecting && setSelectedDevice(device.id)}
+                  disabled={isConnecting}
+                >
+                  <View style={initStyles.deviceInfo}>
+                    <Text style={initStyles.deviceName}>{device.name}</Text>
+                    <Text style={initStyles.deviceRssi}>Signal: {device.rssi} dBm</Text>
+                  </View>
+                  <View style={[
+                    initStyles.statusDot,
+                    { backgroundColor: device.online ? '#22c55e' : '#ef4444' }
+                  ]} />
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
+
+          {/* Connect Button */}
+          <TouchableOpacity 
+            style={[
+              initStyles.connectButton,
+              !selectedDevice && !isConnecting && initStyles.connectButtonDisabled,
+              isConnecting && initStyles.connectButtonConnecting
+            ]} 
+            onPress={handleConnect}
+            disabled={!selectedDevice || isConnecting}
+          >
+            {isConnecting ? (
+              <View style={initStyles.connectingRow}>
+                <ActivityIndicator size="small" color="#ffffff" />
+                <Text style={initStyles.connectingText}>Connecting...</Text>
+              </View>
+            ) : (
+              <Text style={[
+                initStyles.connectButtonText,
+                !selectedDevice && { color: COLORS.gray }
+              ]}>CONNECT</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    </ImageBackground>
+  );
+};
+
+// Styles for Initialization screen
+const initStyles = StyleSheet.create({
+  background: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  container: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  logoContainer: {
+    marginTop: 50,
+    alignItems: 'flex-start',
+    width: '100%',
+  },
+  logo: {
+    width: 130,
+    height: 100,
+    top: -20,
+  },
+  deviceImageContainer: {
+    marginTop: -90,
+    marginBottom: -90,
+    alignItems: 'center',
+    justifyContent: 'center',
+    // Shadow for iOS
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    // Shadow for Android
+    elevation: 8,
+  },
+  deviceImage: {
+    width: 1000,
+    height: 370,
+  },
+  statusContainer: {
+    alignItems: 'flex-start',
+    width: '100%',
+    marginTop: 0,
+    marginBottom: 10,
+  },
+  statusLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 4,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#1a2e05',
+  },
+  deviceListCard: {
+    flex: 1,
+    width: '100%',
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 3,
+    borderColor: '#4d7c0f',
+    marginBottom: 60,
+  },
+  refreshButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+  },
+  refreshText: {
+    fontSize: 14,
+    color: '#4d7c0f',
+    marginLeft: 6,
+    fontWeight: '600',
+  },
+  deviceList: {
+    flex: 1,
+  },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+  },
+  emptyText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#6b7280',
+    marginTop: 12,
+  },
+  emptySubtext: {
+    fontSize: 13,
+    color: '#9ca3af',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  deviceItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#f0fdf4',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  deviceItemSelected: {
+    borderColor: '#4d7c0f',
+    borderWidth: 2,
+    backgroundColor: '#ecfccb',
+  },
+  deviceInfo: {
+    flex: 1,
+  },
+  deviceName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1a2e05',
+  },
+  deviceRssi: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  statusDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  connectButton: {
+    marginTop: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    backgroundColor: '#ecfccb',
+    borderRadius: 10,
+    minHeight: 50,
+  },
+  connectButtonDisabled: {
+    backgroundColor: '#f3f4f6',
+  },
+  connectButtonConnecting: {
+    backgroundColor: COLORS.primary,
+  },
+  connectButtonText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#4d7c0f',
+    letterSpacing: 1,
+  },
+  connectingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  connectingText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#ffffff',
+    marginLeft: 10,
+    letterSpacing: 0.5,
+  },
+});
 
 // 2. ONBOARDING: DETAILS
 const OnboardingDetails = ({ next, onShowReminder }) => {
+  const insets = useSafeAreaInsets();
   const [experience, setExperience] = useState('Beginner');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [contactPhone, setContactPhone] = useState('');
@@ -154,10 +611,25 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
 
   const validatePhone = (phone) => {
     if (!phone || phone.trim().length === 0) return 'Phone is required';
-    const digits = phone.replace(/[^0-9+]/g, '');
-    if (digits.length < 7) return 'Enter a valid phone number';
-    if (digits.length > 15) return 'Phone number too long';
+    // Remove all non-numeric characters except + for country code
+    const digits = phone.replace(/[^0-9]/g, '');
+    if (digits.length < 10) return 'Phone number must be at least 10 digits';
+    if (digits.length > 15) return 'Phone number cannot exceed 15 digits';
     return '';
+  };
+
+  const handlePhoneChange = (text) => {
+    // Only allow numbers, spaces, dashes, parentheses, and plus sign
+    const formatted = text.replace(/[^0-9\s\-\(\)\+]/g, '');
+    // Limit to reasonable length (with formatting characters)
+    if (formatted.length <= 20) {
+      setContactPhone(formatted);
+      // Clear error when user starts typing again
+      if (contactPhoneError) {
+        const err = validatePhone(formatted);
+        setContactPhoneError(err);
+      }
+    }
   };
 
   const validateName = (name) => {
@@ -180,7 +652,7 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
   };
 
   return (
-    <View style={[styles.contentContainer, styles.centerScreen]}>
+    <View style={[styles.contentContainer, styles.centerScreen, { paddingBottom: Math.max(insets.bottom + 20, 40) }]}>
       <Text style={[styles.titleLarge, styles.detailTitle]}>Get ready with the trail!</Text>
 
       <View style={styles.detailForm}>
@@ -195,8 +667,9 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
           label="Contact Phone"
           placeholder="Emergency Contact Phone"
           value={contactPhone}
-          onChangeText={(t) => { setContactPhone(t); if (contactPhoneError) setContactPhoneError(''); }}
+          onChangeText={handlePhoneChange}
           keyboardType="phone-pad"
+          maxLength={20}
           error={contactPhoneError}
         />
         <InputField
@@ -241,18 +714,152 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
 };
 
 // 3. LOBBY SCREEN (Join & Create)
-const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
+const LobbyScreen = ({ onLogin, onShowCreateSuccess, onReconnect }) => {
+  const insets = useSafeAreaInsets();
   const [mode, setMode] = useState('join'); // 'join' or 'create'
   const [remember, setRemember] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Join lobby form state
+  const [joinUsername, setJoinUsername] = useState('');
+  const [joinGroupId, setJoinGroupId] = useState('');
+  const [joinUsernameError, setJoinUsernameError] = useState('');
+  const [joinGroupIdError, setJoinGroupIdError] = useState('');
   
   // Create lobby form state
   const [lobbyName, setLobbyName] = useState('');
   const [groupId, setGroupId] = useState('');
   const [maxMember, setMaxMember] = useState('');
 
+  // Load saved credentials on mount
+  useEffect(() => {
+    loadSavedCredentials();
+  }, []);
+
+  const loadSavedCredentials = async () => {
+    try {
+      const savedRemember = await AsyncStorage.getItem(STORAGE_KEYS.REMEMBER_ME);
+      if (savedRemember === 'true') {
+        setRemember(true);
+        const savedUsername = await AsyncStorage.getItem(STORAGE_KEYS.SAVED_USERNAME);
+        const savedGroupId = await AsyncStorage.getItem(STORAGE_KEYS.SAVED_GROUP_ID);
+        if (savedUsername) setJoinUsername(savedUsername);
+        if (savedGroupId) setJoinGroupId(savedGroupId);
+      }
+    } catch (error) {
+      console.log('Error loading saved credentials:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const saveCredentials = async (username, groupId) => {
+    try {
+      if (remember) {
+        await AsyncStorage.setItem(STORAGE_KEYS.REMEMBER_ME, 'true');
+        await AsyncStorage.setItem(STORAGE_KEYS.SAVED_USERNAME, username);
+        await AsyncStorage.setItem(STORAGE_KEYS.SAVED_GROUP_ID, groupId);
+      } else {
+        await AsyncStorage.removeItem(STORAGE_KEYS.REMEMBER_ME);
+        await AsyncStorage.removeItem(STORAGE_KEYS.SAVED_USERNAME);
+        await AsyncStorage.removeItem(STORAGE_KEYS.SAVED_GROUP_ID);
+      }
+    } catch (error) {
+      console.log('Error saving credentials:', error);
+    }
+  };
+  const [lobbyNameError, setLobbyNameError] = useState('');
+  const [groupIdError, setGroupIdError] = useState('');
+  const [maxMemberError, setMaxMemberError] = useState('');
+
+  // Mock existing lobbies (will be replaced with actual data from LoRa)
+  const existingLobbies = ['ABCDEF123', 'HIKESAFE01', 'TRAIL2024'];
+
+  const validateJoinForm = () => {
+    let isValid = true;
+    
+    if (!joinUsername.trim()) {
+      setJoinUsernameError('Username is required');
+      isValid = false;
+    } else {
+      setJoinUsernameError('');
+    }
+    
+    if (!joinGroupId.trim()) {
+      setJoinGroupIdError('Group ID is required');
+      isValid = false;
+    } else if (!existingLobbies.includes(joinGroupId.trim().toUpperCase())) {
+      setJoinGroupIdError('Lobby not found. Check the Group ID or create a new lobby.');
+      isValid = false;
+    } else {
+      setJoinGroupIdError('');
+    }
+    
+    return isValid;
+  };
+
+  const validateCreateForm = () => {
+    let isValid = true;
+    
+    if (!lobbyName.trim()) {
+      setLobbyNameError('Lobby name is required');
+      isValid = false;
+    } else if (lobbyName.trim().length < 3) {
+      setLobbyNameError('Lobby name must be at least 3 characters');
+      isValid = false;
+    } else {
+      setLobbyNameError('');
+    }
+    
+    if (!groupId.trim()) {
+      setGroupIdError('Group ID is required');
+      isValid = false;
+    } else if (groupId.trim().length < 4) {
+      setGroupIdError('Group ID must be at least 4 characters');
+      isValid = false;
+    } else if (existingLobbies.includes(groupId.trim().toUpperCase())) {
+      setGroupIdError('This Group ID already exists');
+      isValid = false;
+    } else {
+      setGroupIdError('');
+    }
+    
+    if (!maxMember.trim()) {
+      setMaxMemberError('Max members is required');
+      isValid = false;
+    } else if (isNaN(parseInt(maxMember)) || parseInt(maxMember) < 2) {
+      setMaxMemberError('Enter a valid number (minimum 2)');
+      isValid = false;
+    } else if (parseInt(maxMember) > 50) {
+      setMaxMemberError('Maximum 50 members allowed');
+      isValid = false;
+    } else {
+      setMaxMemberError('');
+    }
+    
+    return isValid;
+  };
+
+  const handleJoinLobby = async () => {
+    if (validateJoinForm()) {
+      // Save credentials if remember me is checked
+      await saveCredentials(joinUsername.trim(), joinGroupId.trim().toUpperCase());
+      // TODO: Send join lobby command via BLE when connected
+      // bleService.sendJoinLobby(joinGroupId.trim().toUpperCase());
+      onLogin({ username: joinUsername.trim(), groupId: joinGroupId.trim().toUpperCase() });
+    }
+  };
+
   const handleCreateLobby = () => {
-    // Pass the lobby data when creating
-    onShowCreateSuccess({ lobbyName, groupId, maxMember });
+    if (validateCreateForm()) {
+      // TODO: Send create lobby command via BLE when connected
+      // bleService.sendCreateLobby(groupId.trim(), '', lobbyName.trim());
+      onShowCreateSuccess({ 
+        lobbyName: lobbyName.trim(), 
+        groupId: groupId.trim().toUpperCase(), 
+        maxMember: maxMember.trim() 
+      });
+    }
   };
 
   if (mode === 'create') {
@@ -260,9 +867,9 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       <ImageBackground
         source={require('./assets/forest_bg 1.png')}
         style={styles.lobbyCreateBg}
-        resizeMode="cover"
+        resizeMode="contain"
       >
-        <View style={styles.centerContent}>
+        <View style={[styles.centerContent, { paddingBottom: Math.max(insets.bottom + 20, 40) }]}>
           <View style={styles.cardGreen}>
             <Text style={styles.cardTitleLarge}>CREATE A LOBBY</Text>
             <View style={styles.separatorThin} />
@@ -273,37 +880,47 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
 
             <View style={styles.formGrid}>
               <View style={styles.fieldRow}>
-                <Text style={styles.fieldLabel}>Lobby Name</Text>
-                <TextInput 
-                  style={styles.inputWhiteRounded} 
-                  placeholder="Enter lobby name" 
-                  placeholderTextColor="rgba(0,0,0,0.35)"
-                  value={lobbyName}
-                  onChangeText={setLobbyName}
-                />
+                <View style={styles.fieldRowInner}>
+                  <Text style={[styles.fieldLabel, lobbyNameError && { color: '#fecaca' }]}>Lobby Name</Text>
+                  <TextInput 
+                    style={[styles.inputWhiteRounded, lobbyNameError ? styles.inputError : null]} 
+                    placeholder="Enter lobby name" 
+                    placeholderTextColor="rgba(0,0,0,0.35)"
+                    value={lobbyName}
+                    onChangeText={(t) => { setLobbyName(t); if (lobbyNameError) setLobbyNameError(''); }}
+                  />
+                </View>
+                {lobbyNameError ? <Text style={styles.errorTextWhite}>{lobbyNameError}</Text> : null}
               </View>
 
               <View style={styles.fieldRow}>
-                <Text style={styles.fieldLabel}>Group ID</Text>
-                <TextInput 
-                  style={styles.inputWhiteRounded} 
-                  placeholder="Group ID" 
-                  placeholderTextColor="rgba(0,0,0,0.35)"
-                  value={groupId}
-                  onChangeText={setGroupId}
-                />
+                <View style={styles.fieldRowInner}>
+                  <Text style={[styles.fieldLabel, groupIdError && { color: '#fecaca' }]}>Group ID</Text>
+                  <TextInput 
+                    style={[styles.inputWhiteRounded, groupIdError ? styles.inputError : null]} 
+                    placeholder="Group ID" 
+                    placeholderTextColor="rgba(0,0,0,0.35)"
+                    value={groupId}
+                    onChangeText={(t) => { setGroupId(t); if (groupIdError) setGroupIdError(''); }}
+                    autoCapitalize="characters"
+                  />
+                </View>
+                {groupIdError ? <Text style={styles.errorTextWhite}>{groupIdError}</Text> : null}
               </View>
 
               <View style={styles.fieldRow}>
-                <Text style={styles.fieldLabel} numberOfLines={1}>Max Member</Text>
-                <TextInput 
-                  style={styles.inputWhiteRounded} 
-                  placeholder="Max Member" 
-                  placeholderTextColor="rgba(0,0,0,0.35)" 
-                  keyboardType="numeric"
-                  value={maxMember}
-                  onChangeText={setMaxMember}
-                />
+                <View style={styles.fieldRowInner}>
+                  <Text style={[styles.fieldLabel, maxMemberError && { color: '#fecaca' }]} numberOfLines={1}>Max Member</Text>
+                  <TextInput 
+                    style={[styles.inputWhiteRounded, maxMemberError ? styles.inputError : null]} 
+                    placeholder="Max Member" 
+                    placeholderTextColor="rgba(0,0,0,0.35)" 
+                    keyboardType="numeric"
+                    value={maxMember}
+                    onChangeText={(t) => { setMaxMember(t); if (maxMemberError) setMaxMemberError(''); }}
+                  />
+                </View>
+                {maxMemberError ? <Text style={styles.errorTextWhite}>{maxMemberError}</Text> : null}
               </View>
             </View>
 
@@ -327,15 +944,34 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       style={styles.lobbyCreateBg}
       resizeMode="cover"
     >
-      <View style={styles.contentContainer}>
+      <View style={[styles.contentContainer, { paddingBottom: Math.max(insets.bottom + 20, 40) }]}>
           <View style={styles.logoSection}>
             <Image source={require('./assets/hike.png')} style={styles.logoImage} />
             <Text style={styles.tagline}>"Stay connected. Stay safe."</Text>
           </View>
 
         <View style={[styles.formSection, { top:-10, width: '80%', alignSelf: 'center' }]}> 
-          <InputField placeholder="Username" />
-          <InputField placeholder="Group ID" />
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={[styles.input, joinUsernameError ? { borderColor: 'red' } : null]}
+              placeholder="Username"
+              placeholderTextColor="#9CA3AF"
+              value={joinUsername}
+              onChangeText={(t) => { setJoinUsername(t); if (joinUsernameError) setJoinUsernameError(''); }}
+            />
+            {joinUsernameError ? <Text style={styles.errorTextRed}>{joinUsernameError}</Text> : null}
+          </View>
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={[styles.input, joinGroupIdError ? { borderColor: 'red' } : null]}
+              placeholder="Group ID"
+              placeholderTextColor="#9CA3AF"
+              value={joinGroupId}
+              onChangeText={(t) => { setJoinGroupId(t); if (joinGroupIdError) setJoinGroupIdError(''); }}
+              autoCapitalize="characters"
+            />
+            {joinGroupIdError ? <Text style={styles.errorTextRed}>{joinGroupIdError}</Text> : null}
+          </View>
           
           <View style={styles.row}>
             <TouchableOpacity
@@ -349,11 +985,22 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
           <View style={[styles.hrLine, { marginTop: 30 }]} />
         </View>
 
-        <MainButton title="Enter Lobby" onPress={onLogin} style={{ top: -30, width: '80%', alignSelf: 'center' }} />
+        <MainButton title="Enter Lobby" onPress={handleJoinLobby} style={{ top: -30, width: '80%', alignSelf: 'center' }} />
         
         <TouchableOpacity
+          onPress={onReconnect}
+          style={{ marginTop: 16, alignItems: 'center' }}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Text style={{ color: '#fbbf24', fontWeight: '600', textAlign: 'center', fontSize: 13 }}>
+            Lost connection?{' '}
+            <Text style={{ color: 'white', fontWeight: 'bold', textDecorationLine: 'underline' }}>Connect again.</Text>
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
           onPress={() => setMode('create')}
-          style={{ marginTop: 20, alignItems: 'center' }}
+          style={{ marginTop: 10, alignItems: 'center' }}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
           <Text style={{ color: COLORS.primary, fontWeight: '600', textAlign: 'center' }}>
@@ -367,33 +1014,75 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
 };
 
 // 4. DASHBOARD (Tab Navigation Container)
-const Dashboard = ({ onLogout }) => {
+const Dashboard = ({ onLogout, userData = {}, lobbyData = {}, loraContext = {} }) => {
   const [activeTab, setActiveTab] = useState('home');
+  const [chatTarget, setChatTarget] = useState(null); // null = chat list, object = conversation
+  const insets = useSafeAreaInsets(); // Get safe area insets for bottom navigation
+  
+  // Location service state - persists across tab switches
+  const [locationServiceEnabled, setLocationServiceEnabled] = useState(false);
+  const [compassSubscription, setCompassSubscription] = useState(null);
+  
+  // Get display values from userData or lobbyData
+  const displayUsername = userData?.username || 'John Doe';
+  const displayGroupId = userData?.groupId || lobbyData?.groupId || 'ABCDEF123';
+  
+  // Get lobby members from context (mock for now, will be from LoRa)
+  const lobbyMembers = loraContext?.lobbyMembers || [];
+  const memberCount = lobbyMembers.length || 15; // Default to 15 for demo
 
   const renderContent = () => {
+    // If chatTarget is set, show the conversation view
+    if (chatTarget) {
+      return <ChatConversation chat={chatTarget} onBack={() => setChatTarget(null)} loraContext={loraContext} />;
+    }
+    
     switch (activeTab) {
-      case 'home': return <HomeTab onChangeTab={setActiveTab} />;
-      case 'location': return <LocationTab />;
-      case 'message': return <MessageTab />;
-      case 'compass': return <CompassTab />;
-      case 'profile': return <ProfileTab onLogout={onLogout} />;
+      case 'home': return <HomeTab 
+        onChangeTab={setActiveTab} 
+        username={displayUsername} 
+        groupId={displayGroupId}
+        memberCount={memberCount}
+        isConnected={loraContext?.isConnected}
+      />;
+      case 'location': return <LocationTab lobbyMembers={lobbyMembers} loraContext={loraContext} />;
+      case 'message': return <MessageTab onOpenChat={setChatTarget} groupId={displayGroupId} lobbyMembers={lobbyMembers} />;
+      case 'compass': return <CompassTab 
+        isServiceEnabled={locationServiceEnabled} 
+        setIsServiceEnabled={setLocationServiceEnabled}
+        subscription={compassSubscription}
+        setSubscription={setCompassSubscription}
+        loraContext={loraContext}
+      />;
+      case 'profile': return <ProfileTab 
+        onLogout={onLogout} 
+        username={displayUsername} 
+        userData={userData}
+        isConnected={loraContext?.isConnected} 
+      />;
       default: return <HomeTab />;
     }
   };
 
   return (
-    <View style={{flex: 1}}>
+    <ImageBackground
+      source={require('./assets/dashboard.png')}
+      style={{flex: 1}}
+      resizeMode="cover"
+    >
       {renderContent()}
       
-      {/* Bottom Navigation Bar */}
-      <View style={styles.bottomNav}>
-        <TabIcon icon={Home} label="Home" active={activeTab === 'home'} onPress={() => setActiveTab('home')} />
-        <TabIcon icon={MapPin} label="Loc" active={activeTab === 'location'} onPress={() => setActiveTab('location')} />
-        <TabIcon icon={MessageCircle} label="Chat" active={activeTab === 'message'} onPress={() => setActiveTab('message')} />
-        <TabIcon icon={Compass} label="Comp" active={activeTab === 'compass'} onPress={() => setActiveTab('compass')} />
-        <TabIcon icon={User} label="Prof" active={activeTab === 'profile'} onPress={() => setActiveTab('profile')} />
-      </View>
-    </View>
+      {/* Bottom Navigation Bar - hide when in chat conversation */}
+      {!chatTarget && (
+        <View style={[styles.bottomNav, { paddingBottom: Math.max(insets.bottom, 10) + 10 }]}>
+          <TabIcon icon={Home} label="Home" active={activeTab === 'home'} onPress={() => setActiveTab('home')} />
+          <TabIcon icon={MapPin} label="Loc" active={activeTab === 'location'} onPress={() => setActiveTab('location')} />
+          <TabIcon icon={MessageCircle} label="Chat" active={activeTab === 'message'} onPress={() => setActiveTab('message')} />
+          <TabIcon icon={Compass} label="Comp" active={activeTab === 'compass'} onPress={() => setActiveTab('compass')} />
+          <TabIcon icon={User} label="Prof" active={activeTab === 'profile'} onPress={() => setActiveTab('profile')} />
+        </View>
+      )}
+    </ImageBackground>
   );
 };
 
@@ -406,25 +1095,31 @@ const TabIcon = ({ icon: Icon, active, onPress }) => (
 
 // --- DASHBOARD TABS ---
 
-const HomeTab = ({ onChangeTab }) => (
+const HomeTab = ({ onChangeTab, username = 'John Doe', groupId = 'ABCDEF123', memberCount = 15, isConnected = false }) => (
   <ScrollView contentContainerStyle={styles.scrollContent}>
     <View style={styles.headerRow}>
       <View>
         <Text style={styles.welcomeText}>Hello!</Text>
-        <Text style={styles.usernameTitle}>John Doe</Text>
+        <Text style={styles.usernameTitle}>{username}</Text>
       </View>
-      <Trees size={30} color={COLORS.primary} />
+      <View style={styles.connectionStatus}>
+        {isConnected ? (
+          <Wifi size={24} color={COLORS.primary} />
+        ) : (
+          <WifiOff size={24} color={COLORS.gray} />
+        )}
+      </View>
     </View>
 
     {/* Lobby ID Card */}
     <LinearGradient colors={[COLORS.primaryLight, COLORS.primary]} style={styles.lobbyCard}>
       <Text style={styles.lobbyLabel}>LOBBY ID</Text>
-      <Text style={styles.lobbyCode}>ABCDEF123</Text>
+      <Text style={styles.lobbyCode}>{groupId}</Text>
       
       <View style={styles.statsRow}>
         <View style={styles.statItem}>
           <Text style={styles.statLabel}>MEMBERS</Text>
-          <Text style={styles.statValue}>15</Text>
+          <Text style={styles.statValue}>{memberCount}</Text>
         </View>
         <View style={styles.statItem}>
           <Text style={styles.statLabel}>NEAREST</Text>
@@ -433,9 +1128,9 @@ const HomeTab = ({ onChangeTab }) => (
         <View style={styles.statItem}>
           <Text style={styles.statLabel}>SIGNAL</Text>
           <View style={styles.signalIcon}>
-            <View style={[styles.bar, {height: 6}]} />
-            <View style={[styles.bar, {height: 10}]} />
-            <View style={[styles.bar, {height: 14}]} />
+            <View style={[styles.bar, {height: 6, backgroundColor: isConnected ? 'white' : '#9ca3af'}]} />
+            <View style={[styles.bar, {height: 10, backgroundColor: isConnected ? 'white' : '#9ca3af'}]} />
+            <View style={[styles.bar, {height: 14, backgroundColor: isConnected ? 'white' : '#9ca3af'}]} />
           </View>
         </View>
       </View>
@@ -450,8 +1145,9 @@ const HomeTab = ({ onChangeTab }) => (
     </View>
 
     <Text style={styles.sectionHeader}>Recent Activities</Text>
-    <View style={styles.activityCard} />
-    <View style={styles.activityCard} />
+    <View style={styles.activityCard}>
+      <Text style={styles.activityText}>Lobby joined at {new Date().toLocaleTimeString()}</Text>
+    </View>
   </ScrollView>
 );
 
@@ -464,56 +1160,764 @@ const ServiceItem = ({ icon: Icon, label, onPress }) => (
   </TouchableOpacity>
 );
 
-const LocationTab = () => (
-  <View style={styles.tabContainer}>
-    <View style={styles.headerBar}>
-       <Text style={styles.headerTitle}>LOCATION</Text>
-    </View>
-    <ScrollView style={{flex:1, padding: 20}}>
-       <View style={styles.userLocationRow}>
-         <View style={styles.avatarSmall}><User size={16} color="white" /></View>
-         <Text style={styles.locationText}>1 meter away</Text>
-         <MapPin size={20} color="red" />
-       </View>
-       <View style={styles.userLocationRow}>
-         <View style={styles.avatarSmall}><User size={16} color="white" /></View>
-         <Text style={styles.locationText}>0.5 meter away</Text>
-         <MapPin size={20} color="red" />
-       </View>
-    </ScrollView>
-  </View>
-);
+const LocationTab = ({ lobbyMembers = [], loraContext = {} }) => {
+  const [myLocation, setMyLocation] = useState(null);
+  const [isTracking, setIsTracking] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [locationError, setLocationError] = useState(null);
+  const locationSubscription = useRef(null);
 
-const MessageTab = () => (
-  <View style={styles.tabContainer}>
-    <View style={styles.headerBar}>
-       <Text style={styles.headerTitle}>Messages</Text>
-    </View>
-    <ScrollView style={{flex:1, padding: 20}}>
-      <View style={styles.chatItem}>
-        <User size={20} color={COLORS.textDark} />
-        <Text style={styles.chatName}>LOBBY ABCDEF123</Text>
-        <View style={styles.onlineDot} />
+  // Mock members if none provided
+  const [members, setMembers] = useState(lobbyMembers.length > 0 ? lobbyMembers : [
+    { id: 1, name: 'Alice', distance: 1, online: true, lat: 0, lon: 0, lastSeen: new Date() },
+    { id: 2, name: 'Bob', distance: 0.5, online: true, lat: 0, lon: 0, lastSeen: new Date() },
+    { id: 3, name: 'Charlie', distance: 15, online: false, lat: 0, lon: 0, lastSeen: new Date(Date.now() - 300000) },
+  ]);
+
+  // Calculate distance between two coordinates (Haversine formula)
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371e3; // Earth's radius in meters
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δφ = (lat2 - lat1) * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return Math.round(R * c); // Distance in meters
+  };
+
+  // Start/stop location tracking
+  const toggleTracking = async () => {
+    if (isTracking) {
+      // Stop tracking
+      if (locationSubscription.current) {
+        locationSubscription.current.remove();
+        locationSubscription.current = null;
+      }
+      setIsTracking(false);
+    } else {
+      // Start tracking
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          setLocationError('Location permission denied');
+          return;
+        }
+
+        setIsTracking(true);
+        setLocationError(null);
+
+        // Get initial location
+        const location = await Location.getCurrentPositionAsync({});
+        setMyLocation(location.coords);
+        setLastUpdate(new Date());
+
+        // Start watching location
+        locationSubscription.current = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.High,
+            timeInterval: 5000, // Update every 5 seconds
+            distanceInterval: 5, // Or when moved 5 meters
+          },
+          (newLocation) => {
+            setMyLocation(newLocation.coords);
+            setLastUpdate(new Date());
+            
+            // Send location via LoRa if connected
+            if (loraContext?.sendLocation) {
+              loraContext.sendLocation(newLocation.coords.latitude, newLocation.coords.longitude);
+            }
+
+            // Update member distances (simulated - in real app this would come from LoRa)
+            setMembers(prev => prev.map(member => ({
+              ...member,
+              distance: member.online ? Math.max(1, Math.floor(Math.random() * 100)) : member.distance,
+            })));
+          }
+        );
+      } catch (error) {
+        setLocationError('Failed to get location');
+        setIsTracking(false);
+      }
+    }
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (locationSubscription.current) {
+        locationSubscription.current.remove();
+      }
+    };
+  }, []);
+
+  // Format time ago
+  const timeAgo = (date) => {
+    if (!date) return 'Unknown';
+    const seconds = Math.floor((new Date() - new Date(date)) / 1000);
+    if (seconds < 60) return 'Just now';
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+    return `${Math.floor(seconds / 3600)}h ago`;
+  };
+
+  return (
+    <View style={styles.tabContainer}>
+      <View style={styles.headerBar}>
+        <Text style={styles.headerTitle}>LOCATION</Text>
       </View>
-      {['NODE A: John Doe', 'NODE B: John Doe', 'NODE C: John Doe'].map((name, i) => (
-        <View key={i} style={styles.chatItem}>
-           <View style={styles.avatarCircle}><Text style={{fontSize:10}}>JD</Text></View>
-           <Text style={styles.chatName}>{name}</Text>
-           <View style={styles.onlineDot} />
+      
+      {/* My Location Card */}
+      <View style={locStyles.myLocationCard}>
+        <View style={locStyles.myLocationHeader}>
+          <Navigation size={20} color={COLORS.primary} />
+          <Text style={locStyles.myLocationTitle}>My Location</Text>
+          <TouchableOpacity 
+            style={[locStyles.trackingButton, isTracking && locStyles.trackingButtonActive]}
+            onPress={toggleTracking}
+          >
+            <Text style={[locStyles.trackingButtonText, isTracking && { color: 'white' }]}>
+              {isTracking ? 'Stop Tracking' : 'Start Tracking'}
+            </Text>
+          </TouchableOpacity>
         </View>
-      ))}
-    </ScrollView>
-  </View>
-);
+        {myLocation ? (
+          <View style={locStyles.coordsRow}>
+            <Text style={locStyles.coordsText}>
+              {myLocation.latitude.toFixed(6)}, {myLocation.longitude.toFixed(6)}
+            </Text>
+            {lastUpdate && <Text style={locStyles.updateText}>Updated {timeAgo(lastUpdate)}</Text>}
+          </View>
+        ) : (
+          <Text style={locStyles.noLocationText}>
+            {locationError || 'Tap "Start Tracking" to share your location'}
+          </Text>
+        )}
+      </View>
+
+      {/* Members List */}
+      <ScrollView style={{flex:1, padding: 20, paddingTop: 0}}>
+        <Text style={locStyles.sectionTitle}>Lobby Members ({members.length})</Text>
+        {members.map((member) => (
+          <View key={member.id} style={styles.userLocationRow}>
+            <View style={[styles.avatarSmall, !member.online && { backgroundColor: COLORS.gray }]}>
+              <User size={16} color="white" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <View style={locStyles.memberRow}>
+                <Text style={styles.memberName}>{member.name}</Text>
+                <View style={[locStyles.statusDot, { backgroundColor: member.online ? '#22c55e' : '#9ca3af' }]} />
+              </View>
+              <Text style={styles.locationText}>
+                {member.online ? `${member.distance} meter${member.distance !== 1 ? 's' : ''} away` : `Last seen ${timeAgo(member.lastSeen)}`}
+              </Text>
+            </View>
+            <MapPin size={20} color={member.online ? COLORS.primary : COLORS.gray} />
+          </View>
+        ))}
+      </ScrollView>
+    </View>
+  );
+};
+
+// Location Tab Styles
+const locStyles = StyleSheet.create({
+  myLocationCard: {
+    backgroundColor: 'white',
+    margin: 20,
+    marginBottom: 10,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  myLocationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  myLocationTitle: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    marginLeft: 8,
+  },
+  trackingButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#f3f4f6',
+  },
+  trackingButtonActive: {
+    backgroundColor: COLORS.primary,
+  },
+  trackingButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textDark,
+  },
+  coordsRow: {
+    marginTop: 4,
+  },
+  coordsText: {
+    fontSize: 14,
+    color: COLORS.textDark,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  updateText: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginTop: 4,
+  },
+  noLocationText: {
+    fontSize: 14,
+    color: '#9ca3af',
+    fontStyle: 'italic',
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6b7280',
+    marginBottom: 12,
+  },
+  memberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginLeft: 6,
+  },
+});
+
+// --- MESSAGE TAB (Chat List) ---
+const MessageTab = ({ onOpenChat, groupId = 'ABCDEF123', lobbyMembers = [] }) => {
+  // Mock members for direct messages if none provided
+  const members = lobbyMembers.length > 0 ? lobbyMembers : [
+    { id: 'user1', name: 'Baby L', online: true, distance: '100 M', avatar: 'BL' },
+    { id: 'user2', name: 'John Doe', online: true, distance: '50 M', avatar: 'JD' },
+    { id: 'user3', name: 'Jane Smith', online: false, distance: '200 M', avatar: 'JS' },
+  ];
+
+  // Mock data for chats
+  const lobbyChat = {
+    id: 'lobby',
+    name: `LOBBY ${groupId}`,
+    type: 'group',
+    lastMessage: 'John: Everyone stay safe!',
+    time: '8:05 am',
+    online: true,
+    members: members.length + 1, // +1 for self
+  };
+
+  // Transform members to chat format
+  const userChats = members.map((m, index) => ({
+    id: m.id || `user${index}`,
+    name: m.name,
+    type: 'user',
+    lastMessage: m.lastMessage || 'Tap to start chatting',
+    time: m.time || '---',
+    online: m.online !== undefined ? m.online : true,
+    distance: m.distance || '-- M',
+    avatar: m.avatar || m.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2),
+  }));
+
+  return (
+    <View style={msgStyles.container}>
+      {/* Header */}
+      <LinearGradient colors={[COLORS.primaryLight, COLORS.primary]} style={msgStyles.header}>
+        <Text style={msgStyles.headerTitle}>Messages</Text>
+      </LinearGradient>
+
+      <ScrollView style={msgStyles.chatList}>
+        {/* Lobby Group Chat */}
+        <TouchableOpacity style={msgStyles.chatItem} onPress={() => onOpenChat(lobbyChat)}>
+          <View style={msgStyles.groupIcon}>
+            <User size={24} color="white" />
+          </View>
+          <View style={msgStyles.chatInfo}>
+            <View style={msgStyles.chatHeader}>
+              <Text style={msgStyles.chatName}>{lobbyChat.name}</Text>
+              <Text style={msgStyles.chatTime}>{lobbyChat.time}</Text>
+            </View>
+            <View style={msgStyles.chatSubInfo}>
+              <Text style={msgStyles.chatLastMsg} numberOfLines={1}>{lobbyChat.lastMessage}</Text>
+              <View style={msgStyles.memberBadge}>
+                <Text style={msgStyles.memberCount}>{lobbyChat.members}</Text>
+              </View>
+            </View>
+          </View>
+        </TouchableOpacity>
+
+        {/* Divider */}
+        <View style={msgStyles.divider}>
+          <Text style={msgStyles.dividerText}>Direct Messages</Text>
+        </View>
+
+        {/* User Chats */}
+        {userChats.map((chat) => (
+          <TouchableOpacity key={chat.id} style={msgStyles.chatItem} onPress={() => onOpenChat(chat)}>
+            <View style={msgStyles.avatarContainer}>
+              <View style={msgStyles.avatar}>
+                <Text style={msgStyles.avatarText}>{chat.avatar}</Text>
+              </View>
+              <View style={[msgStyles.statusIndicator, { backgroundColor: chat.online ? '#22c55e' : '#9ca3af' }]} />
+            </View>
+            <View style={msgStyles.chatInfo}>
+              <View style={msgStyles.chatHeader}>
+                <Text style={msgStyles.chatName}>{chat.name}</Text>
+                <Text style={msgStyles.chatTime}>{chat.time}</Text>
+              </View>
+              <View style={msgStyles.chatSubInfo}>
+                <Text style={msgStyles.chatLastMsg} numberOfLines={1}>{chat.lastMessage}</Text>
+                <Text style={msgStyles.distanceText}>{chat.distance}</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+  );
+};
+
+// --- CHAT CONVERSATION VIEW ---
+const ChatConversation = ({ chat, onBack, loraContext = {} }) => {
+  const insets = useSafeAreaInsets();
+  const [message, setMessage] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const scrollViewRef = useRef(null);
+  
+  // Get messages from context or use initial mock data
+  const [localMessages, setLocalMessages] = useState([
+    { id: 1, text: 'Wer n u?', sender: 'me', time: '8:03 am' },
+    { id: 2, text: 'Here n me', sender: 'them', time: '8:04 am' },
+    { id: 3, text: 'Ok', sender: 'me', time: '8:04 am' },
+    { id: 4, text: 'Ok k rin', sender: 'them', time: '8:05 am' },
+  ]);
+
+  // Scroll to bottom when messages change or keyboard appears
+  useEffect(() => {
+    const keyboardDidShowListener = Keyboard.addListener('keyboardDidShow', () => {
+      setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+    });
+    return () => keyboardDidShowListener.remove();
+  }, []);
+
+  useEffect(() => {
+    setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+  }, [localMessages]);
+
+  const sendMessage = async () => {
+    if (message.trim() && !isSending) {
+      setIsSending(true);
+      
+      const newMsg = {
+        id: localMessages.length + 1,
+        text: message.trim(),
+        sender: 'me',
+        time: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase(),
+      };
+      
+      // Add to local messages immediately for UI feedback
+      setLocalMessages(prev => [...prev, newMsg]);
+      setMessage('');
+      
+      // Send via LoRa if connected
+      if (loraContext?.sendMessage) {
+        const destination = chat.type === 'group' ? 0xFF : parseInt(chat.id.replace('user', '')) || 0;
+        await loraContext.sendMessage(destination, newMsg.text);
+      }
+      
+      setIsSending(false);
+    }
+  };
+
+  return (
+    <KeyboardAvoidingView 
+      style={chatStyles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+    >
+      {/* Header */}
+      <LinearGradient colors={[COLORS.primaryLight, COLORS.primary]} style={chatStyles.header}>
+        <TouchableOpacity onPress={onBack} style={chatStyles.backButton}>
+          <ChevronRight size={24} color="white" style={{ transform: [{ rotate: '180deg' }] }} />
+        </TouchableOpacity>
+        <View style={chatStyles.headerInfo}>
+          <View style={chatStyles.headerAvatar}>
+            {chat.type === 'group' ? (
+              <User size={20} color="white" />
+            ) : (
+              <Text style={chatStyles.headerAvatarText}>{chat.avatar}</Text>
+            )}
+          </View>
+          <View>
+            <Text style={chatStyles.headerName}>{chat.name}</Text>
+            <Text style={chatStyles.headerStatus}>
+              {chat.type === 'group' ? `${chat.members} members` : `Distance: ${chat.distance}`}
+            </Text>
+          </View>
+        </View>
+      </LinearGradient>
+
+      {/* Messages */}
+      <ImageBackground
+        source={require('./assets/intbg.png')}
+        style={chatStyles.messagesContainer}
+        resizeMode="cover"
+      >
+        <ScrollView 
+          ref={scrollViewRef}
+          style={chatStyles.messagesList} 
+          contentContainerStyle={{ paddingVertical: 16, flexGrow: 1 }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {localMessages.map((msg) => (
+            <View 
+              key={msg.id} 
+              style={[
+                chatStyles.messageRow,
+                msg.sender === 'me' ? chatStyles.messageRowRight : chatStyles.messageRowLeft
+              ]}
+            >
+              {msg.sender !== 'me' && (
+                <View style={chatStyles.msgAvatar}>
+                  <Image 
+                    source={require('./assets/icon.png')} 
+                    style={chatStyles.msgAvatarImage}
+                  />
+                </View>
+              )}
+              
+              <View style={chatStyles.messageBubbleContainer}>
+                {msg.sender !== 'me' && <Text style={chatStyles.timeTextLeft}>{msg.time}</Text>}
+                <View style={[
+                  chatStyles.messageBubble,
+                  msg.sender === 'me' ? chatStyles.messageBubbleRight : chatStyles.messageBubbleLeft
+                ]}>
+                  <Text style={chatStyles.messageText}>{msg.text}</Text>
+                </View>
+                {msg.sender === 'me' && <Text style={chatStyles.timeTextRight}>{msg.time}</Text>}
+              </View>
+              
+              {msg.sender === 'me' && (
+                <View style={chatStyles.msgAvatar}>
+                  <Image 
+                    source={require('./assets/icon.png')} 
+                    style={chatStyles.msgAvatarImage}
+                  />
+                </View>
+              )}
+            </View>
+          ))}
+        </ScrollView>
+      </ImageBackground>
+
+      {/* Input Area */}
+      <View style={[chatStyles.inputContainer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+        <TextInput
+          style={chatStyles.textInput}
+          placeholder="Type a message..."
+          placeholderTextColor="#9ca3af"
+          value={message}
+          onChangeText={setMessage}
+          multiline
+        />
+        <TouchableOpacity style={chatStyles.sendButton} onPress={sendMessage}>
+          <Send size={20} color="white" />
+        </TouchableOpacity>
+      </View>
+    </KeyboardAvoidingView>
+  );
+};
+
+// Styles for Message Tab (Chat List)
+const msgStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  header: {
+    paddingTop: 50,
+    paddingBottom: 20,
+    paddingHorizontal: 20,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: 'white',
+  },
+  chatList: {
+    flex: 1,
+    padding: 16,
+  },
+  chatItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'white',
+    padding: 14,
+    borderRadius: 12,
+    marginBottom: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  groupIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarContainer: {
+    position: 'relative',
+  },
+  avatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#e5e7eb',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.textDark,
+  },
+  statusIndicator: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: 'white',
+  },
+  chatInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  chatHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  chatName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.textDark,
+  },
+  chatTime: {
+    fontSize: 12,
+    color: '#9ca3af',
+  },
+  chatSubInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  chatLastMsg: {
+    fontSize: 14,
+    color: '#6b7280',
+    flex: 1,
+  },
+  memberBadge: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  memberCount: {
+    fontSize: 12,
+    color: 'white',
+    fontWeight: '600',
+  },
+  distanceText: {
+    fontSize: 12,
+    color: COLORS.primary,
+    fontWeight: '500',
+  },
+  divider: {
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+  },
+  dividerText: {
+    fontSize: 13,
+    color: '#6b7280',
+    fontWeight: '500',
+  },
+});
+
+// Styles for Chat Conversation
+const chatStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 50,
+    paddingBottom: 16,
+    paddingHorizontal: 16,
+  },
+  backButton: {
+    padding: 4,
+  },
+  headerInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  headerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  headerAvatarText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'white',
+  },
+  headerName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: 'white',
+  },
+  headerStatus: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.8)',
+  },
+  messagesContainer: {
+    flex: 1,
+  },
+  messagesList: {
+    flex: 1,
+    paddingHorizontal: 16,
+  },
+  messageRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    marginBottom: 12,
+  },
+  messageRowLeft: {
+    justifyContent: 'flex-start',
+  },
+  messageRowRight: {
+    justifyContent: 'flex-end',
+  },
+  msgAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginHorizontal: 8,
+  },
+  msgAvatarImage: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+  },
+  messageBubbleContainer: {
+    maxWidth: '60%',
+  },
+  messageBubble: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 18,
+  },
+  messageBubbleLeft: {
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderBottomLeftRadius: 4,
+  },
+  messageBubbleRight: {
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderBottomRightRadius: 4,
+  },
+  messageText: {
+    fontSize: 15,
+    color: COLORS.textDark,
+  },
+  timeTextLeft: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginBottom: 4,
+    marginLeft: 4,
+  },
+  timeTextRight: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginTop: 4,
+    marginRight: 4,
+    textAlign: 'right',
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: 'white',
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  textInput: {
+    flex: 1,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    fontSize: 15,
+    maxHeight: 100,
+  },
+  sendButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+});
 
 // --- COMPASS TAB (FUNCTIONAL) ---
-const CompassTab = () => {
-  const [isServiceEnabled, setIsServiceEnabled] = useState(false);
-  const [subscription, setSubscription] = useState(null);
+const CompassTab = ({ isServiceEnabled, setIsServiceEnabled, subscription, setSubscription }) => {
   const [magnetometer, setMagnetometer] = useState(0);
   const [location, setLocation] = useState(null);
-  const [address, setAddress] = useState('Waiting for GPS...');
+  const [address, setAddress] = useState(isServiceEnabled ? 'Fetching location...' : 'Waiting for GPS...');
   const [errorMsg, setErrorMsg] = useState(null);
+  const subscriptionRef = useRef(subscription);
+
+  // Keep ref in sync with prop
+  useEffect(() => {
+    subscriptionRef.current = subscription;
+  }, [subscription]);
+
+  // On mount, if service is already enabled, start subscribing
+  useEffect(() => {
+    if (isServiceEnabled) {
+      _subscribe();
+      _getLocation();
+    }
+    // Cleanup only the local subscription reference, don't turn off service
+    return () => {
+      // Don't unsubscribe here - let the service keep running
+    };
+  }, []);
 
   // Toggle Handler
   const toggleSwitch = async () => {
@@ -540,16 +1944,24 @@ const CompassTab = () => {
 
   // Subscribe to Magnetometer
   const _subscribe = () => {
+    // Unsubscribe first if already subscribed
+    if (subscriptionRef.current) {
+      subscriptionRef.current.remove();
+    }
     Magnetometer.setUpdateInterval(100);
     const sub = Magnetometer.addListener((data) => {
       setMagnetometer(_angle(data));
     });
     setSubscription(sub);
+    subscriptionRef.current = sub;
   };
 
   // Unsubscribe
   const _unsubscribe = () => {
-    subscription && subscription.remove();
+    if (subscriptionRef.current) {
+      subscriptionRef.current.remove();
+      subscriptionRef.current = null;
+    }
     setSubscription(null);
   };
 
@@ -589,13 +2001,6 @@ const CompassTab = () => {
       setAddress("Location Unavailable");
     }
   };
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      _unsubscribe();
-    };
-  }, []);
 
   // Get Cardinal Direction (N, NW, W, etc.)
   const getCardinalDirection = (deg) => {
@@ -681,42 +2086,1589 @@ const CompassTab = () => {
   );
 };
 
-const ProfileTab = ({ onLogout }) => (
-  <ScrollView style={styles.tabContainer}>
-    <View style={styles.profileHeader}>
-      <View style={styles.avatarLarge}>
-        <User size={40} color="white" />
+const ProfileTab = ({ onLogout, username = 'John Doe', userData = {}, isConnected = false }) => {
+  const [activeScreen, setActiveScreen] = useState('main'); // main, edit, settings, help, report
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const { notifications, unreadCount } = useNotifications();
+
+  const handleLogoutPress = () => {
+    setShowLogoutConfirm(true);
+  };
+
+  const confirmLogout = () => {
+    setShowLogoutConfirm(false);
+    onLogout();
+  };
+
+  // Edit Profile Screen
+  if (activeScreen === 'edit') {
+    return (
+      <EditProfileScreen 
+        userData={userData} 
+        onBack={() => setActiveScreen('main')} 
+      />
+    );
+  }
+
+  // Settings Screen
+  if (activeScreen === 'settings') {
+    return (
+      <SettingsScreen 
+        onBack={() => setActiveScreen('main')} 
+      />
+    );
+  }
+
+  // Help Screen
+  if (activeScreen === 'help') {
+    return (
+      <HelpScreen 
+        onBack={() => setActiveScreen('main')} 
+      />
+    );
+  }
+
+  // Report a Problem Screen
+  if (activeScreen === 'report') {
+    return (
+      <ReportProblemScreen 
+        onBack={() => setActiveScreen('main')} 
+      />
+    );
+  }
+
+  // Main Profile Screen
+  return (
+    <ScrollView style={styles.tabContainer}>
+      <View style={styles.profileHeader}>
+        <View style={styles.avatarLarge}>
+          <User size={40} color="white" />
+        </View>
+        <Text style={styles.profileName}>Hello!{'\n'}{username}</Text>
       </View>
-      <Text style={styles.profileName}>Hello!{'\n'}John Doe</Text>
-    </View>
 
-    <View style={styles.menuList}>
-      <MenuOption icon={User} label="Edit Profile" />
-      <MenuOption icon={Settings} label="Settings" />
-      <MenuOption icon={HelpCircle} label="Help" />
-      <MenuOption icon={AlertOctagon} label="Report a Problem" />
-      <MenuOption icon={LogOut} label="Logout" onPress={onLogout} />
-    </View>
-  </ScrollView>
-);
+      {/* Connection Status Card */}
+      <View style={styles.connectionCard}>
+        <View style={styles.connectionRow}>
+          {isConnected ? (
+            <Wifi size={20} color={COLORS.primary} />
+          ) : (
+            <WifiOff size={20} color={COLORS.gray} />
+          )}
+          <Text style={[styles.connectionText, { color: isConnected ? COLORS.primary : COLORS.gray }]}>
+            {isConnected ? 'LoRa Device Connected' : 'LoRa Device Disconnected'}
+          </Text>
+        </View>
+      </View>
 
-const MenuOption = ({ icon: Icon, label, onPress }) => (
-  <TouchableOpacity style={styles.menuOption} onPress={onPress}>
-    <Icon size={20} color={COLORS.textDark} />
-    <Text style={styles.menuLabel}>{label}</Text>
+      <View style={styles.menuList}>
+        <MenuOption icon={User} label="Edit Profile" onPress={() => setActiveScreen('edit')} />
+        <MenuOption icon={Settings} label="Settings" onPress={() => setActiveScreen('settings')} />
+        <MenuOption icon={HelpCircle} label="Help" onPress={() => setActiveScreen('help')} />
+        <MenuOption icon={AlertOctagon} label="Report a Problem" onPress={() => setActiveScreen('report')} />
+        <MenuOption icon={LogOut} label="Logout" onPress={handleLogoutPress} danger />
+      </View>
+
+      {/* Logout Confirmation Modal */}
+      <Modal visible={showLogoutConfirm} transparent animationType="fade">
+        <View style={logoutStyles.overlay}>
+          <View style={logoutStyles.modal}>
+            <View style={logoutStyles.iconContainer}>
+              <LogOut size={32} color={COLORS.error} />
+            </View>
+            <Text style={logoutStyles.title}>Logout</Text>
+            <Text style={logoutStyles.message}>Are you sure you want to logout? You'll need to rejoin the lobby.</Text>
+            <View style={logoutStyles.buttonRow}>
+              <TouchableOpacity 
+                style={logoutStyles.cancelButton} 
+                onPress={() => setShowLogoutConfirm(false)}
+              >
+                <Text style={logoutStyles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={logoutStyles.logoutButton} 
+                onPress={confirmLogout}
+              >
+                <Text style={logoutStyles.logoutButtonText}>Logout</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </ScrollView>
+  );
+};
+
+// Edit Profile Screen
+const EditProfileScreen = ({ userData = {}, onBack }) => {
+  const insets = useSafeAreaInsets();
+  const scrollViewRef = useRef(null);
+  const [firstName, setFirstName] = useState(userData.firstName || '');
+  const [lastName, setLastName] = useState(userData.lastName || '');
+  const [nickname, setNickname] = useState(userData.nickname || '');
+  const [phone, setPhone] = useState(userData.phone || '');
+  const [emergencyContact, setEmergencyContact] = useState(userData.emergencyContact || '');
+  const [isSaving, setIsSaving] = useState(false);
+  const [phoneError, setPhoneError] = useState('');
+  const [emergencyError, setEmergencyError] = useState('');
+
+  const validatePhoneNumber = (number, isRequired = true) => {
+    // Remove non-numeric characters for validation
+    const cleanNumber = number.replace(/[^0-9]/g, '');
+    if (isRequired && cleanNumber.length === 0) {
+      return 'Phone number is required';
+    }
+    if (cleanNumber.length > 0 && cleanNumber.length < 10) {
+      return 'Phone number must be at least 10 digits';
+    }
+    if (cleanNumber.length > 15) {
+      return 'Phone number cannot exceed 15 digits';
+    }
+    return '';
+  };
+
+  const checkSameNumbers = (phoneNum, emergencyNum) => {
+    const cleanPhone = phoneNum.replace(/[^0-9]/g, '');
+    const cleanEmergency = emergencyNum.replace(/[^0-9]/g, '');
+    if (cleanPhone.length >= 10 && cleanEmergency.length >= 10 && cleanPhone === cleanEmergency) {
+      return 'Emergency contact cannot be the same as your phone number';
+    }
+    return '';
+  };
+
+  const handlePhoneChange = (text) => {
+    // Only allow numbers, spaces, dashes, parentheses, and plus sign
+    const formatted = text.replace(/[^0-9\s\-\(\)\+]/g, '');
+    // Limit to reasonable length (with formatting characters)
+    if (formatted.length <= 20) {
+      setPhone(formatted);
+      const phoneErr = validatePhoneNumber(formatted);
+      setPhoneError(phoneErr);
+      // Also check if emergency contact matches
+      if (!phoneErr && emergencyContact) {
+        const sameErr = checkSameNumbers(formatted, emergencyContact);
+        if (sameErr) setEmergencyError(sameErr);
+        else setEmergencyError(validatePhoneNumber(emergencyContact, false));
+      }
+    }
+  };
+
+  const handleEmergencyChange = (text) => {
+    const formatted = text.replace(/[^0-9\s\-\(\)\+]/g, '');
+    if (formatted.length <= 20) {
+      setEmergencyContact(formatted);
+      const emergencyErr = validatePhoneNumber(formatted, false);
+      if (emergencyErr) {
+        setEmergencyError(emergencyErr);
+      } else {
+        // Check if same as phone number
+        const sameErr = checkSameNumbers(phone, formatted);
+        setEmergencyError(sameErr);
+      }
+    }
+  };
+
+  const handleEmergencyFocus = () => {
+    // Scroll to make emergency contact visible above keyboard
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 300);
+  };
+
+  const handleSave = async () => {
+    // Validate before saving
+    const phoneValidation = validatePhoneNumber(phone);
+    const emergencyValidation = emergencyContact ? validatePhoneNumber(emergencyContact, false) : '';
+    const sameNumberError = emergencyContact ? checkSameNumbers(phone, emergencyContact) : '';
+    
+    if (phoneValidation) {
+      setPhoneError(phoneValidation);
+      return;
+    }
+    if (emergencyValidation) {
+      setEmergencyError(emergencyValidation);
+      return;
+    }
+    if (sameNumberError) {
+      setEmergencyError(sameNumberError);
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const profileData = { firstName, lastName, nickname, phone, emergencyContact };
+      await AsyncStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(profileData));
+      Alert.alert('Success', 'Profile updated successfully!');
+      onBack();
+    } catch (error) {
+      Alert.alert('Error', 'Failed to save profile');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <KeyboardAvoidingView 
+      style={editProfileStyles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+    >
+      <View style={editProfileStyles.header}>
+        <TouchableOpacity onPress={onBack} style={editProfileStyles.backButton}>
+          <ChevronLeft size={24} color={COLORS.textDark} />
+        </TouchableOpacity>
+        <Text style={editProfileStyles.headerTitle}>Edit Profile</Text>
+        <View style={{ width: 24 }} />
+      </View>
+
+      <ScrollView 
+        ref={scrollViewRef}
+        style={editProfileStyles.scrollContent}
+        contentContainerStyle={[editProfileStyles.scrollContentContainer, { paddingBottom: Math.max(insets.bottom + 100, 150) }]}
+        showsVerticalScrollIndicator={true}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
+        {/* Avatar Section */}
+        <View style={editProfileStyles.avatarSection}>
+          <View style={editProfileStyles.avatarLarge}>
+            <User size={50} color="white" />
+          </View>
+          <TouchableOpacity style={editProfileStyles.changePhotoBtn}>
+            <Camera size={16} color={COLORS.primary} />
+            <Text style={editProfileStyles.changePhotoText}>Change Photo</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Form Card */}
+        <View style={editProfileStyles.formCard}>
+          <View style={editProfileStyles.formGroup}>
+            <Text style={editProfileStyles.label}>First Name</Text>
+            <TextInput
+              style={editProfileStyles.input}
+              value={firstName}
+              onChangeText={setFirstName}
+              placeholder="Enter first name"
+              placeholderTextColor="#9ca3af"
+            />
+          </View>
+
+          <View style={editProfileStyles.formGroup}>
+            <Text style={editProfileStyles.label}>Last Name</Text>
+            <TextInput
+              style={editProfileStyles.input}
+              value={lastName}
+              onChangeText={setLastName}
+              placeholder="Enter last name"
+              placeholderTextColor="#9ca3af"
+            />
+          </View>
+
+          <View style={editProfileStyles.formGroup}>
+            <Text style={editProfileStyles.label}>Nickname</Text>
+            <TextInput
+              style={editProfileStyles.input}
+              value={nickname}
+              onChangeText={setNickname}
+              placeholder="Enter nickname"
+              placeholderTextColor="#9ca3af"
+            />
+          </View>
+
+          <View style={editProfileStyles.formGroup}>
+            <Text style={editProfileStyles.label}>Phone Number</Text>
+            <TextInput
+              style={[editProfileStyles.input, phoneError && editProfileStyles.inputError]}
+              value={phone}
+              onChangeText={handlePhoneChange}
+              placeholder="Enter phone number"
+              placeholderTextColor="#9ca3af"
+              keyboardType="phone-pad"
+              maxLength={20}
+            />
+            {phoneError ? <Text style={editProfileStyles.errorText}>{phoneError}</Text> : null}
+          </View>
+
+          <View style={editProfileStyles.formGroupLast}>
+            <Text style={editProfileStyles.label}>Emergency Contact</Text>
+            <TextInput
+              style={[editProfileStyles.input, emergencyError && editProfileStyles.inputError]}
+              value={emergencyContact}
+              onChangeText={handleEmergencyChange}
+              onFocus={handleEmergencyFocus}
+              placeholder="Emergency contact number"
+              placeholderTextColor="#9ca3af"
+              keyboardType="phone-pad"
+              maxLength={20}
+            />
+            {emergencyError ? <Text style={editProfileStyles.errorText}>{emergencyError}</Text> : null}
+          </View>
+        </View>
+
+        <TouchableOpacity 
+          style={[editProfileStyles.saveButton, isSaving && { opacity: 0.7 }]} 
+          onPress={handleSave}
+          disabled={isSaving}
+        >
+          {isSaving ? (
+            <ActivityIndicator color="white" />
+          ) : (
+            <Text style={editProfileStyles.saveButtonText}>Save Changes</Text>
+          )}
+        </TouchableOpacity>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+};
+
+// Settings Screen
+const SettingsScreen = ({ onBack }) => {
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [locationSharing, setLocationSharing] = useState(true);
+  const [darkMode, setDarkMode] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [vibrationEnabled, setVibrationEnabled] = useState(true);
+
+  // Load settings on mount
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      const savedSettings = await AsyncStorage.getItem(STORAGE_KEYS.SETTINGS);
+      if (savedSettings) {
+        const settings = JSON.parse(savedSettings);
+        setNotificationsEnabled(settings.notifications ?? true);
+        setLocationSharing(settings.locationSharing ?? true);
+        setDarkMode(settings.darkMode ?? false);
+        setSoundEnabled(settings.sound ?? true);
+        setVibrationEnabled(settings.vibration ?? true);
+      }
+    } catch (error) {
+      console.log('Error loading settings:', error);
+    }
+  };
+
+  const saveSetting = async (key, value) => {
+    try {
+      const savedSettings = await AsyncStorage.getItem(STORAGE_KEYS.SETTINGS);
+      const settings = savedSettings ? JSON.parse(savedSettings) : {};
+      settings[key] = value;
+      await AsyncStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+    } catch (error) {
+      console.log('Error saving setting:', error);
+    }
+  };
+
+  const SettingRow = ({ icon: Icon, label, value, onValueChange, settingKey }) => (
+    <View style={settingsStyles.settingRow}>
+      <View style={settingsStyles.settingLeft}>
+        <Icon size={20} color={COLORS.textDark} />
+        <Text style={settingsStyles.settingLabel}>{label}</Text>
+      </View>
+      <Switch
+        value={value}
+        onValueChange={(newValue) => {
+          onValueChange(newValue);
+          saveSetting(settingKey, newValue);
+        }}
+        trackColor={{ false: '#d1d5db', true: COLORS.primaryLight }}
+        thumbColor={value ? COLORS.primary : '#f4f3f4'}
+      />
+    </View>
+  );
+
+  return (
+    <View style={settingsStyles.container}>
+      <View style={profileStyles.header}>
+        <TouchableOpacity onPress={onBack} style={profileStyles.backButton}>
+          <ChevronLeft size={24} color={COLORS.textDark} />
+        </TouchableOpacity>
+        <Text style={profileStyles.headerTitle}>Settings</Text>
+        <View style={{ width: 24 }} />
+      </View>
+
+      <ScrollView style={settingsStyles.content}>
+        <Text style={settingsStyles.sectionTitle}>Notifications</Text>
+        <View style={settingsStyles.section}>
+          <SettingRow 
+            icon={Bell} 
+            label="Push Notifications" 
+            value={notificationsEnabled} 
+            onValueChange={setNotificationsEnabled}
+            settingKey="notifications"
+          />
+          <SettingRow 
+            icon={MessageSquare} 
+            label="Message Alerts" 
+            value={soundEnabled} 
+            onValueChange={setSoundEnabled}
+            settingKey="sound"
+          />
+        </View>
+
+        <Text style={settingsStyles.sectionTitle}>Privacy & Location</Text>
+        <View style={settingsStyles.section}>
+          <SettingRow 
+            icon={MapPin} 
+            label="Share Location" 
+            value={locationSharing} 
+            onValueChange={setLocationSharing}
+            settingKey="locationSharing"
+          />
+        </View>
+
+        <Text style={settingsStyles.sectionTitle}>Feedback</Text>
+        <View style={settingsStyles.section}>
+          <SettingRow 
+            icon={Bell} 
+            label="Vibration" 
+            value={vibrationEnabled} 
+            onValueChange={setVibrationEnabled}
+            settingKey="vibration"
+          />
+        </View>
+
+        <View style={settingsStyles.infoSection}>
+          <Text style={settingsStyles.versionText}>HikeSafe v1.0.0</Text>
+          <Text style={settingsStyles.copyrightText}>© 2025 HikeSafe Team</Text>
+        </View>
+      </ScrollView>
+    </View>
+  );
+};
+
+// Help Screen
+const HelpScreen = ({ onBack }) => {
+  const insets = useSafeAreaInsets();
+  const faqs = [
+    { 
+      q: 'How do I connect to a LoRa device?', 
+      a: 'On the initialization screen, make sure your LoRa device is powered on. Tap "Rescan" to find nearby devices, select your device, and tap "Connect".' 
+    },
+    { 
+      q: 'How does location sharing work?', 
+      a: 'When you enable location tracking in the Location tab, your GPS coordinates are sent to other lobby members via the LoRa mesh network.' 
+    },
+    { 
+      q: 'What is the range of communication?', 
+      a: 'LoRa devices can communicate over several kilometers in open terrain. Range may be reduced in forests or mountainous areas.' 
+    },
+    { 
+      q: 'How do I send an SOS alert?', 
+      a: 'In an emergency, use the SOS feature (coming soon) to broadcast your location to all lobby members and emergency contacts.' 
+    },
+    { 
+      q: 'Why can\'t I see other members\' locations?', 
+      a: 'Make sure all members have location sharing enabled and are connected to the same LoRa mesh network.' 
+    },
+  ];
+
+  const [expandedIndex, setExpandedIndex] = useState(null);
+
+  return (
+    <View style={helpScreenStyles.container}>
+      <View style={helpScreenStyles.header}>
+        <TouchableOpacity onPress={onBack} style={helpScreenStyles.backButton}>
+          <ChevronLeft size={24} color={COLORS.textDark} />
+        </TouchableOpacity>
+        <Text style={helpScreenStyles.headerTitle}>Help & FAQ</Text>
+        <View style={{ width: 24 }} />
+      </View>
+
+      <ScrollView 
+        style={helpScreenStyles.scrollContent}
+        contentContainerStyle={[helpScreenStyles.scrollContentContainer, { paddingBottom: Math.max(insets.bottom + 20, 120) }]}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={helpScreenStyles.introCard}>
+          <View style={helpScreenStyles.introIconContainer}>
+            <Info size={24} color={COLORS.primary} />
+          </View>
+          <Text style={helpScreenStyles.introText}>
+            Find answers to common questions about HikeSafe. Can't find what you need? Report a problem.
+          </Text>
+        </View>
+
+        <Text style={helpScreenStyles.sectionTitle}>Frequently Asked Questions</Text>
+        
+        {faqs.map((faq, index) => (
+          <TouchableOpacity 
+            key={index} 
+            style={[
+              helpScreenStyles.faqItem,
+              expandedIndex === index && helpScreenStyles.faqItemExpanded
+            ]}
+            onPress={() => setExpandedIndex(expandedIndex === index ? null : index)}
+            activeOpacity={0.7}
+          >
+            <View style={helpScreenStyles.faqHeader}>
+              <View style={helpScreenStyles.faqIconContainer}>
+                <HelpCircle size={18} color={expandedIndex === index ? COLORS.primary : '#9ca3af'} />
+              </View>
+              <Text style={[
+                helpScreenStyles.faqQuestion,
+                expandedIndex === index && helpScreenStyles.faqQuestionExpanded
+              ]}>{faq.q}</Text>
+              <View style={helpScreenStyles.faqChevron}>
+                <ChevronRight 
+                  size={20} 
+                  color={expandedIndex === index ? COLORS.primary : '#9ca3af'} 
+                  style={{ transform: [{ rotate: expandedIndex === index ? '90deg' : '0deg' }] }} 
+                />
+              </View>
+            </View>
+            {expandedIndex === index && (
+              <View style={helpScreenStyles.faqAnswerContainer}>
+                <Text style={helpScreenStyles.faqAnswer}>{faq.a}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        ))}
+
+        <View style={helpScreenStyles.contactSection}>
+          <Text style={helpScreenStyles.contactTitle}>Need More Help?</Text>
+          <Text style={helpScreenStyles.contactSubtitle}>Our support team is here to assist you</Text>
+          <TouchableOpacity style={helpScreenStyles.contactButton}>
+            <Mail size={20} color="white" />
+            <Text style={helpScreenStyles.contactButtonText}>Contact Support</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    </View>
+  );
+};
+
+// Report a Problem Screen
+const ReportProblemScreen = ({ onBack }) => {
+  const insets = useSafeAreaInsets();
+  const [category, setCategory] = useState('');
+  const [description, setDescription] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+
+  const categories = [
+    'App Crash',
+    'Connection Issue',
+    'Location Not Working',
+    'Message Not Sending',
+    'UI/Display Issue',
+    'Feature Request',
+    'Other',
+  ];
+
+  const handleSubmit = async () => {
+    if (!category) {
+      Alert.alert('Error', 'Please select a category');
+      return;
+    }
+    if (!description.trim()) {
+      Alert.alert('Error', 'Please describe the problem');
+      return;
+    }
+
+    setIsSubmitting(true);
+    // Simulate API call
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    setIsSubmitting(false);
+    
+    Alert.alert(
+      'Thank You!',
+      'Your report has been submitted. We\'ll look into it as soon as possible.',
+      [{ text: 'OK', onPress: onBack }]
+    );
+  };
+
+  return (
+    <KeyboardAvoidingView 
+      style={reportStyles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <View style={{ flex: 1 }}>
+          <View style={profileStyles.header}>
+            <TouchableOpacity onPress={onBack} style={profileStyles.backButton}>
+              <ChevronLeft size={24} color={COLORS.textDark} />
+            </TouchableOpacity>
+            <Text style={profileStyles.headerTitle}>Report a Problem</Text>
+            <View style={{ width: 24 }} />
+          </View>
+
+          <ScrollView 
+            style={reportStyles.content}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ paddingBottom: Math.max(insets.bottom + 20, 40) }}
+          >
+            <View style={reportStyles.infoCard}>
+              <AlertOctagon size={24} color={COLORS.primary} />
+              <Text style={reportStyles.infoText}>
+                Help us improve HikeSafe by reporting any issues you encounter.
+              </Text>
+            </View>
+
+            <View style={reportStyles.form}>
+              <Text style={reportStyles.label}>Category *</Text>
+              <TouchableOpacity 
+                style={reportStyles.picker}
+                onPress={() => setShowCategoryPicker(true)}
+              >
+                <Text style={category ? reportStyles.pickerText : reportStyles.pickerPlaceholder}>
+                  {category || 'Select a category'}
+                </Text>
+                <ChevronRight size={20} color={COLORS.gray} />
+              </TouchableOpacity>
+
+              <Text style={reportStyles.label}>Description *</Text>
+              <TextInput
+                style={reportStyles.textArea}
+                value={description}
+                onChangeText={setDescription}
+                placeholder="Please describe the problem in detail..."
+                placeholderTextColor="#9ca3af"
+                multiline
+                numberOfLines={6}
+                textAlignVertical="top"
+              />
+
+              <TouchableOpacity 
+                style={[reportStyles.submitButton, isSubmitting && { opacity: 0.7 }]}
+                onPress={handleSubmit}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <Text style={reportStyles.submitButtonText}>Submit Report</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </TouchableWithoutFeedback>
+
+      {/* Category Picker Modal */}
+      {/* Category Picker Modal */}
+      <Modal visible={showCategoryPicker} transparent animationType="fade">
+        <TouchableOpacity 
+          style={reportStyles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setShowCategoryPicker(false)}
+        >
+          <View style={reportStyles.modalContent}>
+            <Text style={reportStyles.modalTitle}>Select Category</Text>
+            {categories.map((cat) => (
+              <TouchableOpacity
+                key={cat}
+                style={[reportStyles.categoryItem, category === cat && reportStyles.categoryItemSelected]}
+                onPress={() => {
+                  setCategory(cat);
+                  setShowCategoryPicker(false);
+                }}
+              >
+                <Text style={[reportStyles.categoryText, category === cat && { color: COLORS.primary }]}>
+                  {cat}
+                </Text>
+                {category === cat && <CheckCircle size={20} color={COLORS.primary} />}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </KeyboardAvoidingView>
+  );
+};
+
+// Edit Profile Screen Styles
+const editProfileStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'android' ? 40 : 20,
+    paddingBottom: 16,
+    backgroundColor: 'white',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  backButton: {
+    padding: 8,
+    marginLeft: -8,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  scrollContent: {
+    flex: 1,
+  },
+  scrollContentContainer: {
+    padding: 20,
+    paddingBottom: 40,
+  },
+  avatarSection: {
+    alignItems: 'center',
+    marginBottom: 24,
+    paddingTop: 10,
+  },
+  avatarLarge: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  changePhotoBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: 'white',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+  },
+  changePhotoText: {
+    marginLeft: 6,
+    fontSize: 14,
+    color: COLORS.primary,
+    fontWeight: '600',
+  },
+  formCard: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  formGroup: {
+    marginBottom: 20,
+  },
+  formGroupLast: {
+    marginBottom: 0,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 15,
+    color: COLORS.textDark,
+  },
+  saveButton: {
+    backgroundColor: COLORS.primary,
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 24,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  saveButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  inputError: {
+    borderColor: COLORS.error,
+    borderWidth: 1.5,
+  },
+  errorText: {
+    color: COLORS.error,
+    fontSize: 12,
+    marginTop: 6,
+    marginLeft: 4,
+  },
+});
+
+// Help Screen Styles
+const helpScreenStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'android' ? 40 : 20,
+    paddingBottom: 16,
+    backgroundColor: 'white',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  backButton: {
+    padding: 8,
+    marginLeft: -8,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  scrollContent: {
+    flex: 1,
+  },
+  scrollContentContainer: {
+    padding: 20,
+    paddingBottom: 120,
+  },
+  introCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ecfccb',
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 24,
+  },
+  introIconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(132, 204, 22, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  introText: {
+    flex: 1,
+    marginLeft: 14,
+    fontSize: 14,
+    color: COLORS.textDark,
+    lineHeight: 20,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.textDark,
+    marginBottom: 16,
+  },
+  faqItem: {
+    backgroundColor: 'white',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  faqItemExpanded: {
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.1,
+  },
+  faqHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  faqIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#f3f4f6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  faqQuestion: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    lineHeight: 21,
+  },
+  faqQuestionExpanded: {
+    color: COLORS.primary,
+  },
+  faqChevron: {
+    marginLeft: 8,
+  },
+  faqAnswerContainer: {
+    marginTop: 14,
+    paddingTop: 14,
+    paddingLeft: 44,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+  },
+  faqAnswer: {
+    fontSize: 14,
+    color: '#6b7280',
+    lineHeight: 22,
+  },
+  contactSection: {
+    marginTop: 32,
+    marginBottom: 20,
+    alignItems: 'center',
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  contactTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.textDark,
+    marginBottom: 6,
+  },
+  contactSubtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    marginBottom: 18,
+  },
+  contactButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    borderRadius: 30,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  contactButtonText: {
+    color: 'white',
+    fontSize: 15,
+    fontWeight: '600',
+    marginLeft: 10,
+  },
+});
+
+// Logout Confirmation Styles
+const logoutStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  modal: {
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 24,
+    width: '100%',
+    maxWidth: 320,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  iconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#fee2e2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.textDark,
+    marginBottom: 8,
+  },
+  message: {
+    fontSize: 14,
+    color: '#6b7280',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  cancelButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    backgroundColor: '#f3f4f6',
+  },
+  cancelButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.textDark,
+  },
+  logoutButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    backgroundColor: COLORS.error,
+  },
+  logoutButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: 'white',
+  },
+});
+
+// Profile Screen Styles
+const profileStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'android' ? 40 : 20,
+    paddingBottom: 16,
+    backgroundColor: 'white',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  backButton: {
+    padding: 4,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  content: {
+    flex: 1,
+    padding: 20,
+  },
+  avatarSection: {
+    alignItems: 'center',
+    marginBottom: 30,
+  },
+  avatarLarge: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  changePhotoBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 20,
+  },
+  changePhotoText: {
+    marginLeft: 6,
+    fontSize: 14,
+    color: COLORS.primary,
+    fontWeight: '600',
+  },
+  form: {
+    gap: 16,
+  },
+  formGroup: {
+    marginBottom: 16,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: 'white',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: COLORS.textDark,
+  },
+  saveButton: {
+    backgroundColor: COLORS.primary,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 20,
+    marginBottom: 40,
+  },
+  saveButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+});
+
+// Settings Screen Styles
+const settingsStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  content: {
+    flex: 1,
+    padding: 20,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6b7280',
+    marginBottom: 8,
+    marginTop: 16,
+    textTransform: 'uppercase',
+  },
+  section: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  settingLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  settingLabel: {
+    fontSize: 15,
+    color: COLORS.textDark,
+    marginLeft: 12,
+  },
+  infoSection: {
+    alignItems: 'center',
+    marginTop: 40,
+    marginBottom: 40,
+  },
+  versionText: {
+    fontSize: 14,
+    color: '#9ca3af',
+    marginBottom: 4,
+  },
+  copyrightText: {
+    fontSize: 12,
+    color: '#9ca3af',
+  },
+});
+
+// Help Screen Styles
+const helpStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  content: {
+    flex: 1,
+    padding: 20,
+  },
+  introCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ecfccb',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
+  introText: {
+    flex: 1,
+    marginLeft: 12,
+    fontSize: 14,
+    color: COLORS.textDark,
+    lineHeight: 20,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.textDark,
+    marginBottom: 12,
+  },
+  faqItem: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 10,
+  },
+  faqHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  faqQuestion: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    paddingRight: 10,
+  },
+  faqAnswer: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#6b7280',
+    lineHeight: 20,
+  },
+  contactSection: {
+    marginTop: 30,
+    marginBottom: 40,
+    alignItems: 'center',
+  },
+  contactTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    marginBottom: 12,
+  },
+  contactButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 24,
+  },
+  contactButtonText: {
+    color: 'white',
+    fontSize: 15,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+});
+
+// Report Problem Screen Styles
+const reportStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  content: {
+    flex: 1,
+    padding: 20,
+  },
+  infoCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fef3c7',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
+  infoText: {
+    flex: 1,
+    marginLeft: 12,
+    fontSize: 14,
+    color: COLORS.textDark,
+    lineHeight: 20,
+  },
+  form: {
+    gap: 16,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textDark,
+    marginBottom: 8,
+    marginTop: 8,
+  },
+  picker: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'white',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  pickerText: {
+    fontSize: 15,
+    color: COLORS.textDark,
+  },
+  pickerPlaceholder: {
+    fontSize: 15,
+    color: '#9ca3af',
+  },
+  textArea: {
+    backgroundColor: 'white',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: COLORS.textDark,
+    minHeight: 150,
+  },
+  submitButton: {
+    backgroundColor: COLORS.primary,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  submitButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 20,
+    width: '80%',
+    maxHeight: '70%',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.textDark,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  categoryItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  categoryItemSelected: {
+    backgroundColor: '#f0fdf4',
+    marginHorizontal: -20,
+    paddingHorizontal: 20,
+  },
+  categoryText: {
+    fontSize: 15,
+    color: COLORS.textDark,
+  },
+});
+
+const MenuOption = ({ icon: Icon, label, onPress, badge, danger }) => (
+  <TouchableOpacity style={[styles.menuOption, danger && styles.menuOptionDanger]} onPress={onPress}>
+    <Icon size={20} color={danger ? COLORS.error : COLORS.textDark} />
+    <Text style={[styles.menuLabel, danger && styles.menuLabelDanger]}>{label}</Text>
+    {badge && (
+      <View style={styles.menuBadge}>
+        <Text style={styles.menuBadgeText}>{badge}</Text>
+      </View>
+    )}
+    <ChevronRight size={20} color={danger ? COLORS.error : COLORS.gray} style={{ marginLeft: 'auto' }} />
   </TouchableOpacity>
 );
 
 // --- MAIN APP COMPONENT ---
 
 export default function App() {
-  const [screen, setScreen] = useState('onboarding1'); // onboarding1, onboarding2, lobby, dashboard
+  const [screen, setScreen] = useState('init'); // init, onboarding1, onboarding2, lobby, dashboard
   const [showReminder, setShowReminder] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [lobbyData, setLobbyData] = useState({ lobbyName: '', groupId: '', maxMember: '' });
+  const [userData, setUserData] = useState({ username: '', groupId: '' });
+  
+  // ====== NOTIFICATION STATE ======
+  const [notifications, setNotifications] = useState([]);
+  const [showNotificationBanner, setShowNotificationBanner] = useState(false);
+  const [currentNotification, setCurrentNotification] = useState(null);
+
+  // Load saved notifications on mount
+  useEffect(() => {
+    loadNotifications();
+  }, []);
+
+  const loadNotifications = async () => {
+    try {
+      const saved = await AsyncStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
+      if (saved) {
+        setNotifications(JSON.parse(saved));
+      }
+    } catch (error) {
+      console.log('Error loading notifications:', error);
+    }
+  };
+
+  const saveNotifications = async (notifs) => {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(notifs));
+    } catch (error) {
+      console.log('Error saving notifications:', error);
+    }
+  };
+
+  const addNotification = (notification) => {
+    const newNotif = {
+      id: Date.now(),
+      ...notification,
+      timestamp: new Date().toISOString(),
+      read: false,
+    };
+    const updated = [newNotif, ...notifications].slice(0, 50); // Keep last 50
+    setNotifications(updated);
+    saveNotifications(updated);
+    
+    // Show banner
+    setCurrentNotification(newNotif);
+    setShowNotificationBanner(true);
+    Vibration.vibrate(200);
+    
+    // Auto-hide banner after 3 seconds
+    setTimeout(() => {
+      setShowNotificationBanner(false);
+    }, 3000);
+  };
+
+  const clearNotification = (id) => {
+    const updated = notifications.filter(n => n.id !== id);
+    setNotifications(updated);
+    saveNotifications(updated);
+  };
+
+  const markAsRead = (id) => {
+    const updated = notifications.map(n => 
+      n.id === id ? { ...n, read: true } : n
+    );
+    setNotifications(updated);
+    saveNotifications(updated);
+  };
+
+  const unreadCount = notifications.filter(n => !n.read).length;
+
+  const notificationContext = {
+    notifications,
+    addNotification,
+    clearNotification,
+    markAsRead,
+    unreadCount,
+  };
+  
+  // ====== LORA STATE MANAGEMENT ======
+  const [connectionState, setConnectionState] = useState(CONNECTION_STATES.DISCONNECTED);
+  const [connectedDevice, setConnectedDevice] = useState(null);
+  const [availableDevices, setAvailableDevices] = useState([]);
+  const [currentLobby, setCurrentLobby] = useState(null);
+  const [lobbyMembers, setLobbyMembers] = useState([]);
+  const [messages, setMessages] = useState([]);
+  const [loraError, setLoraError] = useState(null);
+
+  // LoRa Context value to pass to components
+  const loraContext = {
+    // State
+    connectionState,
+    setConnectionState,
+    connectedDevice,
+    setConnectedDevice,
+    availableDevices,
+    setAvailableDevices,
+    currentLobby,
+    setCurrentLobby,
+    lobbyMembers,
+    setLobbyMembers,
+    messages,
+    setMessages,
+    error: loraError,
+    setError: setLoraError,
+    
+    // Computed
+    isConnected: connectionState === CONNECTION_STATES.CONNECTED,
+    
+    // Actions (will integrate with BLE service)
+    sendMessage: async (destination, text) => {
+      // TODO: Replace with bleService.sendText when ready
+      const newMsg = {
+        id: Date.now(),
+        text,
+        sender: 'me',
+        destination,
+        time: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase(),
+      };
+      setMessages(prev => [...prev, newMsg]);
+      return true;
+    },
+    
+    sendLocation: async (lat, lon) => {
+      // TODO: Replace with bleService.sendGPS when ready
+      return true;
+    },
+    
+    createLobby: async (lobbyName, groupId, maxMembers) => {
+      // TODO: Replace with bleService.sendCreateLobby when ready
+      setCurrentLobby({ name: lobbyName, id: groupId, maxMembers: parseInt(maxMembers) });
+      // Add notification for lobby creation
+      addNotification({
+        type: 'lobby',
+        title: 'Lobby Created',
+        message: `You created lobby "${lobbyName}"`,
+      });
+      return true;
+    },
+    
+    joinLobby: async (groupId) => {
+      // TODO: Replace with bleService.sendJoinLobby when ready
+      setCurrentLobby({ id: groupId, name: `Lobby ${groupId}` });
+      // Add notification for joining lobby
+      addNotification({
+        type: 'lobby',
+        title: 'Joined Lobby',
+        message: `You joined lobby ${groupId}`,
+      });
+      return true;
+    },
+  };
 
   // --- FLOW HANDLERS ---
+  const handleSaveName = (nameData) => {
+    setUserData(prev => ({ ...prev, username: nameData.displayName, firstName: nameData.firstName, lastName: nameData.lastName, nickname: nameData.nickname }));
+  };
+
   const handleNextOnboarding = () => setScreen('onboarding2');
   
   const handleShowReminder = () => setShowReminder(true);
@@ -726,25 +3678,82 @@ export default function App() {
     setScreen('lobby');
   };
 
-  const handleCreateLobbySuccess = (data) => {
+  const handleDeviceConnected = (device) => {
+    setConnectedDevice(device);
+    setConnectionState(CONNECTION_STATES.CONNECTED);
+    setScreen('onboarding1');
+  };
+
+  const handleCreateLobbySuccess = async (data) => {
     setLobbyData(data);
+    // Create lobby via LoRa if connected
+    if (loraContext.isConnected) {
+      await loraContext.createLobby(data.lobbyName, data.groupId, data.maxMember);
+    }
     setShowSuccess(true);
+  };
+  
+  // Handle joining an existing lobby
+  const handleJoinLobby = async (data) => {
+    if (data && data.username && data.groupId) {
+      setUserData({ username: data.username, groupId: data.groupId });
+      // Join lobby via LoRa if connected
+      if (loraContext.isConnected) {
+        await loraContext.joinLobby(data.groupId);
+      }
+    }
+    setScreen('dashboard');
   };
   
   const handleEnterDashboard = () => {
     setShowSuccess(false);
+    // Set userData from lobbyData for created lobbies
+    if (lobbyData.groupId) {
+      setUserData(prev => ({ ...prev, groupId: lobbyData.groupId }));
+    }
     setScreen('dashboard');
   };
 
-  const handleLogout = () => setScreen('onboarding1');
+  const handleLogout = () => {
+    // Reset user data on logout
+    setUserData({ username: '', groupId: '' });
+    setCurrentLobby(null);
+    setScreen('lobby');
+  };
 
   return (
-    <ScreenContainer>
-      {/* SCREEN RENDERING LOGIC */}
-      {screen === 'onboarding1' && <OnboardingName next={handleNextOnboarding} />}
-      {screen === 'onboarding2' && <OnboardingDetails next={handleShowReminder} onShowReminder={handleShowReminder} />}
-      {screen === 'lobby' && <LobbyScreen onLogin={handleEnterDashboard} onShowCreateSuccess={handleCreateLobbySuccess} />}
-      {screen === 'dashboard' && <Dashboard onLogout={handleLogout} />}
+    <SafeAreaProvider>
+      <NotificationContext.Provider value={notificationContext}>
+      <LoRaContext.Provider value={loraContext}>
+        <ScreenContainer>
+          {/* SCREEN RENDERING LOGIC */}
+          {screen === 'init' && <Initialization onConnected={handleDeviceConnected} loraContext={loraContext} />}
+          {screen === 'onboarding1' && <OnboardingName next={handleNextOnboarding} onSaveName={handleSaveName} />}
+          {screen === 'onboarding2' && <OnboardingDetails next={handleShowReminder} onShowReminder={handleShowReminder} />}
+          {screen === 'lobby' && <LobbyScreen onLogin={handleJoinLobby} onShowCreateSuccess={handleCreateLobbySuccess} onReconnect={() => setScreen('init')} loraContext={loraContext} />}
+          {screen === 'dashboard' && <Dashboard onLogout={handleLogout} userData={userData} lobbyData={lobbyData} loraContext={loraContext} />}
+
+      {/* Notification Banner */}
+      {showNotificationBanner && currentNotification && (
+        <Animated.View style={notifStyles.banner}>
+          <View style={notifStyles.bannerContent}>
+            <View style={notifStyles.bannerIcon}>
+              {currentNotification.type === 'message' && <MessageCircle size={20} color="white" />}
+              {currentNotification.type === 'lobby' && <User size={20} color="white" />}
+              {currentNotification.type === 'location' && <MapPin size={20} color="white" />}
+              {currentNotification.type === 'alert' && <AlertTriangle size={20} color="white" />}
+              {!currentNotification.type && <Bell size={20} color="white" />}
+            </View>
+            <View style={notifStyles.bannerText}>
+              <Text style={notifStyles.bannerTitle}>{currentNotification.title}</Text>
+              <Text style={notifStyles.bannerMessage} numberOfLines={1}>{currentNotification.message}</Text>
+            </View>
+            <TouchableOpacity onPress={() => setShowNotificationBanner(false)} style={notifStyles.bannerClose}>
+              <X size={20} color="white" />
+            </TouchableOpacity>
+          </View>
+        </Animated.View>
+      )}
 
       {/* --- MODALS --- */}
 
@@ -918,9 +3927,60 @@ export default function App() {
         </View>
       </Modal>
 
-    </ScreenContainer>
+        </ScreenContainer>
+      </LoRaContext.Provider>
+      </NotificationContext.Provider>
+    </SafeAreaProvider>
   );
 }
+
+// --- NOTIFICATION STYLES ---
+const notifStyles = StyleSheet.create({
+  banner: {
+    position: 'absolute',
+    top: 50,
+    left: 16,
+    right: 16,
+    backgroundColor: COLORS.primary,
+    borderRadius: 12,
+    padding: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 9999,
+  },
+  bannerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  bannerIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  bannerText: {
+    flex: 1,
+  },
+  bannerTitle: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  bannerMessage: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  bannerClose: {
+    padding: 4,
+  },
+});
 
 // --- STYLES ---
 
@@ -987,6 +4047,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 24,
     paddingBottom: 100,
+    backgroundColor: 'transparent',
   },
 
   // Typography
@@ -1111,9 +4172,11 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   fieldRow: {
+    marginBottom: 14,
+  },
+  fieldRowInner: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
     justifyContent: 'space-between',
   },
   fieldLabel: {
@@ -1325,12 +4388,49 @@ const styles = StyleSheet.create({
   
   // Recent Activity
   activityCard: {
-    height: 80,
-    backgroundColor: 'rgba(255,255,255,0.6)',
+    minHeight: 60,
+    backgroundColor: 'rgba(255,255,255,0.8)',
     borderRadius: 12,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#fff',
+    borderColor: '#e5e7eb',
+    padding: 12,
+    justifyContent: 'center',
+  },
+  activityText: {
+    fontSize: 14,
+    color: COLORS.textDark,
+  },
+  
+  // Connection Status
+  connectionStatus: {
+    marginTop: 15,
+  },
+  connectionCard: {
+    backgroundColor: 'white',
+    marginHorizontal: 20,
+    marginTop: 10,
+    marginBottom: 20,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  connectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  connectionText: {
+    marginLeft: 10,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  
+  // Member name in location
+  memberName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.textDark,
   },
 
   // Tab Nav
@@ -1338,7 +4438,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: 'white',
     paddingVertical: 10,
-    paddingBottom: 20,
     justifyContent: 'space-around',
     borderTopWidth: 1,
     borderTopColor: '#f3f4f6',
@@ -1487,9 +4586,29 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   errorText: {
-    color: 'red',
-    marginTop: 6,
+    color: '#ef4444',
+    marginTop: 4,
+    marginBottom: 4,
     fontSize: 12,
+    fontWeight: '500',
+  },
+  errorTextWhite: {
+    color: '#fecaca',
+    marginTop: 6,
+    marginLeft: '35%',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  errorTextRed: {
+    color: '#ef4444',
+    marginTop: 4,
+    marginBottom: 4,
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  inputError: {
+    borderColor: '#ef4444',
+    borderWidth: 2,
   },
   row: {
     flexDirection: 'row',
@@ -1581,6 +4700,7 @@ const styles = StyleSheet.create({
   // --- UPDATED COMPASS STYLES ---
   tabContainer: {
     flex: 1,
+    backgroundColor: 'transparent',
   },
   compassContainer: {
     alignItems: 'center',
@@ -1770,11 +4890,19 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     elevation: 1
   },
+  menuOptionDanger: {
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
   menuLabel: {
     marginLeft: 15,
     fontSize: 16,
     fontWeight: '500',
     color: COLORS.textDark
+  },
+  menuLabelDanger: {
+    color: COLORS.error,
   },
   
   // Lobby Modal Info

@@ -4,6 +4,7 @@ import { Trees, ChevronRight } from 'lucide-react-native';
 import { styles } from '../styles';
 import { COLORS } from '../constants';
 import { InputField, MainButton } from '../components';
+import BleService from '../services/BleService';
 
 const OnboardingDetails = ({ next, onShowReminder }) => {
   const [experience, setExperience] = useState('Beginner');
@@ -39,7 +40,19 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
 
     setContactPhoneError('');
     setContactNameError('');
-    onShowReminder();
+    // send profile to device (best-effort)
+    const profile = {
+      firstName: '',
+      lastName: '',
+      contactName,
+      contactPhone,
+      medicalCondition,
+      experience,
+    };
+    BleService.sendProfile(profile).then((ok) => {
+      if (!ok) console.warn('Profile send failed or no device connected');
+      onShowReminder();
+    }).catch(() => onShowReminder());
   };
 
   return (

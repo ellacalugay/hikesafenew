@@ -1,7 +1,9 @@
 import React from 'react';
-import { View, Text, ScrollView } from 'react-native';
+import { View, Text, ScrollView, Button, Alert } from 'react-native';
 import { User, MapPin } from 'lucide-react-native';
 import { styles } from '../../styles';
+import * as Location from 'expo-location';
+import BleService from '../../services/BleService';
 
 const LocationTab = () => (
   <View style={styles.tabContainer}>
@@ -20,6 +22,19 @@ const LocationTab = () => (
          <MapPin size={20} color="red" />
        </View>
     </ScrollView>
+    <View style={{ padding: 12 }}>
+      <Button title="Send My Location to Device" onPress={async () => {
+        try {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status !== 'granted') { Alert.alert('Permission required', 'Enable location permission'); return; }
+          const pos = await Location.getCurrentPositionAsync({});
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          const ok = await BleService.sendGPS(lat, lon);
+          if (!ok) Alert.alert('Send failed', 'Could not send location to device (no BLE connection?)');
+        } catch (e) { Alert.alert('Error', String(e)); }
+      }} />
+    </View>
   </View>
 );
 
