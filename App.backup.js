@@ -14,7 +14,7 @@ import {
   Animated,
   StatusBar,
   Platform,
-  Switch, 
+  Switch, // Added Switch
   Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
