@@ -243,6 +243,7 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
 // 3. LOBBY SCREEN (Join & Create)
 const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const [mode, setMode] = useState('join'); // 'join' or 'create'
+  const [remember, setRemember] = useState(false);
 
   if (mode === 'create') {
     return (
@@ -290,20 +291,28 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
             <Text style={styles.tagline}>"Stay connected. Stay safe."</Text>
           </View>
 
-        <View style={styles.formSection}>
+        <View style={[styles.formSection, { top: -20 }]}> 
           <InputField placeholder="Username" />
           <InputField placeholder="Group ID" />
           
           <View style={styles.row}>
-            <View style={styles.checkbox} />
-            <Text style={styles.labelSmall}>Remember me</Text>
+            <TouchableOpacity
+              onPress={() => setRemember(!remember)}
+              style={[styles.checkbox, remember ? styles.checkboxChecked : null]}
+            >
+              {remember && <Text style={styles.checkboxTick}>✓</Text>}
+            </TouchableOpacity>
+            <Text style={[styles.labelSmall, { color: 'white', fontWeight: '600', marginLeft: 8 }]}>Remember me</Text>
           </View>
         </View>
 
-        <MainButton title="Enter Lobby →" onPress={onLogin} />
+        <MainButton title="Enter Lobby" onPress={onLogin} />
         
         <TouchableOpacity onPress={() => setMode('create')} style={{marginTop: 20}}>
-          <Text style={styles.labelSmall}>Do you want to create a Lobby? <Text style={{color: COLORS.primary, fontWeight: 'bold'}}>Create Here.</Text></Text>
+          <Text style={{ color: COLORS.primary, fontWeight: '600',}}>
+            Do you want to create a Lobby? {' '}
+            <Text style={{ color: 'white', fontWeight: 'bold' }}>Create Here.</Text>
+          </Text>
         </TouchableOpacity>
       </View>
     </ImageBackground>
@@ -956,6 +965,8 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
     marginTop: 5,
+    fontStyle: 'italic',
+    alignItems: 'center',
     textShadowColor: 'rgba(0,0,0,0.3)',
     textShadowOffset: {width: 0, height: 1},
     textShadowRadius: 2,
@@ -1340,10 +1351,36 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#111',
   },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: 'white',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  checkboxChecked: {
+    backgroundColor: 'white',
+  },
+  checkboxTick: {
+    color: COLORS.primary,
+    fontWeight: '900',
+    fontSize: 14,
+  },
   errorText: {
     color: 'red',
     marginTop: 6,
     fontSize: 12,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  labelSmall: {
+    fontSize: 12,
+    color: COLORS.textDark,
   },
   
   // Location Tab
