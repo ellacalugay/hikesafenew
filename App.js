@@ -244,6 +244,16 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
 const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const [mode, setMode] = useState('join'); // 'join' or 'create'
   const [remember, setRemember] = useState(false);
+  
+  // Create lobby form state
+  const [lobbyName, setLobbyName] = useState('');
+  const [groupId, setGroupId] = useState('');
+  const [maxMember, setMaxMember] = useState('');
+
+  const handleCreateLobby = () => {
+    // Pass the lobby data when creating
+    onShowCreateSuccess({ lobbyName, groupId, maxMember });
+  };
 
   if (mode === 'create') {
     return (
@@ -254,23 +264,55 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       >
         <View style={styles.centerContent}>
           <View style={styles.cardGreen}>
-            <Text style={styles.cardTitleWhite}>CREATE A LOBBY</Text>
-            <View style={styles.separatorWhite} />
-            <Text style={styles.cardSubtitleWhite}>Welcome to HIKESAFE!</Text>
-            <Text style={styles.cardDescWhite}>Please fill out the form below to create your lobby.</Text>
+            <Text style={styles.cardTitleLarge}>CREATE A LOBBY</Text>
+            <View style={styles.separatorThin} />
 
-            <View style={{marginTop: 10, width: '100%'}}>
-               <TextInput style={styles.inputWhite} placeholder="Lobby Name" placeholderTextColor="rgba(255,255,255,0.7)" />
-               <TextInput style={styles.inputWhite} placeholder="Group ID" placeholderTextColor="rgba(255,255,255,0.7)" />
-               <TextInput style={styles.inputWhite} placeholder="Max Member" placeholderTextColor="rgba(255,255,255,0.7)" keyboardType="numeric" />
+            <Text style={[styles.cardSubtitleWhite, { textAlign: 'left', alignSelf: 'flex-start', fontSize: 20 }]}>Welcome to HIKESAFE!</Text>
+            <Text style={[styles.cardDescWhite, { textAlign: 'left', alignSelf: 'flex-start' }]} numberOfLines={1}>Please fill out the form below to create your lobby.</Text>
+            <View style={styles.separatorThin} />
+
+            <View style={styles.formGrid}>
+              <View style={styles.fieldRow}>
+                <Text style={styles.fieldLabel}>Lobby Name</Text>
+                <TextInput 
+                  style={styles.inputWhiteRounded} 
+                  placeholder="Enter lobby name" 
+                  placeholderTextColor="rgba(0,0,0,0.35)"
+                  value={lobbyName}
+                  onChangeText={setLobbyName}
+                />
+              </View>
+
+              <View style={styles.fieldRow}>
+                <Text style={styles.fieldLabel}>Group ID</Text>
+                <TextInput 
+                  style={styles.inputWhiteRounded} 
+                  placeholder="Group ID" 
+                  placeholderTextColor="rgba(0,0,0,0.35)"
+                  value={groupId}
+                  onChangeText={setGroupId}
+                />
+              </View>
+
+              <View style={styles.fieldRow}>
+                <Text style={styles.fieldLabel} numberOfLines={1}>Max Member</Text>
+                <TextInput 
+                  style={styles.inputWhiteRounded} 
+                  placeholder="Max Member" 
+                  placeholderTextColor="rgba(0,0,0,0.35)" 
+                  keyboardType="numeric"
+                  value={maxMember}
+                  onChangeText={setMaxMember}
+                />
+              </View>
             </View>
 
-            <TouchableOpacity style={styles.buttonWhite} onPress={onShowCreateSuccess}>
-              <Text style={styles.buttonTextGreen}>CREATE NOW</Text>
+            <TouchableOpacity style={styles.createNowButton} onPress={handleCreateLobby}>
+              <Text style={styles.createNowText}>CREATE NOW</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={() => setMode('join')}>
-               <Text style={styles.linkTextWhite}>Already have a Lobby? <Text style={{fontWeight: 'bold'}}>Click Here</Text></Text>
+            <TouchableOpacity onPress={() => setMode('join')} style={{marginTop: 8}}>
+               <Text style={styles.linkTextWhite}>Already have a Lobby? <Text style={{fontWeight: 'bold', color: 'green', textDecorationLine: 'underline'}}>Click Here</Text></Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -291,7 +333,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
             <Text style={styles.tagline}>"Stay connected. Stay safe."</Text>
           </View>
 
-        <View style={[styles.formSection, { top: -20 }]}> 
+        <View style={[styles.formSection, { top:-10, width: '80%', alignSelf: 'center' }]}> 
           <InputField placeholder="Username" />
           <InputField placeholder="Group ID" />
           
@@ -304,13 +346,18 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
             </TouchableOpacity>
             <Text style={[styles.labelSmall, { color: 'white', fontWeight: '600', marginLeft: 8 }]}>Remember me</Text>
           </View>
+          <View style={[styles.hrLine, { marginTop: 30 }]} />
         </View>
 
-        <MainButton title="Enter Lobby" onPress={onLogin} />
+        <MainButton title="Enter Lobby" onPress={onLogin} style={{ top: -30, width: '80%', alignSelf: 'center' }} />
         
-        <TouchableOpacity onPress={() => setMode('create')} style={{marginTop: 20}}>
-          <Text style={{ color: COLORS.primary, fontWeight: '600',}}>
-            Do you want to create a Lobby? {' '}
+        <TouchableOpacity
+          onPress={() => setMode('create')}
+          style={{ marginTop: 20, alignItems: 'center' }}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Text style={{ color: COLORS.primary, fontWeight: '600', textAlign: 'center' }}>
+            Do you want to create a Lobby?{' '}
             <Text style={{ color: 'white', fontWeight: 'bold' }}>Create Here.</Text>
           </Text>
         </TouchableOpacity>
@@ -667,6 +714,7 @@ export default function App() {
   const [showReminder, setShowReminder] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [lobbyData, setLobbyData] = useState({ lobbyName: '', groupId: '', maxMember: '' });
 
   // --- FLOW HANDLERS ---
   const handleNextOnboarding = () => setScreen('onboarding2');
@@ -678,7 +726,10 @@ export default function App() {
     setScreen('lobby');
   };
 
-  const handleCreateLobbySuccess = () => setShowSuccess(true);
+  const handleCreateLobbySuccess = (data) => {
+    setLobbyData(data);
+    setShowSuccess(true);
+  };
   
   const handleEnterDashboard = () => {
     setShowSuccess(false);
@@ -849,11 +900,15 @@ export default function App() {
              
              <View style={styles.infoRow}>
                <Text style={styles.infoLabel}>Lobby Name:</Text>
-               <Text style={styles.infoValue}>Mt. Apo Hike</Text>
+               <Text style={styles.infoValue}>{lobbyData.lobbyName || 'N/A'}</Text>
              </View>
              <View style={styles.infoRow}>
                <Text style={styles.infoLabel}>Group ID:</Text>
-               <Text style={styles.infoValue}>ABC-123</Text>
+               <Text style={styles.infoValue}>{lobbyData.groupId || 'N/A'}</Text>
+             </View>
+             <View style={styles.infoRow}>
+               <Text style={styles.infoLabel}>Max Member:</Text>
+               <Text style={styles.infoValue}>{lobbyData.maxMember || 'N/A'}</Text>
              </View>
              
              <TouchableOpacity style={styles.buttonWhite} onPress={handleEnterDashboard}>
@@ -1027,6 +1082,67 @@ const styles = StyleSheet.create({
     width: '100%',
   },
 
+  hrLine: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    width: '80%',
+    alignSelf: 'center',
+    marginTop: 12,
+    marginBottom: 12,
+  },
+  separatorThin: {
+    height: 2,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    width: '100%',
+    marginVertical: 12,
+    borderRadius: 2,
+  },
+  cardTitleLarge: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: 'rgba(0,0,0,0.30)',
+    alignSelf: 'flex-start',
+    width: '100%',
+    textTransform: 'uppercase',
+    paddingBottom: 4,
+  },
+  formGrid: {
+    width: '100%',
+    marginTop: 6,
+  },
+  fieldRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    justifyContent: 'space-between',
+  },
+  fieldLabel: {
+    color: 'white',
+    width: '30%',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  inputWhiteRounded: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    width: '65%',
+  },
+  createNowButton: {
+    backgroundColor: 'white',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignSelf: 'center',
+    width: '60%',
+    marginTop: 12,
+  },
+  createNowText: {
+    color: COLORS.primary,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+
   // Buttons
   button: {
     paddingVertical: 14,
@@ -1099,6 +1215,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: 'white',
     marginTop: 10,
+    alignItems: 'left',
   },
   cardDescWhite: {
     fontSize: 12,
