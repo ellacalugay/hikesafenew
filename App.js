@@ -9,6 +9,7 @@ import {
   SafeAreaView,
   Modal,
   Image,
+  ImageBackground,
   Dimensions,
   Animated,
   StatusBar,
@@ -95,17 +96,19 @@ const MainButton = ({ title, onPress, variant = 'primary', style }) => (
 );
 
 // 3. Custom Input
-const InputField = ({ label, placeholder, value, onChangeText, secureTextEntry }) => (
+const InputField = ({ label, placeholder, value, onChangeText, secureTextEntry, keyboardType, error }) => (
   <View style={styles.inputContainer}>
     {label && <Text style={styles.inputLabel}>{label}</Text>}
     <TextInput
-      style={styles.input}
+      style={[styles.input, error ? { borderColor: 'red' } : null]}
       placeholder={placeholder}
       placeholderTextColor="#9CA3AF"
       value={value}
       onChangeText={onChangeText}
       secureTextEntry={secureTextEntry}
+      keyboardType={keyboardType}
     />
+    {error ? <Text style={styles.errorText}>{error}</Text> : null}
   </View>
 );
 
@@ -115,9 +118,11 @@ const InputField = ({ label, placeholder, value, onChangeText, secureTextEntry }
 const OnboardingName = ({ next }) => (
   <View style={styles.contentContainer}>
     <View style={styles.headerSpacer} />
-    <Text style={styles.titleLarge}>What do we{'\n'}call you?</Text>
-    
-    <View style={styles.formSection}>
+    <Text style={styles.titleLarge}>
+      What do we{'\n'}call you?
+    </Text>
+  
+    <View style={[styles.formSection, styles.centeredForm, { top: 50 }]}>
       <InputField label="First Name" placeholder="e.g. John" />
       <InputField label="Last Name" placeholder="e.g. Doe" />
       <InputField label="Nickname" placeholder="e.g. JD" />
@@ -137,30 +142,103 @@ const OnboardingName = ({ next }) => (
 );
 
 // 2. ONBOARDING: DETAILS
-const OnboardingDetails = ({ next, onShowReminder }) => (
-  <ScrollView contentContainerStyle={styles.scrollContent}>
-    <Text style={styles.titleLarge}>Get ready with{'\n'}the trail!</Text>
-    
-    <View style={styles.formSection}>
-      <InputField label="Contact Name" placeholder="Emergency Contact Name" />
-      <InputField label="Contact Phone" placeholder="Emergency Contact Phone" />
-      <InputField label="Medical Condition" placeholder="Any allergies or conditions?" />
-      
-      {/* Fake Dropdown */}
-      <Text style={styles.inputLabel}>Hiking Experience level</Text>
-      <View style={styles.inputBox}>
-        <Text style={{color: COLORS.textDark}}>Beginner</Text>
-        <ChevronRight size={20} color={COLORS.gray} />
+const OnboardingDetails = ({ next, onShowReminder }) => {
+  const [experience, setExperience] = useState('Beginner');
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [contactPhone, setContactPhone] = useState('');
+  const [contactPhoneError, setContactPhoneError] = useState('');
+  const [contactName, setContactName] = useState('');
+  const [contactNameError, setContactNameError] = useState('');
+  const [medicalCondition, setMedicalCondition] = useState('');
+  const options = ['Beginner', 'Intermediate', 'Advanced', 'Expert'];
+
+  const validatePhone = (phone) => {
+    if (!phone || phone.trim().length === 0) return 'Phone is required';
+    const digits = phone.replace(/[^0-9+]/g, '');
+    if (digits.length < 7) return 'Enter a valid phone number';
+    if (digits.length > 15) return 'Phone number too long';
+    return '';
+  };
+
+  const validateName = (name) => {
+    if (!name || name.trim().length === 0) return 'Contact name is required';
+    return '';
+  };
+
+  const handleAccept = () => {
+    const errPhone = validatePhone(contactPhone);
+    const errName = validateName(contactName);
+
+    if (errName) setContactNameError(errName);
+    if (errPhone) setContactPhoneError(errPhone);
+
+    if (errName || errPhone) return;
+
+    setContactPhoneError('');
+    setContactNameError('');
+    onShowReminder();
+  };
+
+  return (
+    <View style={[styles.contentContainer, styles.centerScreen]}>
+      <Text style={[styles.titleLarge, styles.detailTitle]}>Get ready with the trail!</Text>
+
+      <View style={styles.detailForm}>
+        <InputField
+          label="Contact Name"
+          placeholder="Emergency Contact Name"
+          value={contactName}
+          onChangeText={(t) => { setContactName(t); if (contactNameError) setContactNameError(''); }}
+          error={contactNameError}
+        />
+        <InputField
+          label="Contact Phone"
+          placeholder="Emergency Contact Phone"
+          value={contactPhone}
+          onChangeText={(t) => { setContactPhone(t); if (contactPhoneError) setContactPhoneError(''); }}
+          keyboardType="phone-pad"
+          error={contactPhoneError}
+        />
+        <InputField
+          label="Medical Condition"
+          placeholder="Any allergies or conditions?"
+          value={medicalCondition}
+          onChangeText={setMedicalCondition}
+        />
+
+        {/* Real Dropdown (Modal) */}
+        <Text style={styles.inputLabel}>Hiking Experience level</Text>
+        <TouchableOpacity style={styles.inputBox} onPress={() => setDropdownOpen(true)}>
+          <Text style={{color: COLORS.textDark}}>{experience}</Text>
+          <ChevronRight size={20} color={COLORS.gray} />
+        </TouchableOpacity>
       </View>
-    </View>
 
-    <View style={styles.illustrationSpace}>
-       <Trees size={80} color={COLORS.primary} style={{opacity: 0.5}} />
-    </View>
+      <View style={styles.illustrationSpace}>
+         <Trees size={80} color={COLORS.primary} style={{opacity: 0.5}} />
+      </View>
 
-    <MainButton title="ACCEPT AND CONTINUE" onPress={onShowReminder} style={{marginBottom: 20}} />
-  </ScrollView>
-);
+      <MainButton title="ACCEPT AND CONTINUE" onPress={handleAccept} style={{marginTop: 20}} />
+
+      {/* Dropdown Modal */}
+      <Modal visible={dropdownOpen} transparent animationType="fade">
+        <TouchableOpacity style={styles.dropdownModalOverlay} activeOpacity={1} onPress={() => setDropdownOpen(false)}>
+          <View style={styles.dropdownModalContent}>
+            {options.map((opt) => (
+              <TouchableOpacity
+                key={opt}
+                style={styles.dropdownItem}
+                onPress={() => { setExperience(opt); setDropdownOpen(false); }}
+              >
+                <Text style={styles.dropdownItemText}>{opt}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </View>
+  );
+};
 
 // 3. LOBBY SCREEN (Join & Create)
 const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
@@ -168,56 +246,67 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
 
   if (mode === 'create') {
     return (
-      <View style={styles.centerContent}>
-        <View style={styles.cardGreen}>
-          <Text style={styles.cardTitleWhite}>CREATE A LOBBY</Text>
-          <View style={styles.separatorWhite} />
-          <Text style={styles.cardSubtitleWhite}>Welcome to HIKESAFE!</Text>
-          <Text style={styles.cardDescWhite}>Please fill out the form below to create your lobby.</Text>
+      <ImageBackground
+        source={require('./assets/forest_bg 1.png')}
+        style={styles.lobbyCreateBg}
+        resizeMode="cover"
+      >
+        <View style={styles.centerContent}>
+          <View style={styles.cardGreen}>
+            <Text style={styles.cardTitleWhite}>CREATE A LOBBY</Text>
+            <View style={styles.separatorWhite} />
+            <Text style={styles.cardSubtitleWhite}>Welcome to HIKESAFE!</Text>
+            <Text style={styles.cardDescWhite}>Please fill out the form below to create your lobby.</Text>
 
-          <View style={{marginTop: 10, width: '100%'}}>
-             <TextInput style={styles.inputWhite} placeholder="Lobby Name" placeholderTextColor="rgba(255,255,255,0.7)" />
-             <TextInput style={styles.inputWhite} placeholder="Group ID" placeholderTextColor="rgba(255,255,255,0.7)" />
-             <TextInput style={styles.inputWhite} placeholder="Max Member" placeholderTextColor="rgba(255,255,255,0.7)" keyboardType="numeric" />
+            <View style={{marginTop: 10, width: '100%'}}>
+               <TextInput style={styles.inputWhite} placeholder="Lobby Name" placeholderTextColor="rgba(255,255,255,0.7)" />
+               <TextInput style={styles.inputWhite} placeholder="Group ID" placeholderTextColor="rgba(255,255,255,0.7)" />
+               <TextInput style={styles.inputWhite} placeholder="Max Member" placeholderTextColor="rgba(255,255,255,0.7)" keyboardType="numeric" />
+            </View>
+
+            <TouchableOpacity style={styles.buttonWhite} onPress={onShowCreateSuccess}>
+              <Text style={styles.buttonTextGreen}>CREATE NOW</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => setMode('join')}>
+               <Text style={styles.linkTextWhite}>Already have a Lobby? <Text style={{fontWeight: 'bold'}}>Click Here</Text></Text>
+            </TouchableOpacity>
           </View>
-
-          <TouchableOpacity style={styles.buttonWhite} onPress={onShowCreateSuccess}>
-            <Text style={styles.buttonTextGreen}>CREATE NOW</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => setMode('join')}>
-             <Text style={styles.linkTextWhite}>Already have a Lobby? <Text style={{fontWeight: 'bold'}}>Click Here</Text></Text>
-          </TouchableOpacity>
         </View>
-      </View>
+      </ImageBackground>
     );
   }
 
   // Join Mode
   return (
-    <View style={styles.contentContainer}>
-      <View style={styles.logoSection}>
-         <Trees size={60} color={COLORS.primary} />
-         <Text style={styles.logoText}>HIKESAFE</Text>
-         <Text style={styles.tagline}>"Stay connected. Stay safe."</Text>
-      </View>
+    <ImageBackground
+      source={require('./assets/forest_bg 1.png')}
+      style={styles.lobbyCreateBg}
+      resizeMode="cover"
+    >
+      <View style={styles.contentContainer}>
+          <View style={styles.logoSection}>
+            <Image source={require('./assets/hike.png')} style={styles.logoImage} />
+            <Text style={styles.tagline}>"Stay connected. Stay safe."</Text>
+          </View>
 
-      <View style={styles.formSection}>
-        <InputField placeholder="Username" />
-        <InputField placeholder="Group ID" />
-        
-        <View style={styles.row}>
-          <View style={styles.checkbox} />
-          <Text style={styles.labelSmall}>Remember me</Text>
+        <View style={styles.formSection}>
+          <InputField placeholder="Username" />
+          <InputField placeholder="Group ID" />
+          
+          <View style={styles.row}>
+            <View style={styles.checkbox} />
+            <Text style={styles.labelSmall}>Remember me</Text>
+          </View>
         </View>
-      </View>
 
-      <MainButton title="Enter Lobby →" onPress={onLogin} />
-      
-      <TouchableOpacity onPress={() => setMode('create')} style={{marginTop: 20}}>
-        <Text style={styles.labelSmall}>Do you want to create a Lobby? <Text style={{color: COLORS.primary, fontWeight: 'bold'}}>Create Here.</Text></Text>
-      </TouchableOpacity>
-    </View>
+        <MainButton title="Enter Lobby →" onPress={onLogin} />
+        
+        <TouchableOpacity onPress={() => setMode('create')} style={{marginTop: 20}}>
+          <Text style={styles.labelSmall}>Do you want to create a Lobby? <Text style={{color: COLORS.primary, fontWeight: 'bold'}}>Create Here.</Text></Text>
+        </TouchableOpacity>
+      </View>
+    </ImageBackground>
   );
 };
 
@@ -603,21 +692,24 @@ export default function App() {
       <Modal visible={showReminder} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContentGreen}>
-            <Text style={styles.modalTitleWhite}>HikeSafe Reminder</Text>
-            <Text style={styles.modalTextWhite}>
-              Before continuing, please read and agree to our Terms and Conditions.{'\n'}{'\n'}
-              By tapping "Accept and Continue", you agree that:{'\n'}
-              • You'll use HikeSafe responsibly.{'\n'}
-              • HikeSafe is a tool to assist safety but does not replace personal responsibility.{'\n'}
-            </Text>
-            
-            <TouchableOpacity onPress={() => setShowTerms(true)} style={{marginBottom: 20}}>
-               <Text style={[styles.modalTextWhite, {textDecorationLine: 'underline', fontWeight: 'bold'}]}>Read Terms and Conditions</Text>
-            </TouchableOpacity>
+                <Text style={styles.modalTitleWhite}>HikeSafe Reminder</Text>
+                <Text style={styles.modalTextWhite}>
+                  Before continuing, please read and agree to our {' '}
+                  <Text
+                    onPress={() => setShowTerms(true)}
+                    style={{ textDecorationLine: 'underline', fontWeight: '700' }}
+                  >
+                    Terms and Conditions
+                  </Text>
+                  .{"\n"}{"\n"}
+                  By tapping "Accept and Continue", you agree that:{'\n'}
+                  • You'll use HikeSafe responsibly.{'\n'}
+                  • HikeSafe is a tool to assist safety but does not replace personal responsibility.{'\n'}
+                </Text>
 
-            <TouchableOpacity style={styles.buttonWhite} onPress={handleAcceptTerms}>
-              <Text style={styles.buttonTextGreen}>ACCEPT AND CONTINUE</Text>
-            </TouchableOpacity>
+                <TouchableOpacity style={[styles.buttonWhite, { alignSelf: 'center', width: '80%'}]} onPress={handleAcceptTerms}>
+                  <Text style={[styles.buttonTextGreen, {textAlign: 'center'}]}>ACCEPT AND CONTINUE</Text>
+                </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -626,17 +718,113 @@ export default function App() {
       <Modal visible={showTerms} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContentGreen}>
-            <Text style={styles.modalTitleWhite}>Terms and Condition</Text>
-            <ScrollView style={{maxHeight: 300, marginVertical: 10}}>
-              <Text style={styles.modalTextWhite}>
-                1. Acceptance of Terms{'\n'}By using the HikeSafe app...{'\n'}{'\n'}
-                2. Purpose of App{'\n'}HikeSafe is designed to help...{'\n'}{'\n'}
-                3. User Responsibilities{'\n'}Ensure battery life...{'\n'}{'\n'}
-                4. Safety Disclaimer{'\n'}Not a guarantee of safety...
-              </Text>
+            <Text style={[styles.modalTitleWhite, {textAlign: 'center'}]}>Terms and Condition</Text>
+            <ScrollView style={{maxHeight: 360, marginVertical: 10}}>
+              <View style={{marginBottom: 12}}>
+                <View style={{flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6}}>
+                  <Text style={styles.modalNumber}>1.</Text>
+                  <Text style={styles.modalSectionTitle}>Acceptance of Terms</Text>
+                </View>
+                <Text style={styles.modalParagraph}>
+                  By using the HikeSafe app, you agree to comply with these Terms and Conditions. Please read them carefully before using the app.
+                </Text>
+              </View>
+
+              <View style={{marginBottom: 12}}>
+                <View style={{flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6}}>
+                  <Text style={styles.modalNumber}>2.</Text>
+                  <Text style={styles.modalSectionTitle}>Purpose of the App</Text>
+                </View>
+                <Text style={styles.modalParagraph}>
+                  HikeSafe is designed to help hikers stay safe by offering tools such as GPS tracking, emergency alerts, and route recording. It is intended as a supportive tool not a replacement for personal preparation, awareness, or professional guidance during outdoor activities.
+                </Text>
+              </View>
+
+              <View style={{marginBottom: 12}}>
+                <View style={{flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6}}>
+                  <Text style={styles.modalNumber}>3.</Text>
+                  <Text style={styles.modalSectionTitle}>User Responsibilities</Text>
+                </View>
+                <Text style={styles.modalParagraph}>
+                  • Use HikeSafe responsibly and only for lawful purposes
+                  {'\n'}• Ensure your device has enough battery, storage, and connectivity
+                  {'\n'}• Provide accurate personal and emergency contact details
+                  {'\n'}• Do not misuse the app (e.g., sending false emergency alerts or sharing misleading data)
+                </Text>
+              </View>
+
+              <View style={{marginBottom: 12}}>
+                <View style={{flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6}}>
+                  <Text style={styles.modalNumber}>4.</Text>
+                  <Text style={styles.modalSectionTitle}>Safety Disclaimer</Text>
+                </View>
+                <Text style={styles.modalParagraph}>
+                  While HikeSafe aims to enhance hiking safety, we do not guarantee complete safety or uninterrupted service. You acknowledge that hiking involves risks, and you are responsible for your own safety and decisions while on the trail.
+                </Text>
+              </View>
+
+              <View style={{marginBottom: 12}}>
+                <View style={{flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6}}>
+                  <Text style={styles.modalNumber}>5.</Text>
+                  <Text style={styles.modalSectionTitle}>Privacy and Data Use</Text>
+                </View>
+                <Text style={styles.modalParagraph}>
+                  We collect limited data (such as location, contact, and device information) to provide safety features and improve performance. Your data is used only for app functionality and emergency purposes, and will not be sold to third parties.
+                </Text>
+              </View>
+
+              <View style={{marginBottom: 12}}>
+                <View style={{flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6}}>
+                  <Text style={styles.modalNumber}>6.</Text>
+                  <Text style={styles.modalSectionTitle}>App Updates and Availability</Text>
+                </View>
+                <Text style={styles.modalParagraph}>
+                  We may update or modify HikeSafe without prior notice. We do not guarantee that all features will always be available or free of errors.
+                </Text>
+              </View>
+
+              <View style={{marginBottom: 12}}>
+                <View style={{flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6}}>
+                  <Text style={styles.modalNumber}>7.</Text>
+                  <Text style={styles.modalSectionTitle}>Intellectual Property</Text>
+                </View>
+                <Text style={styles.modalParagraph}>
+                  All content, design, and code within HikeSafe are owned by the HikeSafe Team. You may not copy, modify, or redistribute any part of the app without written permission.
+                </Text>
+              </View>
+
+              <View style={{marginBottom: 12}}>
+                <View style={{flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6}}>
+                  <Text style={styles.modalNumber}>8.</Text>
+                  <Text style={styles.modalSectionTitle}>Limitation of Liability</Text>
+                </View>
+                <Text style={styles.modalParagraph}>
+                  HikeSafe and its developers will not be liable for any injury, loss or damage resulting from your use of the app. Use it at your own risk and always practice caution when hiking.
+                </Text>
+              </View>
+
+              <View style={{marginBottom: 12}}>
+                <View style={{flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6}}>
+                  <Text style={styles.modalNumber}>9.</Text>
+                  <Text style={styles.modalSectionTitle}>Termination of Use</Text>
+                </View>
+                <Text style={styles.modalParagraph}>
+                  We reserve the right to suspend or terminate access to HikeSafe for violations of these Terms or misuse of the app.
+                </Text>
+              </View>
+
+              <View style={{marginBottom: 12}}>
+                <View style={{flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6}}>
+                  <Text style={styles.modalNumber}>10.</Text>
+                  <Text style={styles.modalSectionTitle}>Contact Us</Text>
+                </View>
+                <Text style={styles.modalParagraph}>
+                  If you have questions about these Terms, please reach out at hikesafe.team@gmail.com
+                </Text>
+              </View>
             </ScrollView>
-            <TouchableOpacity style={styles.buttonWhite} onPress={() => setShowTerms(false)}>
-              <Text style={styles.buttonTextGreen}>I UNDERSTAND</Text>
+            <TouchableOpacity style={[styles.buttonWhite, { alignSelf: 'center', width: '80%'}]} onPress={() => setShowTerms(false)}>
+              <Text style={[styles.buttonTextGreen, {textAlign: 'center'}]}>I UNDERSTAND</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -739,12 +927,13 @@ const styles = StyleSheet.create({
 
   // Typography
   titleLarge: {
-    fontSize: 36,
+    fontSize: 45,
     fontWeight: '800',
     color: COLORS.primary,
     marginBottom: 30,
-    marginTop: 40,
-    alignItems: 'center',
+    marginTop: -10,
+    textAlign: 'center',
+    top: 30,
   },
   logoText: {
     fontSize: 40,
@@ -754,8 +943,16 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     fontStyle: 'italic',
   },
+  logoImage: {
+    width: 200,
+    height:200,
+    resizeMode: 'cover',
+    alignSelf: 'center',
+    marginBottom: 6,
+    overflow: 'visible',
+  },
   tagline: {
-    fontSize: 14,
+    fontSize: 18,
     color: '#fff',
     fontWeight: '600',
     marginTop: 5,
@@ -859,7 +1056,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   skipText: {
-    color: COLORS.gray,
+    color: COLORS. black,
     fontWeight: '600',
   },
   linkTextWhite: {
@@ -1044,14 +1241,14 @@ const styles = StyleSheet.create({
   modalContentGreen: {
     backgroundColor: '#4d7c0f',
     borderRadius: 16,
-    padding: 24,
+    padding: 26,
     shadowColor: '#000',
     shadowOpacity: 0.3,
     shadowRadius: 10,
     elevation: 10,
   },
   modalTitleWhite: {
-    fontSize: 22,
+    fontSize: 25,
     fontWeight: 'bold',
     color: 'white',
     marginBottom: 10,
@@ -1061,12 +1258,93 @@ const styles = StyleSheet.create({
     color: 'white',
     lineHeight: 20,
   },
+  modalNumber: {
+    width: 24,
+    color: 'white',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  modalSectionTitle: {
+    color: 'white',
+    fontWeight: '700',
+    fontSize: 14,
+    flex: 1,
+  },
+  modalParagraph: {
+    color: 'white',
+    lineHeight: 20,
+    marginLeft: 23,
+    marginBottom: 8,
+    fontSize: 13,
+    textAlign: 'justify',
+  },
+  lobbyCreateBg: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
 
   // Utils
   headerSpacer: { height: 60 },
   logoSection: { alignItems: 'center', marginBottom: 40, marginTop: 60 },
   illustrationSpace: { alignItems: 'center', marginVertical: 30 },
   footer: { marginTop: 'auto' },
+  // Used to vertically center the form on onboarding screens
+  centeredForm: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  // Center a whole screen's content
+  centerScreen: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Specific layout for onboarding details form
+  detailForm: {
+    width: '100%',
+    maxWidth: 520,
+    top: 60,
+    marginVertical: 20,
+  },
+  detailTitle: {
+    textAlign: 'center',
+    marginBottom: 5,
+  },
+  dropdownModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  dropdownModalContent: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: 'white',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 0,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  dropdownItem: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f1f1',
+  },
+  dropdownItemText: {
+    fontSize: 16,
+    color: '#111',
+  },
+  errorText: {
+    color: 'red',
+    marginTop: 6,
+    fontSize: 12,
+  },
   
   // Location Tab
   headerBar: {
