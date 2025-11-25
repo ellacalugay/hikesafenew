@@ -29,8 +29,9 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import * as Location from 'expo-location';
 import { Magnetometer } from 'expo-sensors';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-// BLE imports disabled for UI testing - uncomment when ready for native build
-// import bleService from './src/services/BleService';
+import { Buffer } from 'buffer';
+// BLE imports - enable for native build (expo prebuild)
+import bleService, { BLE_CODES } from './src/services/BleService';
 
 import { 
   Trees, 
@@ -255,6 +256,7 @@ const Initialization = ({ onConnected, loraContext }) => {
   const [isConnecting, setIsConnecting] = useState(false);
   const [devices, setDevices] = useState([]);
   const [statusText, setStatusText] = useState('Scanning for devices...');
+  const [useMockDevices, setUseMockDevices] = useState(false); // Toggle for testing without real devices
 
   // Auto-scan on mount
   useEffect(() => {
@@ -265,26 +267,37 @@ const Initialization = ({ onConnected, loraContext }) => {
     setIsScanning(true);
     setStatusText('Scanning for devices...');
     setSelectedDevice(null);
+    setDevices([]);
     
-    // TODO: Replace with actual BLE scanning when ready
-    // const scannedDevices = await bleService.scanOnce(8000);
+    try {
+      if (useMockDevices) {
+        // Mock devices for UI testing without real hardware
+        await new Promise(resolve => setTimeout(resolve, 2500));
+        const mockDevices = [
+          { id: 'mock1', name: 'HikeSafe_102D', rssi: -45 },
+          { id: 'mock2', name: 'HikeSafe_143J', rssi: -72 },
+          { id: 'mock3', name: 'HikeSafe_722R', rssi: -55 },
+        ];
+        setDevices(mockDevices);
+        setStatusText(mockDevices.length > 0 ? 'Select a device to connect' : 'No devices found');
+      } else {
+        // Real BLE scanning
+        const scannedDevices = await bleService.scanOnce(8000);
+        const deviceList = scannedDevices.map((d, idx) => ({
+          id: d.id,
+          name: d.name || `Unknown Device ${idx + 1}`,
+          rssi: d.rssi || -100,
+          device: d, // Keep reference to original device object
+        }));
+        setDevices(deviceList);
+        setStatusText(deviceList.length > 0 ? 'Select a device to connect' : 'No devices found');
+      }
+    } catch (error) {
+      console.log('Scan error:', error);
+      setStatusText('Scan failed - check Bluetooth');
+    }
     
-    // Simulate scanning delay
-    await new Promise(resolve => setTimeout(resolve, 2500));
-    
-    // Mock devices - will be replaced with real scanned devices
-    const scannedDevices = [
-      { id: '1', name: 'HikeSafe_102D', rssi: -45, online: true },
-      { id: '2', name: 'HikeSafe_143J', rssi: -72, online: false },
-      { id: '3', name: 'HikeSafe_722R', rssi: -55, online: true },
-      { id: '4', name: 'HikeSafe_122A', rssi: -80, online: false },
-      { id: '5', name: 'HikeSafe_091E', rssi: -68, online: false },
-      { id: '6', name: 'HikeSafe_148F', rssi: -50, online: true },
-    ];
-    
-    setDevices(scannedDevices);
     setIsScanning(false);
-    setStatusText(scannedDevices.length > 0 ? 'Select a device to connect' : 'No devices found');
   };
 
   const handleConnect = async () => {
@@ -293,26 +306,44 @@ const Initialization = ({ onConnected, loraContext }) => {
       return;
     }
     
-    const device = devices.find(d => d.id === selectedDevice);
-    if (!device) return;
+    const deviceInfo = devices.find(d => d.id === selectedDevice);
+    if (!deviceInfo) return;
     
     setIsConnecting(true);
-    setStatusText(`Connecting to ${device.name}...`);
+    setStatusText(`Connecting to ${deviceInfo.name}...`);
     
-    // TODO: Replace with actual BLE connection when ready
-    // const success = await bleService.connectToDevice(device);
-    
-    // Simulate connection delay
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Update LoRa context with connected device
-    if (loraContext) {
-      loraContext.setConnectedDevice(device);
-      loraContext.setConnectionState(CONNECTION_STATES.CONNECTED);
+    try {
+      let success = false;
+      
+      if (useMockDevices) {
+        // Mock connection for UI testing
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        success = true;
+      } else {
+        // Real BLE connection
+        success = await bleService.connectToDevice(deviceInfo.device);
+      }
+      
+      if (success) {
+        // Update LoRa context with connected device
+        if (loraContext) {
+          loraContext.setConnectedDevice(deviceInfo);
+          loraContext.setConnectionState(CONNECTION_STATES.CONNECTED);
+        }
+        
+        setIsConnecting(false);
+        onConnected?.(deviceInfo);
+      } else {
+        setStatusText('Connection failed. Try again.');
+        setIsConnecting(false);
+        Alert.alert('Connection Failed', 'Could not connect to the device. Please try again.');
+      }
+    } catch (error) {
+      console.log('Connection error:', error);
+      setStatusText('Connection error');
+      setIsConnecting(false);
+      Alert.alert('Connection Error', 'An error occurred while connecting. Please try again.');
     }
-    
-    setIsConnecting(false);
-    onConnected?.(device);
   };
 
   return (
@@ -3599,6 +3630,87 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [loraError, setLoraError] = useState(null);
 
+  // Set up BLE message listener
+  useEffect(() => {
+    const handleBleMessage = (code, data) => {
+      console.log('BLE message received:', code, data);
+      
+      switch (code) {
+        case BLE_CODES.RESP_CODE_CONTACT_MSG_RECV:
+        case BLE_CODES.RESP_CODE_CONTACT_MSG_RECV_V3:
+        case BLE_CODES.RESP_CODE_CHANNEL_MSG_RECV:
+        case BLE_CODES.RESP_CODE_CHANNEL_MSG_RECV_V3:
+        case BLE_CODES.PUSH_CODE_MSG_WAITING:
+          // Incoming text message from LoRa
+          try {
+            const msgText = Buffer.from(data).toString('utf8');
+            const newMsg = {
+              id: Date.now(),
+              text: msgText,
+              sender: 'remote',
+              time: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase(),
+            };
+            setMessages(prev => [...prev, newMsg]);
+            // Add notification
+            addNotification({
+              type: 'message',
+              title: 'New Message',
+              message: msgText.length > 30 ? msgText.substring(0, 30) + '...' : msgText,
+            });
+          } catch (e) {
+            console.log('Error parsing message:', e);
+          }
+          break;
+          
+        case BLE_CODES.RESP_CODE_SELF_INFO:
+          // Device info received
+          try {
+            const info = JSON.parse(Buffer.from(data).toString('utf8'));
+            console.log('Device info:', info);
+          } catch (e) {
+            console.log('Error parsing device info:', e);
+          }
+          break;
+          
+        case BLE_CODES.RESP_CODE_SENT:
+        case BLE_CODES.PUSH_CODE_SEND_CONFIRMED:
+          // Message sent confirmation
+          console.log('Message sent confirmed');
+          break;
+          
+        case BLE_CODES.RESP_CODE_CONTACT:
+        case BLE_CODES.PUSH_CODE_NEW_ADVERT:
+          // Contact/lobby member update
+          try {
+            const contact = JSON.parse(Buffer.from(data).toString('utf8'));
+            console.log('Contact update:', contact);
+            // Add to lobby members if not already present
+            setLobbyMembers(prev => {
+              const exists = prev.find(m => m.id === contact.id);
+              if (exists) {
+                return prev.map(m => m.id === contact.id ? contact : m);
+              }
+              return [...prev, contact];
+            });
+          } catch (e) {
+            console.log('Error parsing contact:', e);
+          }
+          break;
+          
+        default:
+          console.log('BLE response code:', code);
+      }
+    };
+
+    // Register the message handler
+    bleService.onMessage(handleBleMessage);
+
+    // Cleanup on unmount
+    return () => {
+      bleService.offMessage(handleBleMessage);
+    };
+  }, []);
+
   // LoRa Context value to pass to components
   const loraContext = {
     // State
@@ -3620,47 +3732,99 @@ export default function App() {
     // Computed
     isConnected: connectionState === CONNECTION_STATES.CONNECTED,
     
-    // Actions (will integrate with BLE service)
+    // Actions (integrated with BLE service)
     sendMessage: async (destination, text) => {
-      // TODO: Replace with bleService.sendText when ready
-      const newMsg = {
-        id: Date.now(),
-        text,
-        sender: 'me',
-        destination,
-        time: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase(),
-      };
-      setMessages(prev => [...prev, newMsg]);
-      return true;
+      try {
+        // Send via BLE if connected
+        if (bleService.isConnected()) {
+          await bleService.sendText(destination, text);
+        }
+        // Add to local messages
+        const newMsg = {
+          id: Date.now(),
+          text,
+          sender: 'me',
+          destination,
+          time: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase(),
+        };
+        setMessages(prev => [...prev, newMsg]);
+        return true;
+      } catch (error) {
+        console.log('Send message error:', error);
+        return false;
+      }
     },
     
     sendLocation: async (lat, lon) => {
-      // TODO: Replace with bleService.sendGPS when ready
-      return true;
+      try {
+        if (bleService.isConnected()) {
+          return await bleService.sendGPS(lat, lon);
+        }
+        return true; // Return true for mock mode
+      } catch (error) {
+        console.log('Send location error:', error);
+        return false;
+      }
     },
     
     createLobby: async (lobbyName, groupId, maxMembers) => {
-      // TODO: Replace with bleService.sendCreateLobby when ready
-      setCurrentLobby({ name: lobbyName, id: groupId, maxMembers: parseInt(maxMembers) });
-      // Add notification for lobby creation
-      addNotification({
-        type: 'lobby',
-        title: 'Lobby Created',
-        message: `You created lobby "${lobbyName}"`,
-      });
-      return true;
+      try {
+        if (bleService.isConnected()) {
+          await bleService.sendCreateLobby(groupId, '', lobbyName);
+        }
+        setCurrentLobby({ name: lobbyName, id: groupId, maxMembers: parseInt(maxMembers) });
+        // Add notification for lobby creation
+        addNotification({
+          type: 'lobby',
+          title: 'Lobby Created',
+          message: `You created lobby "${lobbyName}"`,
+        });
+        return true;
+      } catch (error) {
+        console.log('Create lobby error:', error);
+        return false;
+      }
     },
     
     joinLobby: async (groupId) => {
-      // TODO: Replace with bleService.sendJoinLobby when ready
-      setCurrentLobby({ id: groupId, name: `Lobby ${groupId}` });
-      // Add notification for joining lobby
-      addNotification({
-        type: 'lobby',
-        title: 'Joined Lobby',
-        message: `You joined lobby ${groupId}`,
-      });
-      return true;
+      try {
+        if (bleService.isConnected()) {
+          await bleService.sendJoinLobby(groupId);
+        }
+        setCurrentLobby({ id: groupId, name: `Lobby ${groupId}` });
+        // Add notification for joining lobby
+        addNotification({
+          type: 'lobby',
+          title: 'Joined Lobby',
+          message: `You joined lobby ${groupId}`,
+        });
+        return true;
+      } catch (error) {
+        console.log('Join lobby error:', error);
+        return false;
+      }
+    },
+    
+    sendProfile: async (profileObj) => {
+      try {
+        if (bleService.isConnected()) {
+          return await bleService.sendProfile(profileObj);
+        }
+        return true;
+      } catch (error) {
+        console.log('Send profile error:', error);
+        return false;
+      }
+    },
+    
+    disconnect: async () => {
+      try {
+        await bleService.disconnect();
+        setConnectionState(CONNECTION_STATES.DISCONNECTED);
+        setConnectedDevice(null);
+      } catch (error) {
+        console.log('Disconnect error:', error);
+      }
     },
   };
 
