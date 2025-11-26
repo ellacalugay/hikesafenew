@@ -753,19 +753,184 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess, onReconnect }) => {
   
   // Join lobby form state
   const [joinUsername, setJoinUsername] = useState('');
-  const [joinGroupId, setJoinGroupId] = useState('');
+  const [joinGroupId, setJoinGroupId] = useState('');  // Lobby ID (group id) to join
+  const [joinPin, setJoinPin] = useState('');  // 6-digit PIN
   const [joinUsernameError, setJoinUsernameError] = useState('');
   const [joinGroupIdError, setJoinGroupIdError] = useState('');
+  const [joinPinError, setJoinPinError] = useState('');
   
   // Create lobby form state
   const [lobbyName, setLobbyName] = useState('');
   const [groupId, setGroupId] = useState('');
   const [maxMember, setMaxMember] = useState('');
+  const [createdPin, setCreatedPin] = useState('');  // PIN generated after lobby creation
+  const [isJoining, setIsJoining] = useState(false);  // Show joining indicator
+  
+  // Nearby Lobbies Discovery State
+  const [nearbyLobbies, setNearbyLobbies] = useState([]); // Array of { lobbyName, creatorName, memberCount, timestamp }
+  const [isScanning, setIsScanning] = useState(false);
+  const [discoveryJoined, setDiscoveryJoined] = useState(false);
+  const [selectedNearbyLobby, setSelectedNearbyLobby] = useState(null); // For PIN entry modal
 
   // Load saved credentials on mount
   useEffect(() => {
     loadSavedCredentials();
   }, []);
+
+  // Set up discovery channel listener
+  useEffect(() => {
+    if (!bleService.isConnected()) return;
+    
+    const handleDiscoveryMessage = (code, data) => {
+      // Listen for channel messages (RESP_CODE_CHANNEL_MSG_RECV or RESP_CODE_CHANNEL_MSG_RECV_V3)
+      if (code !== 8 && code !== 17) return; // RESP_CODE_CHANNEL_MSG_RECV = 8, V3 = 17
+      
+      try {
+        const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+        
+        // Parse firmware format:
+        // V3 (code 17): [SNR][reserved][reserved][channel_idx][path_len][txt_type][timestamp 4 bytes][text...]
+        // V2 (code 8):  [channel_idx][path_len][txt_type][timestamp 4 bytes][text...]
+        let offset = 0;
+        if (code === 17) {
+          // V3 has 3 extra bytes at the start
+          offset = 3;
+        }
+        
+        if (bytes.length < offset + 7) return; // Not enough data
+        
+        const channelIdx = bytes[offset];
+        // const pathLen = bytes[offset + 1]; // Not used for now
+        // const txtType = bytes[offset + 2]; // Usually 0 (plain)
+        // const timestamp = bytes[offset + 3] | (bytes[offset + 4] << 8) | (bytes[offset + 5] << 16) | (bytes[offset + 6] << 24);
+        
+        // Text starts at offset + 7
+        const textBytes = bytes.slice(offset + 7);
+        const message = new TextDecoder().decode(textBytes);
+        
+        // Check if this is from the discovery channel (index 7)
+        const DISCOVERY_CHANNEL_IDX = 7;
+        if (channelIdx !== DISCOVERY_CHANNEL_IDX) {
+          console.log('Channel message from index', channelIdx, '(not discovery channel)');
+          return;
+        }
+        
+        console.log('Discovery channel message received:', message);
+        
+        const parsed = bleService.parseDiscoveryMessage(message);
+        if (!parsed) return;
+        
+        if (parsed.type === 'ANNOUNCE' || parsed.type === 'SCAN_RESPONSE') {
+          // Add or update lobby in the list
+          setNearbyLobbies(prev => {
+            const existing = prev.findIndex(l => l.lobbyName === parsed.lobbyName);
+            const newEntry = {
+              lobbyName: parsed.lobbyName,
+              creatorName: parsed.creatorName,
+              memberCount: parsed.memberCount,
+              timestamp: Date.now(),
+            };
+            if (existing >= 0) {
+              const updated = [...prev];
+              updated[existing] = newEntry;
+              return updated;
+            }
+            return [...prev, newEntry];
+          });
+        }
+      } catch (e) {
+        console.log('Error parsing discovery message:', e);
+      }
+    };
+    
+    bleService.onMessage(handleDiscoveryMessage);
+    
+    return () => {
+      bleService.offMessage(handleDiscoveryMessage);
+    };
+  }, []);
+
+  // Join discovery channel when BLE connects
+  const joinDiscoveryChannel = async () => {
+    if (!bleService.isConnected()) {
+      console.log('Cannot join discovery channel - not connected');
+      return false;
+    }
+    try {
+      const ok = await bleService.joinDiscoveryChannel();
+      setDiscoveryJoined(ok);
+      console.log('Discovery channel joined:', ok);
+      return ok;
+    } catch (e) {
+      console.log('Error joining discovery channel:', e);
+      return false;
+    }
+  };
+
+  // Scan for nearby lobbies via LoRa
+  // Scan for nearby lobbies via LoRa by sending a scan request and listening
+  // for transient announcements forwarded by the device over BLE.
+  const scanForNearbyLobbies = async () => {
+    setIsScanning(true);
+    setNearbyLobbies([]); // Clear existing
+
+    console.log('=== LORA LOBBY SCAN (LIVE) STARTING ===');
+
+    try {
+      if (!bleService.isConnected()) {
+        Alert.alert(
+          'Not Connected',
+          'Please connect to your LoRa device first before scanning for lobbies.',
+          [{ text: 'OK' }]
+        );
+        setIsScanning(false);
+        return;
+      }
+
+      // Ensure we are joined to the discovery channel so incoming floods are forwarded
+      await joinDiscoveryChannel();
+
+      // Give the device a moment to join and start listening
+      await new Promise(r => setTimeout(r, 300));
+
+      // Clear any previously collected entries and request nearby lobbies
+      setNearbyLobbies([]);
+      await bleService.requestNearbyLobbies(bleService.getDeviceName() || 'phone');
+
+      // Wait briefly to collect responses/announcements (they arrive via onMessage handler)
+      await new Promise(r => setTimeout(r, 3000));
+
+      setIsScanning(false);
+
+      if (!nearbyLobbies || nearbyLobbies.length === 0) {
+        Alert.alert(
+          'No Lobbies Found',
+          'No lobbies discovered over LoRa radio yet.\n\n' +
+          '• Make sure someone has created a lobby\n' +
+          '• Lobbies are broadcast by creators or responded to scan requests\n' +
+          '• Try scanning again after a moment',
+          [{ text: 'OK' }]
+        );
+      }
+    } catch (e) {
+      console.log('Lobby scan error:', e);
+      setIsScanning(false);
+      Alert.alert('Scan Error', 'Failed to scan for lobbies: ' + (e?.message || e));
+    }
+  };
+
+  // Select a discovered lobby to join
+  const selectNearbyLobby = (lobby) => {
+    // Nearby entries report `lobbyName` but that is the Lobby ID/group identifier.
+    setJoinGroupId(lobby.lobbyName);
+    setSelectedNearbyLobby(lobby);
+    // User still needs to enter PIN
+    Alert.alert(
+      'Enter PIN',
+      `To join "${lobby.lobbyName}" (created by ${lobby.creatorName}), you need the 6-digit PIN from the lobby creator.`,
+      [{ text: 'OK' }]
+    );
+  };
 
   const loadSavedCredentials = async () => {
     try {
@@ -773,9 +938,9 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess, onReconnect }) => {
       if (savedRemember === 'true') {
         setRemember(true);
         const savedUsername = await AsyncStorage.getItem(STORAGE_KEYS.SAVED_USERNAME);
-        const savedGroupId = await AsyncStorage.getItem(STORAGE_KEYS.SAVED_GROUP_ID);
+        const savedLobbyName = await AsyncStorage.getItem(STORAGE_KEYS.SAVED_GROUP_ID);
         if (savedUsername) setJoinUsername(savedUsername);
-        if (savedGroupId) setJoinGroupId(savedGroupId);
+        if (savedLobbyName) setJoinGroupId(savedLobbyName);
       }
     } catch (error) {
       console.log('Error loading saved credentials:', error);
@@ -803,9 +968,6 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess, onReconnect }) => {
   const [groupIdError, setGroupIdError] = useState('');
   const [maxMemberError, setMaxMemberError] = useState('');
 
-  // Mock existing lobbies (will be replaced with actual data from LoRa)
-  const existingLobbies = ['ABCDEF123', 'HIKESAFE01', 'TRAIL2024'];
-
   const validateJoinForm = () => {
     let isValid = true;
     
@@ -817,13 +979,23 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess, onReconnect }) => {
     }
     
     if (!joinGroupId.trim()) {
-      setJoinGroupIdError('Group ID is required');
+      setJoinGroupIdError('Lobby ID is required');
       isValid = false;
-    } else if (!existingLobbies.includes(joinGroupId.trim().toUpperCase())) {
-      setJoinGroupIdError('Lobby not found. Check the Group ID or create a new lobby.');
+    } else if (joinGroupId.trim().length < 2) {
+      setJoinGroupIdError('Lobby ID must be at least 2 characters');
       isValid = false;
     } else {
       setJoinGroupIdError('');
+    }
+    
+    if (!joinPin.trim()) {
+      setJoinPinError('PIN is required (get this from the lobby creator)');
+      isValid = false;
+    } else if (!/^\d{6}$/.test(joinPin.trim())) {
+      setJoinPinError('PIN must be exactly 6 digits');
+      isValid = false;
+    } else {
+      setJoinPinError('');
     }
     
     return isValid;
@@ -848,9 +1020,6 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess, onReconnect }) => {
     } else if (groupId.trim().length < 4) {
       setGroupIdError('Group ID must be at least 4 characters');
       isValid = false;
-    } else if (existingLobbies.includes(groupId.trim().toUpperCase())) {
-      setGroupIdError('This Group ID already exists');
-      isValid = false;
     } else {
       setGroupIdError('');
     }
@@ -873,23 +1042,125 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess, onReconnect }) => {
 
   const handleJoinLobby = async () => {
     if (validateJoinForm()) {
+      const lobbyIdTrimmed = joinGroupId.trim();
+      const pinTrimmed = joinPin.trim();
+
       // Save credentials if remember me is checked
-      await saveCredentials(joinUsername.trim(), joinGroupId.trim().toUpperCase());
-      // TODO: Send join lobby command via BLE when connected
-      // bleService.sendJoinLobby(joinGroupId.trim().toUpperCase());
-      onLogin({ username: joinUsername.trim(), groupId: joinGroupId.trim().toUpperCase() });
+      await saveCredentials(joinUsername.trim(), lobbyIdTrimmed);
+
+      // Check if BLE is connected and send join lobby command
+      console.log('=== JOIN LOBBY DEBUG ===');
+      console.log('BLE connected:', bleService.isConnected());
+      console.log('Lobby ID:', lobbyIdTrimmed);
+      console.log('PIN:', pinTrimmed);
+      
+      if (!bleService.isConnected()) {
+        Alert.alert(
+          'Not Connected',
+          'You are not connected to a HikeSafe device. Would you like to reconnect?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Reconnect', onPress: () => onReconnect && onReconnect() }
+          ]
+        );
+        return;
+      }
+      
+      setIsJoining(true);
+      
+      try {
+        console.log('=== JOINING LOBBY ===');
+        console.log('Group ID (used for secret derivation):', lobbyIdTrimmed);
+        console.log('PIN entered:', pinTrimmed);
+        console.log('Expected input string for secret:', `${lobbyIdTrimmed}:${pinTrimmed}:hikesafe`);
+
+        // Use sendJoinLobbyWithPin which uses CMD_SET_CHANNEL with fixed index
+        // This ensures the channel is set at the same index as the creator
+        const ok = await bleService.sendJoinLobbyWithPin(lobbyIdTrimmed, pinTrimmed);
+        console.log('Join lobby BLE result:', ok);
+        
+        if (ok) {
+          // Don't send join request message - just enter the lobby
+          // The user will know if they're on the wrong channel when messages don't appear
+          setIsJoining(false);
+          Alert.alert(
+            'Joined Lobby',
+            `You have joined "${lobbyIdTrimmed}".\n\n⚠️ IMPORTANT: The PIN must match EXACTLY what the creator shared. If messages don't appear, verify the PIN.`,
+            [{ text: 'OK', onPress: () => onLogin({ username: joinUsername.trim(), groupId: lobbyIdTrimmed }) }]
+          );
+        } else {
+          setIsJoining(false);
+          Alert.alert('Error', 'Failed to join lobby. Please check your device connection.');
+        }
+      } catch (e) {
+        setIsJoining(false);
+        console.warn('Join lobby BLE error:', e);
+        Alert.alert('Error', 'Failed to join lobby: ' + e.message);
+      }
     }
   };
 
-  const handleCreateLobby = () => {
+  const handleCreateLobby = async () => {
     if (validateCreateForm()) {
-      // TODO: Send create lobby command via BLE when connected
-      // bleService.sendCreateLobby(groupId.trim(), '', lobbyName.trim());
-      onShowCreateSuccess({ 
-        lobbyName: lobbyName.trim(), 
-        groupId: groupId.trim().toUpperCase(), 
-        maxMember: maxMember.trim() 
-      });
+      const lobbyId = groupId.trim().toUpperCase();
+      const lobbyNameTrimmed = lobbyName.trim();
+      
+      // Debug logging
+      console.log('=== CREATE LOBBY DEBUG ===');
+      console.log('BLE connected:', bleService.isConnected());
+      console.log('BLE device:', bleService.getDeviceName());
+      console.log('Lobby ID:', lobbyId);
+      console.log('Lobby Name:', lobbyNameTrimmed);
+      
+      // Check if BLE is connected
+      if (!bleService.isConnected()) {
+        console.log('BLE NOT CONNECTED - showing reconnect alert');
+        Alert.alert(
+          'Not Connected',
+          'You are not connected to a HikeSafe device. Would you like to reconnect?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Reconnect', onPress: () => onReconnect && onReconnect() }
+          ]
+        );
+        return;
+      }
+      
+      try {
+        console.log('=== CREATING LOBBY ===');
+        console.log('Lobby Name:', lobbyNameTrimmed);
+        console.log('Group ID (used for secret derivation):', lobbyId);
+        
+        // Use the proper create function which:
+        // 1. Creates the channel via CMD_CREATE_LOBBY (sets BLE advertisement for discovery)
+        // 2. Sets the derived secret via CMD_JOIN_LOBBY
+        // 3. Returns the generated PIN
+        const pin = await bleService.sendCreateLobbyWithPin(lobbyNameTrimmed, lobbyId);
+        
+        if (!pin) {
+          console.log('Create lobby FAILED');
+          Alert.alert('Error', 'Failed to create lobby on device. Please check your connection.');
+          return;
+        }
+        
+        console.log('=== LOBBY CREATED ===');
+        console.log('Generated PIN:', pin);
+        console.log('Input string for secret:', `${lobbyId}:${pin}:hikesafe`);
+        console.log('Share with joiners: Group ID =', lobbyId, ', PIN =', pin);
+        
+        // Store the PIN to display in success modal
+        setCreatedPin(pin);
+        
+        onShowCreateSuccess({ 
+            lobbyName: lobbyNameTrimmed, 
+            groupId: lobbyId, 
+            maxMember: maxMember.trim(),
+            pin: pin  // Pass the PIN to display
+          });
+      } catch (e) {
+        console.warn('Create lobby error:', e);
+        Alert.alert('Error', 'Failed to create lobby: ' + e.message);
+      }
     }
   };
 
@@ -975,33 +1246,114 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess, onReconnect }) => {
       style={styles.lobbyCreateBg}
       resizeMode="cover"
     >
-      <View style={[styles.contentContainer, { paddingBottom: Math.max(insets.bottom + 20, 40) }]}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom + 20, 40) }]} keyboardShouldPersistTaps="handled">
           <View style={styles.logoSection}>
             <Image source={require('./assets/hike.png')} style={styles.logoImage} />
             <Text style={styles.tagline}>"Stay connected. Stay safe."</Text>
           </View>
 
-        <View style={[styles.formSection, { top:-10, width: '80%', alignSelf: 'center' }]}> 
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={[styles.input, joinUsernameError ? { borderColor: 'red' } : null]}
-              placeholder="Username"
-              placeholderTextColor="#9CA3AF"
-              value={joinUsername}
-              onChangeText={(t) => { setJoinUsername(t); if (joinUsernameError) setJoinUsernameError(''); }}
-            />
-            {joinUsernameError ? <Text style={styles.errorTextRed}>{joinUsernameError}</Text> : null}
-          </View>
+        <View style={[styles.formSection, { width: '80%', alignSelf: 'center' }]}> 
+
           <View style={styles.inputContainer}>
             <TextInput
               style={[styles.input, joinGroupIdError ? { borderColor: 'red' } : null]}
-              placeholder="Group ID"
+              placeholder="Lobby ID (Group ID)"
               placeholderTextColor="#9CA3AF"
               value={joinGroupId}
               onChangeText={(t) => { setJoinGroupId(t); if (joinGroupIdError) setJoinGroupIdError(''); }}
               autoCapitalize="characters"
             />
             {joinGroupIdError ? <Text style={styles.errorTextRed}>{joinGroupIdError}</Text> : null}
+          </View>
+
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={[styles.input, joinPinError ? { borderColor: 'red' } : null]}
+              placeholder="6-Digit PIN"
+              placeholderTextColor="#9CA3AF"
+              value={joinPin}
+              onChangeText={(t) => { 
+                // Only allow digits, max 6
+                const digits = t.replace(/[^0-9]/g, '').slice(0, 6);
+                setJoinPin(digits); 
+                if (joinPinError) setJoinPinError(''); 
+              }}
+              keyboardType="numeric"
+              maxLength={6}
+            />
+            {joinPinError ? <Text style={styles.errorTextRed}>{joinPinError}</Text> : null}
+            
+          </View>
+
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={[styles.input, joinUsernameError ? { borderColor: 'red' } : null]}
+              placeholder="Your display name"
+              placeholderTextColor="#9CA3AF"
+              value={joinUsername}
+              onChangeText={(t) => { setJoinUsername(t); if (joinUsernameError) setJoinUsernameError(''); }}
+            />
+            {joinUsernameError ? <Text style={styles.errorTextRed}>{joinUsernameError}</Text> : null}
+          </View>
+          
+          {/* Nearby Lobbies Discovery Section */}
+          <View style={{ marginTop: 15, marginBottom: 10 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={{ color: 'white', fontWeight: '600', fontSize: 14 }}>📡 Nearby Lobbies</Text>
+              <TouchableOpacity 
+                onPress={scanForNearbyLobbies}
+                disabled={isScanning}
+                style={{ 
+                  backgroundColor: isScanning ? '#6b7280' : '#22c55e', 
+                  paddingHorizontal: 12, 
+                  paddingVertical: 6, 
+                  borderRadius: 12 
+                }}
+              >
+                {isScanning ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <ActivityIndicator size="small" color="white" />
+                    <Text style={{ color: 'white', fontSize: 12, marginLeft: 5 }}>Scanning...</Text>
+                  </View>
+                ) : (
+                  <Text style={{ color: 'white', fontSize: 12, fontWeight: '600' }}>Scan</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+            
+            {nearbyLobbies.length > 0 ? (
+              <ScrollView style={{ maxHeight: 120, marginTop: 8 }} nestedScrollEnabled>
+                {nearbyLobbies.map((lobby, idx) => (
+                  <TouchableOpacity 
+                    key={`${lobby.lobbyName}-${idx}`}
+                    onPress={() => selectNearbyLobby(lobby)}
+                    style={{ 
+                      backgroundColor: joinGroupId === lobby.lobbyName ? 'rgba(34, 197, 94, 0.3)' : 'rgba(255,255,255,0.1)', 
+                      padding: 10, 
+                      borderRadius: 8, 
+                      marginBottom: 6,
+                      borderWidth: joinGroupId === lobby.lobbyName ? 1 : 0,
+                      borderColor: '#22c55e',
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <View>
+                        <Text style={{ color: 'white', fontWeight: '600' }}>{lobby.lobbyName}</Text>
+                        <Text style={{ color: '#9CA3AF', fontSize: 11 }}>Created by: {lobby.creatorName}</Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={{ color: '#22c55e', fontSize: 12 }}>{lobby.memberCount} member{lobby.memberCount !== 1 ? 's' : ''}</Text>
+                        <Text style={{ color: '#6b7280', fontSize: 10 }}>Tap to select</Text>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            ) : (
+              <Text style={{ color: '#6b7280', fontSize: 12, marginTop: 8, textAlign: 'center' }}>
+                {isScanning ? '📻 Scanning LoRa radio...' : 'Tap "Scan" to find lobbies via LoRa'}
+              </Text>
+            )}
           </View>
           
           <View style={styles.row}>
@@ -1016,7 +1368,14 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess, onReconnect }) => {
           <View style={[styles.hrLine, { marginTop: 30 }]} />
         </View>
 
-        <MainButton title="Enter Lobby" onPress={handleJoinLobby} style={{ top: -30, width: '80%', alignSelf: 'center' }} />
+          {isJoining ? (
+          <View style={{ width: '80%', alignSelf: 'center', alignItems: 'center', padding: 15, marginTop: 10 }}>
+            <ActivityIndicator size="large" color="#22c55e" />
+            <Text style={{ color: 'white', marginTop: 10, fontWeight: '600' }}>Joining lobby...</Text>
+          </View>
+        ) : (
+          <MainButton title="Enter Lobby" onPress={handleJoinLobby} style={{ width: '80%', alignSelf: 'center', marginTop: 10 }} />
+        )}
         
         <TouchableOpacity
           onPress={onReconnect}
@@ -1039,7 +1398,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess, onReconnect }) => {
             <Text style={{ color: 'white', fontWeight: 'bold' }}>Create Here.</Text>
           </Text>
         </TouchableOpacity>
-      </View>
+      </ScrollView>
     </ImageBackground>
   );
 };
@@ -1058,9 +1417,17 @@ const Dashboard = ({ onLogout, userData = {}, lobbyData = {}, loraContext = {} }
   const displayUsername = userData?.username || 'John Doe';
   const displayGroupId = userData?.groupId || lobbyData?.groupId || 'ABCDEF123';
   
-  // Get lobby members from context (mock for now, will be from LoRa)
+  // Get lobby members and messages from context
   const lobbyMembers = loraContext?.lobbyMembers || [];
-  const memberCount = lobbyMembers.length || 15; // Default to 15 for demo
+  const messages = loraContext?.messages || [];
+  const memberCount = lobbyMembers.length;
+  
+  // Calculate nearest member distance
+  const nearestDistance = lobbyMembers.length > 0 
+    ? Math.min(...lobbyMembers.filter(m => m.distance).map(m => m.distance)) || null
+    : null;
+
+  const { checkMessagesNow } = loraContext;
 
   const renderContent = () => {
     // If chatTarget is set, show the conversation view
@@ -1075,9 +1442,10 @@ const Dashboard = ({ onLogout, userData = {}, lobbyData = {}, loraContext = {} }
         groupId={displayGroupId}
         memberCount={memberCount}
         isConnected={loraContext?.isConnected}
+        nearestDistance={nearestDistance}
       />;
       case 'location': return <LocationTab lobbyMembers={lobbyMembers} loraContext={loraContext} />;
-      case 'message': return <MessageTab onOpenChat={setChatTarget} groupId={displayGroupId} lobbyMembers={lobbyMembers} />;
+      case 'message': return <MessageTab onOpenChat={setChatTarget} groupId={displayGroupId} lobbyMembers={lobbyMembers} messages={messages} />;
       case 'compass': return <CompassTab 
         isServiceEnabled={locationServiceEnabled} 
         setIsServiceEnabled={setLocationServiceEnabled}
@@ -1101,6 +1469,19 @@ const Dashboard = ({ onLogout, userData = {}, lobbyData = {}, loraContext = {} }
       style={{flex: 1}}
       resizeMode="cover"
     >
+      {/* Top-right manual message sync button */}
+      {!chatTarget && (
+        <View style={{ position: 'absolute', top: insets.top + 10, right: 10, zIndex: 10 }}>
+          <TouchableOpacity
+            onPress={checkMessagesNow}
+            style={{ flexDirection: 'row', alignItems: 'center', padding: 8, backgroundColor: 'rgba(255,255,255,0.9)', borderRadius: 999 }}
+          >
+            <RefreshCw size={18} color={COLORS.primary} />
+            <Text style={{ marginLeft: 6, color: COLORS.primary, fontWeight: '600' }}>Check messages</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {renderContent()}
       
       {/* Bottom Navigation Bar - hide when in chat conversation */}
@@ -1126,7 +1507,7 @@ const TabIcon = ({ icon: Icon, active, onPress }) => (
 
 // --- DASHBOARD TABS ---
 
-const HomeTab = ({ onChangeTab, username = 'John Doe', groupId = 'ABCDEF123', memberCount = 15, isConnected = false }) => (
+const HomeTab = ({ onChangeTab, username = 'John Doe', groupId = 'ABCDEF123', memberCount = 0, isConnected = false, nearestDistance = null }) => (
   <ScrollView contentContainerStyle={styles.scrollContent}>
     <View style={styles.headerRow}>
       <View>
@@ -1150,11 +1531,11 @@ const HomeTab = ({ onChangeTab, username = 'John Doe', groupId = 'ABCDEF123', me
       <View style={styles.statsRow}>
         <View style={styles.statItem}>
           <Text style={styles.statLabel}>MEMBERS</Text>
-          <Text style={styles.statValue}>{memberCount}</Text>
+          <Text style={styles.statValue}>{memberCount > 0 ? memberCount : '--'}</Text>
         </View>
         <View style={styles.statItem}>
           <Text style={styles.statLabel}>NEAREST</Text>
-          <Text style={styles.statValue}>30 m</Text>
+          <Text style={styles.statValue}>{nearestDistance ? `${nearestDistance} m` : '-- m'}</Text>
         </View>
         <View style={styles.statItem}>
           <Text style={styles.statLabel}>SIGNAL</Text>
@@ -1198,12 +1579,20 @@ const LocationTab = ({ lobbyMembers = [], loraContext = {} }) => {
   const [locationError, setLocationError] = useState(null);
   const locationSubscription = useRef(null);
 
-  // Mock members if none provided
-  const [members, setMembers] = useState(lobbyMembers.length > 0 ? lobbyMembers : [
-    { id: 1, name: 'Alice', distance: 1, online: true, lat: 0, lon: 0, lastSeen: new Date() },
-    { id: 2, name: 'Bob', distance: 0.5, online: true, lat: 0, lon: 0, lastSeen: new Date() },
-    { id: 3, name: 'Charlie', distance: 15, online: false, lat: 0, lon: 0, lastSeen: new Date(Date.now() - 300000) },
-  ]);
+  // Use real members if available, otherwise show empty state
+  const [members, setMembers] = useState([]);
+  
+  // Update members when lobbyMembers changes
+  useEffect(() => {
+    if (lobbyMembers.length > 0) {
+      setMembers(lobbyMembers.map(m => ({
+        ...m,
+        online: m.online !== undefined ? m.online : true,
+        distance: m.distance || null,
+        lastSeen: m.lastSeen || new Date(),
+      })));
+    }
+  }, [lobbyMembers]);
 
   // Calculate distance between two coordinates (Haversine formula)
   const calculateDistance = (lat1, lon1, lat2, lon2) => {
@@ -1328,23 +1717,31 @@ const LocationTab = ({ lobbyMembers = [], loraContext = {} }) => {
       {/* Members List */}
       <ScrollView style={{flex:1, padding: 20, paddingTop: 0}}>
         <Text style={locStyles.sectionTitle}>Lobby Members ({members.length})</Text>
-        {members.map((member) => (
-          <View key={member.id} style={styles.userLocationRow}>
-            <View style={[styles.avatarSmall, !member.online && { backgroundColor: COLORS.gray }]}>
-              <User size={16} color="white" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <View style={locStyles.memberRow}>
-                <Text style={styles.memberName}>{member.name}</Text>
-                <View style={[locStyles.statusDot, { backgroundColor: member.online ? '#22c55e' : '#9ca3af' }]} />
-              </View>
-              <Text style={styles.locationText}>
-                {member.online ? `${member.distance} meter${member.distance !== 1 ? 's' : ''} away` : `Last seen ${timeAgo(member.lastSeen)}`}
-              </Text>
-            </View>
-            <MapPin size={20} color={member.online ? COLORS.primary : COLORS.gray} />
+        {members.length === 0 ? (
+          <View style={{ padding: 20, alignItems: 'center' }}>
+            <Text style={{ color: COLORS.gray, textAlign: 'center' }}>
+              No other members in the lobby yet.{'\n'}When other LoRa devices join and share location, they will appear here.
+            </Text>
           </View>
-        ))}
+        ) : (
+          members.map((member) => (
+            <View key={member.id} style={styles.userLocationRow}>
+              <View style={[styles.avatarSmall, !member.online && { backgroundColor: COLORS.gray }]}>
+                <User size={16} color="white" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={locStyles.memberRow}>
+                  <Text style={styles.memberName}>{member.name}</Text>
+                  <View style={[locStyles.statusDot, { backgroundColor: member.online ? '#22c55e' : '#9ca3af' }]} />
+                </View>
+                <Text style={styles.locationText}>
+                  {member.online && member.distance ? `${member.distance} meter${member.distance !== 1 ? 's' : ''} away` : member.online ? 'Distance unknown' : `Last seen ${timeAgo(member.lastSeen)}`}
+                </Text>
+              </View>
+              <MapPin size={20} color={member.online ? COLORS.primary : COLORS.gray} />
+            </View>
+          ))
+        )}
       </ScrollView>
     </View>
   );
@@ -1424,21 +1821,30 @@ const locStyles = StyleSheet.create({
 });
 
 // --- MESSAGE TAB (Chat List) ---
-const MessageTab = ({ onOpenChat, groupId = 'ABCDEF123', lobbyMembers = [] }) => {
-  // Mock members for direct messages if none provided
-  const members = lobbyMembers.length > 0 ? lobbyMembers : [
-    { id: 'user1', name: 'Baby L', online: true, distance: '100 M', avatar: 'BL' },
-    { id: 'user2', name: 'John Doe', online: true, distance: '50 M', avatar: 'JD' },
-    { id: 'user3', name: 'Jane Smith', online: false, distance: '200 M', avatar: 'JS' },
-  ];
+const MessageTab = ({ onOpenChat, groupId = 'ABCDEF123', lobbyMembers = [], messages = [] }) => {
+  // Use real members, empty array if none
+  const members = lobbyMembers.map(m => ({
+    id: m.id,
+    name: m.name || `Device_${String(m.id).slice(0, 4)}`,
+    online: m.online !== undefined ? m.online : true,
+    distance: m.distance ? `${m.distance} M` : '-- M',
+    avatar: m.name ? m.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : '??',
+  }));
 
-  // Mock data for chats
+  // Get the last message from the global messages for lobby
+  const lastLobbyMessage = messages.length > 0 
+    ? messages[messages.length - 1]
+    : null;
+
+  // Lobby group chat
   const lobbyChat = {
     id: 'lobby',
     name: `LOBBY ${groupId}`,
     type: 'group',
-    lastMessage: 'John: Everyone stay safe!',
-    time: '8:05 am',
+    lastMessage: lastLobbyMessage 
+      ? `${lastLobbyMessage.sender === 'me' ? 'You: ' : ''}${lastLobbyMessage.text}`.slice(0, 40)
+      : (members.length > 0 ? 'Tap to chat with group' : 'No members yet'),
+    time: lastLobbyMessage?.time || new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase(),
     online: true,
     members: members.length + 1, // +1 for self
   };
@@ -1508,6 +1914,15 @@ const MessageTab = ({ onOpenChat, groupId = 'ABCDEF123', lobbyMembers = [] }) =>
             </View>
           </TouchableOpacity>
         ))}
+        
+        {/* Empty state */}
+        {userChats.length === 0 && (
+          <View style={{ padding: 20, alignItems: 'center' }}>
+            <Text style={{ color: COLORS.gray, textAlign: 'center' }}>
+              No other members in the lobby yet.{'\n'}When other LoRa devices join, they will appear here.
+            </Text>
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -1520,13 +1935,29 @@ const ChatConversation = ({ chat, onBack, loraContext = {} }) => {
   const [isSending, setIsSending] = useState(false);
   const scrollViewRef = useRef(null);
   
-  // Get messages from context or use initial mock data
-  const [localMessages, setLocalMessages] = useState([
-    { id: 1, text: 'Wer n u?', sender: 'me', time: '8:03 am' },
-    { id: 2, text: 'Here n me', sender: 'them', time: '8:04 am' },
-    { id: 3, text: 'Ok', sender: 'me', time: '8:04 am' },
-    { id: 4, text: 'Ok k rin', sender: 'them', time: '8:05 am' },
-  ]);
+  // Local messages for this chat - synced with loraContext.messages
+  const [localMessages, setLocalMessages] = useState([]);
+  
+  // Sync with global messages from LoRa context
+  useEffect(() => {
+    if (loraContext?.messages) {
+      // Filter messages relevant to this chat
+      // For group chat: show all channel messages (sender === 'remote' or 'me')
+      // For direct chat: filter by destination/sender
+      const relevantMessages = loraContext.messages.filter(msg => {
+        if (chat.type === 'group') {
+          // Group chat: show all lobby channel messages
+          return true;
+        } else {
+          // Direct message: match by user ID
+          const chatUserId = chat.id.replace('user', '');
+          return msg.destination === chatUserId || msg.sender === chatUserId;
+        }
+      });
+      
+      setLocalMessages(relevantMessages);
+    }
+  }, [loraContext?.messages, chat.id, chat.type]);
 
   // Scroll to bottom when messages change or keyboard appears
   useEffect(() => {
@@ -1543,22 +1974,13 @@ const ChatConversation = ({ chat, onBack, loraContext = {} }) => {
   const sendMessage = async () => {
     if (message.trim() && !isSending) {
       setIsSending(true);
+      const textToSend = message.trim();
+      setMessage(''); // Clear input immediately
       
-      const newMsg = {
-        id: localMessages.length + 1,
-        text: message.trim(),
-        sender: 'me',
-        time: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase(),
-      };
-      
-      // Add to local messages immediately for UI feedback
-      setLocalMessages(prev => [...prev, newMsg]);
-      setMessage('');
-      
-      // Send via LoRa if connected
+      // Send via LoRa if connected - this will add to loraContext.messages which syncs to localMessages
       if (loraContext?.sendMessage) {
         const destination = chat.type === 'group' ? 0xFF : parseInt(chat.id.replace('user', '')) || 0;
-        await loraContext.sendMessage(destination, newMsg.text);
+        await loraContext.sendMessage(destination, textToSend);
       }
       
       setIsSending(false);
@@ -3539,6 +3961,9 @@ const MenuOption = ({ icon: Icon, label, onPress, badge, danger }) => (
 // --- MAIN APP COMPONENT ---
 
 export default function App() {
+  // DEBUG: set to true to skip onboarding flows for faster debugging. Remove when done.
+  const DEBUG_SKIP_ONBOARDING = true;
+
   const [screen, setScreen] = useState('init'); // init, onboarding1, onboarding2, lobby, dashboard
   const [showReminder, setShowReminder] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
@@ -3625,7 +4050,7 @@ export default function App() {
   const [connectionState, setConnectionState] = useState(CONNECTION_STATES.DISCONNECTED);
   const [connectedDevice, setConnectedDevice] = useState(null);
   const [availableDevices, setAvailableDevices] = useState([]);
-  const [currentLobby, setCurrentLobby] = useState(null);
+  const [currentLobby, setCurrentLobby] = useState(null); // { name, channelIdx, secret (16 bytes), lobbyId }
   const [lobbyMembers, setLobbyMembers] = useState([]);
   const [messages, setMessages] = useState([]);
   const [loraError, setLoraError] = useState(null);
@@ -3633,9 +4058,52 @@ export default function App() {
   // Set up BLE message listener
   useEffect(() => {
     const handleBleMessage = (code, data) => {
-      console.log('BLE message received:', code, data);
+      console.log('BLE message received, code:', code, 'data length:', data?.length);
       
       switch (code) {
+        case BLE_CODES.RESP_CODE_OK:
+          console.log('BLE: Command OK');
+          break;
+          
+        case BLE_CODES.RESP_CODE_ERR:
+          console.log('BLE: Command error');
+          break;
+          
+        case BLE_CODES.RESP_CODE_CHANNEL_INFO:
+          // Lobby/channel created successfully
+          // Format: [channel_idx(1)][name(32)][secret(16)]
+          try {
+            if (data && data.length >= 49) {
+              const channelIdx = data[0];
+              const channelName = Buffer.from(data.slice(1, 33)).toString('utf8').replace(/\0/g, '').trim();
+              const channelSecret = Array.from(data.slice(33, 49)); // Store as array of bytes
+              
+              // Create shareable code: base64 encode the secret
+              const secretBase64 = Buffer.from(channelSecret).toString('base64');
+              
+              console.log('Lobby created! Channel:', channelIdx, 'Name:', channelName);
+              console.log('Channel secret (base64):', secretBase64);
+              
+              // Store lobby info with secret for sharing
+              setCurrentLobby(prev => ({
+                ...prev,
+                channelIdx,
+                name: channelName,
+                secret: channelSecret,
+                secretBase64: secretBase64,
+              }));
+              
+              addNotification({
+                type: 'success',
+                title: 'Lobby Created',
+                message: `Share code: ${secretBase64.slice(0, 8)}...`,
+              });
+            }
+          } catch (e) {
+            console.log('Error parsing channel info:', e);
+          }
+          break;
+
         case BLE_CODES.RESP_CODE_CONTACT_MSG_RECV:
         case BLE_CODES.RESP_CODE_CONTACT_MSG_RECV_V3:
         case BLE_CODES.RESP_CODE_CHANNEL_MSG_RECV:
@@ -3643,11 +4111,52 @@ export default function App() {
         case BLE_CODES.PUSH_CODE_MSG_WAITING:
           // Incoming text message from LoRa
           try {
-            const msgText = Buffer.from(data).toString('utf8');
+            // Parse firmware format:
+            // V3 (codes 16, 17): [SNR][reserved][reserved][channel_idx/contact info][path_len][txt_type][timestamp 4 bytes][text...]
+            // V2 (codes 7, 8):   [channel_idx/contact info][path_len][txt_type][timestamp 4 bytes][text...]
+            // PUSH_CODE_MSG_WAITING is just a notification, no payload
+            
+            if (code === BLE_CODES.PUSH_CODE_MSG_WAITING) {
+              console.log('BLE: MSG_WAITING push received');
+              break;
+            }
+            
+            const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+            let offset = 0;
+            
+            // V3 has 3 extra header bytes
+            if (code === BLE_CODES.RESP_CODE_CHANNEL_MSG_RECV_V3 || code === BLE_CODES.RESP_CODE_CONTACT_MSG_RECV_V3) {
+              offset = 3;
+            }
+            
+            if (bytes.length < offset + 7) {
+              console.log('BLE: message too short');
+              break;
+            }
+            
+            const channelIdx = bytes[offset];
+            // const pathLen = bytes[offset + 1];
+            // const txtType = bytes[offset + 2];
+            // const timestamp = bytes[offset + 3] | (bytes[offset + 4] << 8) | (bytes[offset + 5] << 16) | (bytes[offset + 6] << 24);
+            
+            // Text starts at offset + 7
+            const textBytes = bytes.slice(offset + 7);
+            const msgText = new TextDecoder().decode(textBytes);
+            
+            console.log('BLE: channel', channelIdx, 'message:', msgText);
+            
+            // Skip discovery channel messages here (handled by LobbyScreen's listener)
+            const DISCOVERY_CHANNEL_IDX = 7;
+            if (channelIdx === DISCOVERY_CHANNEL_IDX) {
+              console.log('BLE: skipping discovery channel message in main handler');
+              break;
+            }
+            
             const newMsg = {
               id: Date.now(),
               text: msgText,
               sender: 'remote',
+              channelIdx: channelIdx,
               time: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase(),
             };
             setMessages(prev => [...prev, newMsg]);
@@ -3678,27 +4187,77 @@ export default function App() {
           console.log('Message sent confirmed');
           break;
           
+        case BLE_CODES.RESP_CODE_CONTACTS_START:
+          // Start of contacts list - clear existing
+          console.log('Contacts list starting...');
+          setLobbyMembers([]);
+          break;
+          
+        case BLE_CODES.RESP_CODE_END_OF_CONTACTS:
+          // End of contacts list
+          console.log('Contacts list complete');
+          break;
+          
         case BLE_CODES.RESP_CODE_CONTACT:
-        case BLE_CODES.PUSH_CODE_NEW_ADVERT:
-          // Contact/lobby member update
+          // Individual contact received
+          // Format varies but typically: [pub_key(32)][name...] or JSON
           try {
-            const contact = JSON.parse(Buffer.from(data).toString('utf8'));
-            console.log('Contact update:', contact);
-            // Add to lobby members if not already present
-            setLobbyMembers(prev => {
-              const exists = prev.find(m => m.id === contact.id);
-              if (exists) {
-                return prev.map(m => m.id === contact.id ? contact : m);
+            // Try to parse as JSON first
+            let contact;
+            try {
+              contact = JSON.parse(Buffer.from(data).toString('utf8'));
+            } catch {
+              // Binary format - parse pub key and name
+              if (data.length >= 32) {
+                const pubKeyHex = Buffer.from(data.slice(0, 6)).toString('hex');
+                const nameBytes = data.slice(32);
+                const name = Buffer.from(nameBytes).toString('utf8').replace(/\0/g, '').trim() || 'Unknown';
+                contact = {
+                  id: pubKeyHex,
+                  name: name,
+                  online: true,
+                  lastSeen: new Date(),
+                };
               }
-              return [...prev, contact];
-            });
+            }
+            if (contact) {
+              console.log('Contact received:', contact);
+              setLobbyMembers(prev => {
+                const exists = prev.find(m => m.id === contact.id);
+                if (exists) {
+                  return prev.map(m => m.id === contact.id ? { ...m, ...contact, online: true, lastSeen: new Date() } : m);
+                }
+                return [...prev, { ...contact, online: true, lastSeen: new Date() }];
+              });
+            }
           } catch (e) {
             console.log('Error parsing contact:', e);
           }
           break;
           
+        case BLE_CODES.PUSH_CODE_NEW_ADVERT:
+        case BLE_CODES.PUSH_CODE_ADVERT:
+          // New device discovered on mesh
+          try {
+            if (data && data.length >= 32) {
+              const pubKeyHex = Buffer.from(data.slice(0, 6)).toString('hex');
+              console.log('New advert from:', pubKeyHex);
+              // This is just the public key - device is in range
+              setLobbyMembers(prev => {
+                const exists = prev.find(m => m.id === pubKeyHex);
+                if (exists) {
+                  return prev.map(m => m.id === pubKeyHex ? { ...m, online: true, lastSeen: new Date() } : m);
+                }
+                return [...prev, { id: pubKeyHex, name: `Device_${pubKeyHex.slice(0, 4)}`, online: true, lastSeen: new Date() }];
+              });
+            }
+          } catch (e) {
+            console.log('Error parsing advert:', e);
+          }
+          break;
+          
         default:
-          console.log('BLE response code:', code);
+          console.log('BLE unhandled response code:', code);
       }
     };
 
@@ -3733,22 +4292,61 @@ export default function App() {
     isConnected: connectionState === CONNECTION_STATES.CONNECTED,
     
     // Actions (integrated with BLE service)
+    // Manually trigger a single sync of queued messages from the device
+    checkMessagesNow: async () => {
+      try {
+        await bleService.syncNextMessage();
+      } catch (e) {
+        console.log('Manual syncNextMessage error:', e?.message || e);
+      }
+    },
+
+    // destination: number for direct message, 0xFF for channel broadcast
     sendMessage: async (destination, text) => {
       try {
-        // Send via BLE if connected
-        if (bleService.isConnected()) {
-          await bleService.sendText(destination, text);
-        }
-        // Add to local messages
+        // Optimistic UI: add message immediately with 'sending' status
+        const msgId = Date.now();
         const newMsg = {
-          id: Date.now(),
+          id: msgId,
           text,
           sender: 'me',
           destination,
+          status: 'sending', // 'sending' | 'sent' | 'failed'
           time: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase(),
         };
         setMessages(prev => [...prev, newMsg]);
-        return true;
+
+        // If broadcasting to lobby, ensure we're actually in a lobby
+        if (destination === 0xFF) {
+          if (!currentLobby || !currentLobby.id) {
+            // Mark message as failed and notify user
+            setMessages(prev => prev.map(m => m.id === msgId ? { ...m, status: 'failed' } : m));
+            addNotification({ type: 'error', title: 'Not In Lobby', message: 'Join or create a lobby before sending group messages.' });
+            return false;
+          }
+        }
+
+        // Attempt to send via BLE if connected
+        let ok = true;
+        if (bleService.isConnected()) {
+          if (destination === 0xFF) {
+            // Broadcast to lobby channel (group message)
+            ok = await bleService.sendChannelTextByIndex(1, text);
+          } else {
+            // Direct message to specific device
+            ok = await bleService.sendText(destination, text);
+          }
+        } else {
+          // Not connected - treat as failed for now
+          ok = false;
+        }
+
+        // Update message status based on send result
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, status: ok ? 'sent' : 'failed' } : m));
+        if (!ok) {
+          addNotification({ type: 'error', title: 'Send Failed', message: 'Message could not be sent over BLE.' });
+        }
+        return ok;
       } catch (error) {
         console.log('Send message error:', error);
         return false;
@@ -3786,17 +4384,26 @@ export default function App() {
       }
     },
     
-    joinLobby: async (groupId) => {
+    joinLobby: async (joinCode) => {
       try {
-        if (bleService.isConnected()) {
-          await bleService.sendJoinLobby(groupId);
+        // Parse join code: lobbyName:base64Secret
+        const parts = joinCode.split(':');
+        if (parts.length !== 2) {
+          console.log('Invalid join code format');
+          return false;
         }
-        setCurrentLobby({ id: groupId, name: `Lobby ${groupId}` });
+        const lobbyName = parts[0];
+        const secretBytes = Array.from(Buffer.from(parts[1], 'base64'));
+        
+        if (bleService.isConnected()) {
+          await bleService.sendJoinLobbyWithSecret(lobbyName, secretBytes);
+        }
+        setCurrentLobby({ id: lobbyName, name: lobbyName });
         // Add notification for joining lobby
         addNotification({
           type: 'lobby',
           title: 'Joined Lobby',
-          message: `You joined lobby ${groupId}`,
+          message: `You joined lobby ${lobbyName}`,
         });
         return true;
       } catch (error) {
@@ -3845,26 +4452,30 @@ export default function App() {
   const handleDeviceConnected = (device) => {
     setConnectedDevice(device);
     setConnectionState(CONNECTION_STATES.CONNECTED);
-    setScreen('onboarding1');
+    // Allow skipping onboarding during debugging
+    if (DEBUG_SKIP_ONBOARDING) {
+      setScreen('lobby');
+    } else {
+      setScreen('onboarding1');
+    }
   };
 
   const handleCreateLobbySuccess = async (data) => {
     setLobbyData(data);
-    // Create lobby via LoRa if connected
-    if (loraContext.isConnected) {
-      await loraContext.createLobby(data.lobbyName, data.groupId, data.maxMember);
-    }
+    // Note: The actual BLE create with PIN already happened in LobbyScreen
+    // This callback just updates state and shows the success modal
+    setCurrentLobby({ id: data.groupId, name: data.lobbyName, pin: data.pin });
     setShowSuccess(true);
   };
   
   // Handle joining an existing lobby
+  // Note: The actual BLE join with PIN already happened in LobbyScreen
+  // This callback just updates the app state after successful join
   const handleJoinLobby = async (data) => {
     if (data && data.username && data.groupId) {
       setUserData({ username: data.username, groupId: data.groupId });
-      // Join lobby via LoRa if connected
-      if (loraContext.isConnected) {
-        await loraContext.joinLobby(data.groupId);
-      }
+      // Update current lobby state
+      setCurrentLobby({ id: data.groupId, name: data.groupId });
     }
     setScreen('dashboard');
   };
@@ -4076,13 +4687,34 @@ export default function App() {
                <Text style={styles.infoValue}>{lobbyData.lobbyName || 'N/A'}</Text>
              </View>
              <View style={styles.infoRow}>
-               <Text style={styles.infoLabel}>Group ID:</Text>
-               <Text style={styles.infoValue}>{lobbyData.groupId || 'N/A'}</Text>
-             </View>
-             <View style={styles.infoRow}>
                <Text style={styles.infoLabel}>Max Member:</Text>
                <Text style={styles.infoValue}>{lobbyData.maxMember || 'N/A'}</Text>
              </View>
+             
+             {/* Show PIN for sharing */}
+             {lobbyData.pin && (
+               <View style={{ marginTop: 16, backgroundColor: 'rgba(255,255,255,0.2)', padding: 16, borderRadius: 8 }}>
+                 <Text style={[styles.infoLabel, { marginBottom: 8, textAlign: 'center' }]}>Share these details with others to join:</Text>
+                 
+                 <View style={{ backgroundColor: 'rgba(255,255,255,0.15)', padding: 12, borderRadius: 6, marginBottom: 8 }}>
+                   <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, textAlign: 'center' }}>Lobby Name</Text>
+                   <Text style={[styles.infoValue, { fontSize: 18, fontWeight: 'bold', textAlign: 'center' }]} selectable={true}>
+                     {lobbyData.lobbyName}
+                   </Text>
+                 </View>
+                 
+                 <View style={{ backgroundColor: 'rgba(255,255,255,0.15)', padding: 12, borderRadius: 6 }}>
+                   <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, textAlign: 'center' }}>PIN Code</Text>
+                   <Text style={[styles.infoValue, { fontSize: 32, fontWeight: 'bold', textAlign: 'center', letterSpacing: 4 }]} selectable={true}>
+                     {lobbyData.pin}
+                   </Text>
+                 </View>
+                 
+                 <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, marginTop: 8, textAlign: 'center' }}>
+                   Tell others: "Join lobby '{lobbyData.lobbyName}' with PIN {lobbyData.pin}"
+                 </Text>
+               </View>
+             )}
              
              <TouchableOpacity style={styles.buttonWhite} onPress={handleEnterDashboard}>
                <Text style={styles.buttonTextGreen}>GO TO DASHBOARD</Text>
