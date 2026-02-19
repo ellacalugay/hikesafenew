@@ -1,11 +1,21 @@
 import React from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, TouchableOpacity, KeyboardAvoidingView, ScrollView, Platform } from 'react-native';
 import { Trees } from 'lucide-react-native';
 import { COLORS } from '../constants/theme';
 import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
 
 const OnboardingName = ({ next }) => (
+  <KeyboardAvoidingView 
+    style={{ flex: 1 }} 
+    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+  >
+    <ScrollView 
+      contentContainerStyle={{ flexGrow: 1 }}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      bounces={false}
+    >
   <View style={styles.contentContainer}>
     <View style={styles.headerSpacer} />
     <Text style={styles.titleLarge}>
@@ -29,6 +39,8 @@ const OnboardingName = ({ next }) => (
       </TouchableOpacity>
     </View>
   </View>
+    </ScrollView>
+  </KeyboardAvoidingView>
 );
 
 export default OnboardingName;

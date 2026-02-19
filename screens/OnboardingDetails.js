@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, KeyboardAvoidingView, ScrollView, Platform } from 'react-native';
 import { Trees, ChevronRight } from 'lucide-react-native';
 import { COLORS } from '../constants/theme';
 import { styles } from '../styles/styles';
@@ -43,6 +43,16 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
   };
 
   return (
+    <KeyboardAvoidingView 
+      style={{ flex: 1 }} 
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <ScrollView 
+        contentContainerStyle={{ flexGrow: 1 }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+      >
     <View style={[styles.contentContainer, styles.centerScreen]}>
       <Text style={[styles.titleLarge, styles.detailTitle]}>Get ready with the trail!</Text>
 
@@ -98,6 +108,8 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
         </TouchableOpacity>
       </Modal>
     </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 };
 
