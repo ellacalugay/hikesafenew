@@ -38,11 +38,6 @@ const ChatScreen = ({ onBack, chatName = 'Chat' }) => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-    <KeyboardAvoidingView 
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-    >
       <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
         <TouchableOpacity 
           onPress={onBack} 
@@ -52,6 +47,11 @@ const ChatScreen = ({ onBack, chatName = 'Chat' }) => {
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.textDark }]}>{chatName}</Text>
       </View>
+    <KeyboardAvoidingView 
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+    >
 
       <ScrollView 
         ref={scrollViewRef}
