@@ -68,9 +68,15 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
           label="Contact Phone"
           placeholder="Emergency Contact Phone"
           value={contactPhone}
-          onChangeText={(t) => { setContactPhone(t); if (contactPhoneError) setContactPhoneError(''); }}
+          onChangeText={(t) => { 
+            if (t.length <= 11) {
+              setContactPhone(t); 
+              if (contactPhoneError) setContactPhoneError(''); 
+            }
+          }}
           keyboardType="phone-pad"
           error={contactPhoneError}
+          maxLength={11}
         />
         <InputField
           label="Medical Condition"

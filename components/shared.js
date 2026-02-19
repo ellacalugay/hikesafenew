@@ -48,7 +48,7 @@ export const MainButton = ({ title, onPress, variant = 'primary', style }) => (
 );
 
 // Custom Input
-export const InputField = ({ label, placeholder, value, onChangeText, secureTextEntry, keyboardType, error }) => (
+export const InputField = ({ label, placeholder, value, onChangeText, secureTextEntry, keyboardType, error, maxLength }) => (
   <View style={styles.inputContainer}>
     {label && <Text style={styles.inputLabel}>{label}</Text>}
     <TextInput
@@ -59,6 +59,7 @@ export const InputField = ({ label, placeholder, value, onChangeText, secureText
       onChangeText={onChangeText}
       secureTextEntry={secureTextEntry}
       keyboardType={keyboardType}
+      maxLength={maxLength}
     />
     {error ? <Text style={styles.errorText}>{error}</Text> : null}
   </View>
