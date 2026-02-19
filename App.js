@@ -2,12 +2,13 @@ import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Modal } from 'react-native';
 import { ScreenContainer } from './components/shared';
 import { styles } from './styles/styles';
+import { ThemeProvider } from './context/ThemeContext';
 import OnboardingName from './screens/OnboardingName';
 import OnboardingDetails from './screens/OnboardingDetails';
 import LobbyScreen from './screens/LobbyScreen';
 import Dashboard from './screens/Dashboard';
 
-export default function App() {
+function AppContent() {
   const [screen, setScreen] = useState('onboarding1');
   const [showReminder, setShowReminder] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
@@ -212,5 +213,13 @@ export default function App() {
         </View>
       </Modal>
     </ScreenContainer>
+  );
+}
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
   );
 }

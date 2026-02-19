@@ -9,24 +9,33 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { styles } from '../styles/styles';
+import { useTheme } from '../context/ThemeContext';
 
 // Nature Background Container
-export const ScreenContainer = ({ children }) => (
-  <View style={styles.container}>
-    <StatusBar barStyle="dark-content" />
-    <LinearGradient
-      colors={['#ecfccb', '#ffffff']}
-      style={styles.backgroundGradient}
-    />
-    <View style={styles.bgTreeLeft} />
-    <View style={styles.bgTreeRight} />
-    <View style={styles.bgMountain} />
-    
-    <SafeAreaView style={styles.safeArea}>
-      {children}
-    </SafeAreaView>
-  </View>
-);
+export const ScreenContainer = ({ children }) => {
+  const { isDarkMode, colors } = useTheme();
+  
+  return (
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <StatusBar barStyle={isDarkMode ? "light-content" : "dark-content"} />
+      <LinearGradient
+        colors={isDarkMode ? ['#1a1a1a', '#252525'] : ['#ecfccb', '#ffffff']}
+        style={styles.backgroundGradient}
+      />
+      {!isDarkMode && (
+        <>
+          <View style={styles.bgTreeLeft} />
+          <View style={styles.bgTreeRight} />
+          <View style={styles.bgMountain} />
+        </>
+      )}
+      
+      <SafeAreaView style={styles.safeArea}>
+        {children}
+      </SafeAreaView>
+    </View>
+  );
+};
 
 // Custom Button
 export const MainButton = ({ title, onPress, variant = 'primary', style }) => (
@@ -48,19 +57,27 @@ export const MainButton = ({ title, onPress, variant = 'primary', style }) => (
 );
 
 // Custom Input
-export const InputField = ({ label, placeholder, value, onChangeText, secureTextEntry, keyboardType, error, maxLength }) => (
-  <View style={styles.inputContainer}>
-    {label && <Text style={styles.inputLabel}>{label}</Text>}
-    <TextInput
-      style={[styles.input, error ? { borderColor: 'red' } : null]}
-      placeholder={placeholder}
-      placeholderTextColor="#9CA3AF"
-      value={value}
-      onChangeText={onChangeText}
-      secureTextEntry={secureTextEntry}
-      keyboardType={keyboardType}
-      maxLength={maxLength}
-    />
-    {error ? <Text style={styles.errorText}>{error}</Text> : null}
-  </View>
-);
+export const InputField = ({ label, placeholder, value, onChangeText, secureTextEntry, keyboardType, error, maxLength }) => {
+  const { colors } = useTheme();
+  
+  return (
+    <View style={styles.inputContainer}>
+      {label && <Text style={[styles.inputLabel, { color: colors.textDark }]}>{label}</Text>}
+      <TextInput
+        style={[
+          styles.input, 
+          { backgroundColor: colors.inputBg, color: colors.textDark, borderColor: colors.borderColor },
+          error ? { borderColor: 'red' } : null
+        ]}
+        placeholder={placeholder}
+        placeholderTextColor={colors.gray}
+        value={value}
+        onChangeText={onChangeText}
+        secureTextEntry={secureTextEntry}
+        keyboardType={keyboardType}
+        maxLength={maxLength}
+      />
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+    </View>
+  );
+};

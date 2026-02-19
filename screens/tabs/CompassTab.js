@@ -4,8 +4,10 @@ import * as Location from 'expo-location';
 import { Magnetometer } from 'expo-sensors';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
+import { useTheme } from '../../context/ThemeContext';
 
 const CompassTab = () => {
+  const { colors, isDarkMode } = useTheme();
   const [isServiceEnabled, setIsServiceEnabled] = useState(false);
   const [subscription, setSubscription] = useState(null);
   const [magnetometer, setMagnetometer] = useState(0);
@@ -96,14 +98,14 @@ const CompassTab = () => {
   };
 
   return (
-    <View style={styles.tabContainer}>
-      <View style={styles.headerBar}>
-         <Text style={styles.headerTitle}>COMPASS</Text>
+    <View style={[styles.tabContainer, { backgroundColor: colors.background }]}>
+      <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
+         <Text style={[styles.headerTitle, { color: colors.textDark }]}>COMPASS</Text>
       </View>
       
       <View style={styles.compassContainer}>
-        <View style={styles.blackCompassBox}>
-            <View style={styles.topArrow} />
+        <View style={[styles.blackCompassBox, isDarkMode && { borderColor: colors.primary }]}>
+            <View style={[styles.topArrow, { borderBottomColor: colors.primary }]} />
 
             <Animated.View style={[styles.compassInnerDial, rotateStyle]}>
                <View style={styles.tickRing} />
@@ -119,32 +121,32 @@ const CompassTab = () => {
         </View>
       </View>
 
-      <View style={styles.locationStatusContainer}>
-        <Text style={styles.locationServicesLabel}>Location Services:</Text>
+      <View style={[styles.locationStatusContainer, { backgroundColor: colors.cardBg }]}>
+        <Text style={[styles.locationServicesLabel, { color: colors.textDark }]}>Location Services:</Text>
         <View style={styles.toggleRow}>
              <Switch
-                trackColor={{ false: "#767577", true: COLORS.primaryLight }}
+                trackColor={{ false: "#767577", true: colors.primaryLight }}
                 thumbColor={isServiceEnabled ? "#f4f3f4" : "#f4f3f4"}
                 ios_backgroundColor="#3e3e3e"
                 onValueChange={toggleSwitch}
                 value={isServiceEnabled}
               />
-             <View style={[styles.statusBadge, {backgroundColor: isServiceEnabled ? COLORS.primary : 'gray'}]}>
+             <View style={[styles.statusBadge, {backgroundColor: isServiceEnabled ? colors.primary : 'gray'}]}>
                 <Text style={styles.statusBadgeText}>{isServiceEnabled ? 'ON' : 'OFF'}</Text>
              </View>
         </View>
       </View>
 
-      <View style={styles.coordsBoxTransparent}>
-        <Text style={styles.coordsTitle}>
+      <View style={[styles.coordsBoxTransparent, { backgroundColor: isDarkMode ? colors.cardBg : 'transparent' }]}>
+        <Text style={[styles.coordsTitle, { color: colors.textDark }]}>
            {isServiceEnabled ? `${magnetometer}° ${getCardinalDirection(magnetometer)}` : '---'}
         </Text>
-        <Text style={styles.coordsSubtitle}>
+        <Text style={[styles.coordsSubtitle, { color: colors.gray }]}>
            {isServiceEnabled ? address : 'Enable location services\nto see your position'}
         </Text>
       </View>
 
-      <View style={styles.distanceBar}>
+      <View style={[styles.distanceBar, { bottom: 70, backgroundColor: colors.primaryLight }]}>
          <Text style={styles.distanceLabel}>DISTANCE:</Text>
          <Text style={styles.distanceValue}>{location ? '0 m' : '--'}</Text>
       </View>

@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Image, ImageBackground } from 'react-native';
-import { COLORS } from '../constants/theme';
 import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
+import { useTheme } from '../context/ThemeContext';
 
 const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
+  const { colors } = useTheme();
   const [mode, setMode] = useState('join');
   const [remember, setRemember] = useState(false);
   
@@ -116,7 +117,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
           style={{ marginTop: 20, alignItems: 'center' }}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <Text style={{ color: COLORS.primary, fontWeight: '600', textAlign: 'center' }}>
+          <Text style={{ color: colors.primary, fontWeight: '600', textAlign: 'center' }}>
             Do you want to create a Lobby?{' '}
             <Text style={{ color: 'white', fontWeight: 'bold' }}>Create Here.</Text>
           </Text>
