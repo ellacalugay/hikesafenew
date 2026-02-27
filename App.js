@@ -3,18 +3,21 @@ import { View, Text, TouchableOpacity, ScrollView, Modal } from 'react-native';
 import { ScreenContainer } from './components/shared';
 import { styles } from './styles/styles';
 import { ThemeProvider } from './context/ThemeContext';
+import { BluetoothProvider } from './context/BluetoothContext';
+import DeviceSetupScreen from './screens/DeviceSetupScreen';
 import OnboardingName from './screens/OnboardingName';
 import OnboardingDetails from './screens/OnboardingDetails';
 import LobbyScreen from './screens/LobbyScreen';
 import Dashboard from './screens/Dashboard';
 
 function AppContent() {
-  const [screen, setScreen] = useState('onboarding1');
+  const [screen, setScreen] = useState('deviceSetup');
   const [showReminder, setShowReminder] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [lobbyData, setLobbyData] = useState({ lobbyName: '', groupId: '', maxMember: '' });
 
+  const handleDeviceSetupComplete = () => setScreen('onboarding1');
   const handleNextOnboarding = () => setScreen('onboarding2');
   
   const handleShowReminder = () => setShowReminder(true);
@@ -34,10 +37,11 @@ function AppContent() {
     setScreen('dashboard');
   };
 
-  const handleLogout = () => setScreen('onboarding1');
+  const handleLogout = () => setScreen('deviceSetup');
 
   return (
     <ScreenContainer>
+      {screen === 'deviceSetup' && <DeviceSetupScreen onNext={handleDeviceSetupComplete} onSkip={handleDeviceSetupComplete} />}
       {screen === 'onboarding1' && <OnboardingName next={handleNextOnboarding} />}
       {screen === 'onboarding2' && <OnboardingDetails next={handleShowReminder} onShowReminder={handleShowReminder} />}
       {screen === 'lobby' && <LobbyScreen onLogin={handleEnterDashboard} onShowCreateSuccess={handleCreateLobbySuccess} />}
@@ -219,7 +223,9 @@ function AppContent() {
 export default function App() {
   return (
     <ThemeProvider>
-      <AppContent />
+      <BluetoothProvider>
+        <AppContent />
+      </BluetoothProvider>
     </ThemeProvider>
   );
 }

@@ -8,9 +8,9 @@ import { useTheme } from '../../context/ThemeContext';
 
 const EditProfileScreen = ({ onBack }) => {
   const { colors } = useTheme();
-  const [firstName, setFirstName] = useState('John');
-  const [lastName, setLastName] = useState('Doe');
-  const [nickname, setNickname] = useState('JD');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [nickname, setNickname] = useState('');
   const [contactName, setContactName] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [medicalCondition, setMedicalCondition] = useState('');

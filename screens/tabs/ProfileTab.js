@@ -21,7 +21,7 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
       <View style={[styles.avatarLarge, { backgroundColor: colors.primary }]}>
         <User size={40} color="white" />
       </View>
-      <Text style={[styles.profileName, { color: colors.textDark }]}>Hello!{'\n'}John Doe</Text>
+      <Text style={[styles.profileName, { color: colors.textDark }]}>Hello!{'\n'}Hiker</Text>
     </View>
 
     <View style={styles.menuList}>

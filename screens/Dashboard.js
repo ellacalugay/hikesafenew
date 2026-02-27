@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
-import { View, TouchableOpacity, Modal, Text, Pressable } from 'react-native';
-import { Home, MapPin, MessageCircle, Compass, User, CheckSquare, Square } from 'lucide-react-native';
+import React, { useState, useEffect } from 'react';
+import { View, TouchableOpacity, Modal, Text, Pressable, Vibration } from 'react-native';
+import { Home, MapPin, MessageCircle, Compass, User, CheckSquare, Square, AlertTriangle, X } from 'lucide-react-native';
 import { COLORS } from '../constants/theme';
 import { styles } from '../styles/styles';
 import { useTheme } from '../context/ThemeContext';
+import { useBluetoothDevice } from '../context/BluetoothContext';
 import HomeTab from './tabs/HomeTab';
 import LocationTab from './tabs/LocationTab';
 import MessageTab from './tabs/MessageTab';
@@ -14,6 +15,7 @@ import ChatScreen from './tabs/ChatScreen';
 import SettingsScreen from './tabs/SettingsScreen';
 import HelpScreen from './tabs/HelpScreen';
 import ReportProblemScreen from './tabs/ReportProblemScreen';
+import DeviceConnectionScreen from './tabs/DeviceConnectionScreen';
 
 const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
   <TouchableOpacity style={styles.tabItem} onPress={onPress}>
@@ -24,6 +26,7 @@ const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
 
 const Dashboard = ({ onLogout }) => {
   const { colors } = useTheme();
+  const { activeAlert, dismissAlert, sendOK, isConnected } = useBluetoothDevice();
   const [activeTab, setActiveTab] = useState('home');
   const [chatName, setChatName] = useState('');
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -32,6 +35,31 @@ const Dashboard = ({ onLogout }) => {
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [showLobbyModal, setShowLobbyModal] = useState(false);
+  const [showSOSAlertModal, setShowSOSAlertModal] = useState(false);
+
+  // Handle incoming SOS/MORSE/OFFLINE alerts
+  useEffect(() => {
+    if (activeAlert && (activeAlert.type === 'SOS' || activeAlert.type === 'MORSE' || activeAlert.type === 'OFFLINE')) {
+      setShowSOSAlertModal(true);
+      // Vibrate to alert user (different pattern for offline)
+      if (activeAlert.type === 'OFFLINE') {
+        Vibration.vibrate([0, 300, 200, 300]);
+      } else {
+        Vibration.vibrate([0, 500, 200, 500, 200, 500]);
+      }
+    }
+  }, [activeAlert]);
+
+  const handleDismissSOSAlert = () => {
+    setShowSOSAlertModal(false);
+    dismissAlert();
+  };
+
+  const handleRespondOK = async () => {
+    await sendOK();
+    setShowSOSAlertModal(false);
+    dismissAlert();
+  };
 
   const handleOpenChat = (name) => {
     setChatName(name);
@@ -66,7 +94,7 @@ const Dashboard = ({ onLogout }) => {
   const renderContent = () => {
     switch (activeTab) {
       case 'home': return <HomeTab onChangeTab={setActiveTab} onLobbyPress={handleLobbyPress} />;
-      case 'location': return <LocationTab onLocationPress={handleLocationPress} />;
+      case 'location': return <LocationTab onLocationPress={handleLocationPress} onShowDeviceConnection={() => setActiveTab('deviceConnection')} />;
       case 'message': return <MessageTab onOpenChat={handleOpenChat} />;
       case 'compass': return <CompassTab />;
       case 'profile': return (
@@ -83,12 +111,13 @@ const Dashboard = ({ onLogout }) => {
       case 'settings': return <SettingsScreen onBack={() => setActiveTab('profile')} />;
       case 'help': return <HelpScreen onBack={() => setActiveTab('profile')} />;
       case 'reportProblem': return <ReportProblemScreen onBack={() => setActiveTab('profile')} />;
+      case 'deviceConnection': return <DeviceConnectionScreen onBack={() => setActiveTab('location')} />;
       default: return <HomeTab />;
     }
   };
 
   // Hide bottom nav when on sub-screens
-  const subScreens = ['editProfile', 'chat', 'settings', 'help', 'reportProblem'];
+  const subScreens = ['editProfile', 'chat', 'settings', 'help', 'reportProblem', 'deviceConnection'];
   const showBottomNav = !subScreens.includes(activeTab);
 
   return (
@@ -207,6 +236,78 @@ const Dashboard = ({ onLogout }) => {
                 <Text style={{ color: 'white', fontWeight: '600' }}>Copy ID</Text>
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* SOS Alert Modal */}
+      <Modal
+        visible={showSOSAlertModal}
+        transparent
+        animationType="fade"
+        onRequestClose={handleDismissSOSAlert}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: '#FFF0F0', borderWidth: 2, borderColor: colors.accent }]}>
+            <View style={{ alignItems: 'center', marginBottom: 15 }}>
+              <View style={{ 
+                backgroundColor: activeAlert?.type === 'OFFLINE' ? '#666' : colors.accent, 
+                width: 60, 
+                height: 60, 
+                borderRadius: 30, 
+                justifyContent: 'center', 
+                alignItems: 'center',
+                marginBottom: 10
+              }}>
+                <AlertTriangle size={32} color="white" />
+              </View>
+              <Text style={[styles.modalTitle, { color: activeAlert?.type === 'OFFLINE' ? '#666' : colors.accent, fontSize: 22 }]}>
+                {activeAlert?.type === 'MORSE' ? 'MORSE SOS' : activeAlert?.type === 'OFFLINE' ? 'DEVICE OFFLINE' : 'SOS ALERT'}
+              </Text>
+            </View>
+            
+            <Text style={[styles.modalText, { color: colors.textDark, textAlign: 'center', fontSize: 16 }]}>
+              {activeAlert?.type === 'OFFLINE' 
+                ? `Device ${activeAlert?.deviceId} has gone offline!`
+                : `Device ${activeAlert?.deviceId} needs help!`
+              }
+            </Text>
+            
+            {activeAlert?.lat && activeAlert?.lng && (
+              <View style={{ backgroundColor: colors.cardBg, padding: 12, borderRadius: 8, marginTop: 12 }}>
+                <Text style={{ color: colors.gray, fontSize: 12 }}>Location</Text>
+                <Text style={{ color: colors.textDark, fontFamily: 'monospace', fontSize: 14 }}>
+                  {activeAlert.lat.toFixed(6)}, {activeAlert.lng.toFixed(6)}
+                </Text>
+              </View>
+            )}
+            
+            <View style={{ flexDirection: 'row', marginTop: 20 }}>
+              <TouchableOpacity 
+                style={[styles.modalButton, { backgroundColor: colors.inputBg, marginRight: 10, flex: 1 }]}
+                onPress={handleDismissSOSAlert}
+              >
+                <Text style={{ color: colors.textDark, fontWeight: '600' }}>Dismiss</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.modalButton, { backgroundColor: colors.primary, flex: 1 }]}
+                onPress={() => {
+                  handleDismissSOSAlert();
+                  setActiveTab('location');
+                }}
+              >
+                <Text style={{ color: 'white', fontWeight: '600' }}>View Location</Text>
+              </TouchableOpacity>
+            </View>
+            
+            {isConnected && (
+              <TouchableOpacity 
+                style={[styles.modalButton, { backgroundColor: colors.primary, marginTop: 10, width: '100%' }]}
+                onPress={handleRespondOK}
+              >
+                <Text style={{ color: 'white', fontWeight: '600' }}>Send OK Response</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </Modal>
