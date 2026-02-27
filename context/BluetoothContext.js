@@ -1,14 +1,30 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { Alert, Platform, PermissionsAndroid } from 'react-native';
 import { Buffer } from 'buffer';
+import Constants from 'expo-constants';
 
 // BLE Library - works with ESP32 BLE (NO system pairing required!)
+// Note: react-native-ble-plx requires a development build, won't work in Expo Go
 let BleManager = null;
-try {
-  const blePlx = require('react-native-ble-plx');
-  BleManager = blePlx.BleManager;
-} catch (e) {
-  console.log('BLE not available - using mock mode');
+let bleAvailable = false;
+
+// Check if we're running in Expo Go
+const isExpoGo = Constants.appOwnership === 'expo';
+
+if (isExpoGo) {
+  console.log('Running in Expo Go - BLE not available, using mock mode');
+  bleAvailable = false;
+} else {
+  // Only try to load BLE in development builds or standalone apps
+  try {
+    const blePlx = require('react-native-ble-plx');
+    BleManager = blePlx.BleManager;
+    bleAvailable = true;
+    console.log('BLE module loaded successfully');
+  } catch (e) {
+    console.log('BLE library load failed:', e.message);
+    bleAvailable = false;
+  }
 }
 
 // Nordic UART Service UUIDs (must match ESP32 code)
@@ -63,21 +79,31 @@ export const BluetoothProvider = ({ children }) => {
 
   // Initialize BLE Manager
   useEffect(() => {
-    if (BleManager && !bleManagerRef.current) {
-      bleManagerRef.current = new BleManager();
-      
-      // Listen for BLE state changes
-      const subscription = bleManagerRef.current.onStateChange((state) => {
-        setIsEnabled(state === 'PoweredOn');
-      }, true);
-      
-      return () => {
-        subscription.remove();
-        if (bleManagerRef.current) {
-          bleManagerRef.current.destroy();
-          bleManagerRef.current = null;
-        }
-      };
+    if (bleAvailable && BleManager && !bleManagerRef.current) {
+      try {
+        bleManagerRef.current = new BleManager();
+        
+        // Listen for BLE state changes
+        const subscription = bleManagerRef.current.onStateChange((state) => {
+          setIsEnabled(state === 'PoweredOn');
+        }, true);
+        
+        return () => {
+          subscription.remove();
+          if (bleManagerRef.current) {
+            bleManagerRef.current.destroy();
+            bleManagerRef.current = null;
+          }
+        };
+      } catch (e) {
+        console.log('BLE Manager initialization failed - running in mock mode:', e.message);
+        // BLE not available (e.g., Expo Go), mock mode will be used
+        setIsEnabled(true); // Pretend BT is on for mock mode
+      }
+    } else if (!bleAvailable) {
+      // Mock mode - pretend Bluetooth is enabled
+      console.log('Running in mock mode (BLE not available)');
+      setIsEnabled(true);
     }
   }, []);
 
@@ -176,7 +202,8 @@ export const BluetoothProvider = ({ children }) => {
 
   // Request to enable Bluetooth
   const requestEnable = useCallback(async () => {
-    if (!BleManager || !bleManagerRef.current) {
+    if (!bleAvailable || !bleManagerRef.current) {
+      console.log('Mock mode: Bluetooth enabled');
       setIsEnabled(true); // Mock mode
       return true;
     }
@@ -199,12 +226,17 @@ export const BluetoothProvider = ({ children }) => {
   // Scan for BLE devices - NO SYSTEM PAIRING REQUIRED!
   // This is why you can connect directly from the app
   const scanForDevices = useCallback(async () => {
-    if (!BleManager || !bleManagerRef.current) {
-      // Mock devices for development
-      setAvailableDevices([
-        { id: 'mock-1', name: 'HikeSafe-D1', address: '00:00:00:00:00:01' },
-        { id: 'mock-2', name: 'HikeSafe-D2', address: '00:00:00:00:00:02' },
-      ]);
+    if (!bleAvailable || !bleManagerRef.current) {
+      // Mock devices for development/Expo Go
+      console.log('Using mock device scan (BLE not available)');
+      setIsScanning(true);
+      setTimeout(() => {
+        setAvailableDevices([
+          { id: 'mock-1', name: 'HikeSafe-D1', address: '00:00:00:00:00:01' },
+          { id: 'mock-2', name: 'HikeSafe-D2', address: '00:00:00:00:00:02' },
+        ]);
+        setIsScanning(false);
+      }, 2000);
       return;
     }
 
@@ -426,8 +458,9 @@ export const BluetoothProvider = ({ children }) => {
 
   // Connect to a BLE device - direct connection, no pairing needed!
   const connectToDevice = useCallback(async (device) => {
-    if (!BleManager || !bleManagerRef.current) {
-      // Mock connection
+    if (!bleAvailable || !bleManagerRef.current) {
+      // Mock connection for Expo Go development
+      console.log('Using mock device connection (BLE not available)');
       setIsConnecting(true);
       await new Promise(resolve => setTimeout(resolve, 1500));
       setConnectedDevice(device);

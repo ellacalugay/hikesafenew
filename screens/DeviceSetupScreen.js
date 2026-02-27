@@ -6,9 +6,9 @@ import {
   FlatList, 
   ActivityIndicator,
   StyleSheet,
-  SafeAreaView,
   Image
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Bluetooth, BluetoothOff, Radio, Check, RefreshCw, ChevronRight, Satellite } from 'lucide-react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useBluetoothDevice } from '../context/BluetoothContext';

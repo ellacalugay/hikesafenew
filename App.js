@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Modal } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ScreenContainer } from './components/shared';
 import { styles } from './styles/styles';
 import { ThemeProvider } from './context/ThemeContext';
@@ -222,10 +223,12 @@ function AppContent() {
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <BluetoothProvider>
-        <AppContent />
-      </BluetoothProvider>
-    </ThemeProvider>
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <BluetoothProvider>
+          <AppContent />
+        </BluetoothProvider>
+      </ThemeProvider>
+    </SafeAreaProvider>
   );
 }

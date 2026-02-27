@@ -5,9 +5,9 @@ import {
   TouchableOpacity, 
   FlatList, 
   ActivityIndicator,
-  StyleSheet,
-  SafeAreaView
+  StyleSheet
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, Bluetooth, BluetoothOff, Radio, Check, RefreshCw } from 'lucide-react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';

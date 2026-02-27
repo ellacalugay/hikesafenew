@@ -7,10 +7,10 @@ import {
   TextInput, 
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView,
   StyleSheet,
   ActivityIndicator
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, Send, Radio, Users, AlertCircle, Bluetooth } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
@@ -82,7 +82,7 @@ const ChatScreen = ({ onBack, chatName }) => {
         >
           <ArrowLeft size={24} color={colors.textDark} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.textDark }]}>{chatName}</Text>
+        <Text style={[styles.headerTitle, { color: colors.textDark }]}>{chatInfo.name || 'Chat'}</Text>
       </View>
     <KeyboardAvoidingView 
       style={{ flex: 1 }}
