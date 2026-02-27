@@ -75,33 +75,20 @@ const ChatScreen = ({ onBack, chatName }) => {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-      <KeyboardAvoidingView 
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-      >
-        {/* Header */}
-        <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
-          <TouchableOpacity 
-            onPress={onBack} 
-            style={{ position: 'absolute', left: 16, top: 12, padding: 5 }}
-          >
-            <ArrowLeft size={24} color={colors.textDark} />
-          </TouchableOpacity>
-          <View style={localStyles.headerInfo}>
-            {isBroadcast ? (
-              <Users size={20} color={colors.primary} style={{ marginRight: 8 }} />
-            ) : (
-              <Radio size={20} color={colors.primary} style={{ marginRight: 8 }} />
-            )}
-            <Text style={[styles.headerTitle, { color: colors.textDark }]}>
-              {chatInfo.name || 'Chat'}
-            </Text>
-          </View>
-          {isConnected && (
-            <View style={[localStyles.connectedDot, { backgroundColor: colors.primary }]} />
-          )}
-        </View>
+      <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
+        <TouchableOpacity 
+          onPress={onBack} 
+          style={{ position: 'absolute', left: 20, top: 15, padding: 5 }}
+        >
+          <ArrowLeft size={24} color={colors.textDark} />
+        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { color: colors.textDark }]}>{chatName}</Text>
+      </View>
+    <KeyboardAvoidingView 
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+    >
 
         {/* Not Connected Banner */}
         {!isConnected && (
