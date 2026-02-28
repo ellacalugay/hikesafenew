@@ -332,6 +332,111 @@ Devices advertise as: `HikeSafe-D{ID}` (e.g., `HikeSafe-D1`, `HikeSafe-D2`)
 
 ---
 
+### TC-017: Lobby Creation (Host)
+
+| Step | Action | Expected Result | Pass/Fail |
+|------|--------|-----------------|-----------|
+| 1 | On Lobby screen, tap "Create Here" | Create lobby form appears | |
+| 2 | Enter lobby name (e.g., "Mountain Trek") | Text input works | |
+| 3 | Set max members (optional) | Number input accepts value | |
+| 4 | Tap "CREATE NOW" | Success modal with 4-digit code appears | |
+| 5 | Note the lobby code | Code is 4 digits (e.g., 8492) | |
+| 6 | Tap "GO TO DASHBOARD" | Dashboard opens | |
+| 7 | Check Home tab | Shows "LOBBY: XXXX" and "HOST" badge | |
+
+---
+
+### TC-018: Lobby Join (Member)
+
+| Step | Action | Expected Result | Pass/Fail |
+|------|--------|-----------------|-----------|
+| 1 | On Lobby screen (default Join view) | Join form with code input shown | |
+| 2 | Enter your name | Text input works | |
+| 3 | Enter 4-digit lobby code from host | Code input accepts 4 digits | |
+| 4 | Tap "Enter Lobby" | Processing shown | |
+| 5 | Dashboard opens | Shows "LOBBY: XXXX" (same as host) | |
+| 6 | Check Home tab | Shows lobby code, no HOST badge | |
+
+---
+
+### TC-019: Lobby Code Sync to Device
+
+| Step | Action | Expected Result | Pass/Fail |
+|------|--------|-----------------|-----------|
+| 1 | Create or join lobby | Lobby code set in app | |
+| 2 | Connect to HikeSafe device | BLE connection established | |
+| 3 | Check ESP32 OLED display | Shows "L:XXXX" matching app code | |
+| 4 | Verify status message | "Lobby XXXX synced to device" shown | |
+
+---
+
+### TC-020: Lobby Isolation Test
+
+| Step | Action | Expected Result | Pass/Fail |
+|------|--------|-----------------|-----------|
+| 1 | Device A: Set lobby code 1234 | OLED shows L:1234 | |
+| 2 | Device B: Set lobby code 1234 | OLED shows L:1234 | |
+| 3 | Device C: Set lobby code 5678 | OLED shows L:5678 | |
+| 4 | Device A: Send SOS | - | |
+| 5 | Device B: Verify alert | SOS alert received (buzzer/LED) | |
+| 6 | Device C: Verify silence | NO alert (different lobby) | |
+| 7 | App on Device C | NO alert modal appears | |
+
+---
+
+### TC-021: Leave Lobby
+
+| Step | Action | Expected Result | Pass/Fail |
+|------|--------|-----------------|-----------|
+| 1 | Tap lobby card on Home tab | Lobby modal opens | |
+| 2 | Verify current lobby info | Shows code, name, member count | |
+| 3 | Tap "Leave" button | Confirmation alert appears | |
+| 4 | Confirm leave | App clears lobby state | |
+| 5 | Check ESP32 OLED | Shows "L:0" (cleared) | |
+| 6 | Verify isolation | Device now ignores/ignored by old group | |
+
+---
+
+### TC-022: Host-Only Members Tab
+
+| Step | Action | Expected Result | Pass/Fail |
+|------|--------|-----------------|-----------|
+| 1 | Create a lobby (become host) | Lobby created | |
+| 2 | Go to Dashboard | Bottom nav visible | |
+| 3 | Verify Members tab icon (👥) | Icon visible between Chat and Compass | |
+| 4 | Tap Members tab | Members list opens | |
+| 5 | Verify host card | Shows "You (Host)" with crown icon | |
+| 6 | Verify stats header | Shows Total, Online, Offline, Alerts | |
+| 7 | Join lobby as member (different phone) | - | |
+| 8 | Verify NO Members tab | Icon NOT visible for non-hosts | |
+
+---
+
+### TC-023: Share Lobby Code
+
+| Step | Action | Expected Result | Pass/Fail |
+|------|--------|-----------------|-----------|
+| 1 | Tap lobby card on Home tab | Lobby modal opens | |
+| 2 | Tap "Share Code" button | Native share sheet appears | |
+| 3 | Select sharing method | Message composed with lobby code | |
+| 4 | Verify message content | Contains lobby code and instructions | |
+
+---
+
+### TC-024: Lobby Persistence
+
+| Step | Action | Expected Result | Pass/Fail |
+|------|--------|-----------------|-----------|
+| 1 | Create or join a lobby | Lobby active | |
+| 2 | Close app completely | App killed | |
+| 3 | Reopen app | App launches | |
+| 4 | Navigate to Dashboard | Dashboard loads | |
+| 5 | Check Home tab | Same lobby code displayed | |
+| 6 | Connect to device | BLE connection established | |
+| 7 | Verify ESP32 OLED | Still shows original lobby code | |
+
+---
+
 ## 7. Expected Behaviors
 
 ### GPS Acquisition
@@ -459,6 +564,7 @@ ALERT:OFFLINE,2                  # Device 2 went offline
 ALERT:ONLINE,2                   # Device 2 back online
 MSG:2,Hello everyone            # Message from device 2
 MSG_BEAT                         # Heartbeat signal
+STATUS:LOBBY_SET,8492            # Lobby code confirmation
 
 OUTGOING (App → Device):
 ========================
@@ -466,7 +572,22 @@ SOS\n                           # Send SOS alert
 OK\n                            # Send OK status
 MSG:2,Hello back\n              # Send to device 2
 MSG:0,Group message\n           # Broadcast to all
+LOBBY:8492\n                    # Set lobby code to 8492
+LOBBY:0\n                       # Clear lobby (leave group)
 ```
+
+### Lobby System
+
+The lobby system restricts LoRa communication between devices:
+
+| Lobby Code | Behavior |
+|------------|----------|
+| `0` | Device ignores/is ignored by all lobbied devices |
+| `1000-9999` | Only communicates with matching lobby codes |
+
+**ESP32 OLED displays:** `L:XXXX` showing current lobby code.
+
+**Flash Memory:** Code persists across device restarts.
 
 ---
 

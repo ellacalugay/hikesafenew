@@ -5,6 +5,7 @@ import { ScreenContainer } from './components/shared';
 import { styles } from './styles/styles';
 import { ThemeProvider } from './context/ThemeContext';
 import { BluetoothProvider } from './context/BluetoothContext';
+import { LobbyProvider } from './context/LobbyContext';
 import DeviceSetupScreen from './screens/DeviceSetupScreen';
 import OnboardingName from './screens/OnboardingName';
 import OnboardingDetails from './screens/OnboardingDetails';
@@ -225,9 +226,11 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <BluetoothProvider>
-          <AppContent />
-        </BluetoothProvider>
+        <LobbyProvider>
+          <BluetoothProvider>
+            <AppContent />
+          </BluetoothProvider>
+        </LobbyProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );

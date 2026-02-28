@@ -413,7 +413,15 @@ export const BluetoothProvider = ({ children }) => {
       // STATUS messages from own device
       else if (trimmed.startsWith('STATUS:')) {
         const status = trimmed.substring(7);
-        setStatusMessage(status);
+        
+        // Handle lobby confirmation: STATUS:LOBBY_SET,XXXX
+        if (status.startsWith('LOBBY_SET,')) {
+          const lobbyCode = status.substring(10);
+          console.log(`Lobby code set on device: ${lobbyCode}`);
+          setStatusMessage(`Lobby ${lobbyCode} synced to device`);
+        } else {
+          setStatusMessage(status);
+        }
         setTimeout(() => setStatusMessage(''), 3000);
       }
       
@@ -622,6 +630,11 @@ export const BluetoothProvider = ({ children }) => {
   const sendSOS = useCallback(() => sendCommand('SOS'), [sendCommand]);
   const sendOK = useCallback(() => sendCommand('OK'), [sendCommand]);
   
+  // Remove a member from the local tracking (host kick from lobby)
+  const removeMemberLocation = useCallback((deviceId) => {
+    setMemberLocations(prev => prev.filter(m => m.deviceId !== deviceId));
+  }, []);
+  
   // Send a text message via LoRa (through BLE to device, then LoRa to other devices)
   // Format: MSG:[TO_ID],[TEXT]
   const sendMessage = useCallback(async (toDeviceId, text) => {
@@ -766,6 +779,7 @@ export const BluetoothProvider = ({ children }) => {
     sendOK,
     dismissAlert,
     clearMorseInput,
+    removeMemberLocation,
     
     // Messaging
     sendMessage,

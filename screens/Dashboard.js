@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, TouchableOpacity, Modal, Text, Pressable, Vibration } from 'react-native';
-import { Home, MapPin, MessageCircle, Compass, User, CheckSquare, Square, AlertTriangle, X } from 'lucide-react-native';
+import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert } from 'react-native';
+import { Home, MapPin, MessageCircle, Compass, User, CheckSquare, Square, AlertTriangle, X, Users } from 'lucide-react-native';
 import { COLORS } from '../constants/theme';
 import { styles } from '../styles/styles';
 import { useTheme } from '../context/ThemeContext';
 import { useBluetoothDevice } from '../context/BluetoothContext';
+import { useLobby } from '../context/LobbyContext';
 import HomeTab from './tabs/HomeTab';
 import LocationTab from './tabs/LocationTab';
 import MessageTab from './tabs/MessageTab';
@@ -16,6 +17,7 @@ import SettingsScreen from './tabs/SettingsScreen';
 import HelpScreen from './tabs/HelpScreen';
 import ReportProblemScreen from './tabs/ReportProblemScreen';
 import DeviceConnectionScreen from './tabs/DeviceConnectionScreen';
+import MembersTab from './tabs/MembersTab';
 
 const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
   <TouchableOpacity style={styles.tabItem} onPress={onPress}>
@@ -26,7 +28,8 @@ const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
 
 const Dashboard = ({ onLogout }) => {
   const { colors } = useTheme();
-  const { activeAlert, dismissAlert, sendOK, isConnected } = useBluetoothDevice();
+  const { activeAlert, dismissAlert, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
+  const { lobbyCode, lobbyName, isHost, leaveLobby, isInLobby } = useLobby();
   const [activeTab, setActiveTab] = useState('home');
   const [chatName, setChatName] = useState('');
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -49,6 +52,18 @@ const Dashboard = ({ onLogout }) => {
       }
     }
   }, [activeAlert]);
+
+  // Auto-sync lobby code when device connects
+  useEffect(() => {
+    if (isConnected && isInLobby && lobbyCode) {
+      // Small delay to ensure device is ready for commands
+      const syncTimer = setTimeout(async () => {
+        console.log('Auto-syncing lobby code to device:', lobbyCode);
+        await sendCommand(`LOBBY:${lobbyCode}`);
+      }, 1000);
+      return () => clearTimeout(syncTimer);
+    }
+  }, [isConnected, isInLobby, lobbyCode, sendCommand]);
 
   const handleDismissSOSAlert = () => {
     setShowSOSAlertModal(false);
@@ -112,6 +127,7 @@ const Dashboard = ({ onLogout }) => {
       case 'help': return <HelpScreen onBack={() => setActiveTab('profile')} />;
       case 'reportProblem': return <ReportProblemScreen onBack={() => setActiveTab('profile')} />;
       case 'deviceConnection': return <DeviceConnectionScreen onBack={() => setActiveTab('location')} />;
+      case 'members': return <MembersTab />;
       default: return <HomeTab />;
     }
   };
@@ -129,6 +145,9 @@ const Dashboard = ({ onLogout }) => {
           <TabIcon icon={Home} label="Home" active={activeTab === 'home'} onPress={() => setActiveTab('home')} colors={colors} />
           <TabIcon icon={MapPin} label="Loc" active={activeTab === 'location'} onPress={() => setActiveTab('location')} colors={colors} />
           <TabIcon icon={MessageCircle} label="Chat" active={activeTab === 'message'} onPress={() => setActiveTab('message')} colors={colors} />
+          {isHost && (
+            <TabIcon icon={Users} label="Members" active={activeTab === 'members'} onPress={() => setActiveTab('members')} colors={colors} />
+          )}
           <TabIcon icon={Compass} label="Comp" active={activeTab === 'compass'} onPress={() => setActiveTab('compass')} colors={colors} />
           <TabIcon icon={User} label="Prof" active={activeTab === 'profile'} onPress={() => setActiveTab('profile')} colors={colors} />
         </View>
@@ -216,26 +235,67 @@ const Dashboard = ({ onLogout }) => {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.modalBg }]}>
             <Text style={[styles.modalTitle, { color: colors.textDark }]}>Lobby Information</Text>
-            <Text style={[styles.modalText, { color: colors.textDark }]}>Lobby ID: ABCDEF123</Text>
-            <Text style={[styles.modalText, { color: colors.textDark }]}>Members: 15</Text>
-            <Text style={[styles.modalText, { color: colors.textDark }]}>Created: Today, 10:00 AM</Text>
-            <Text style={[styles.modalText, { marginTop: 10, color: colors.textDark }]}>
-              Share this ID with friends to let them join your hiking group.
-            </Text>
-            <View style={{ flexDirection: 'row', marginTop: 20 }}>
-              <TouchableOpacity 
-                style={[styles.modalButton, { backgroundColor: colors.inputBg, marginRight: 10, flex: 1 }]}
-                onPress={() => setShowLobbyModal(false)}
-              >
-                <Text style={{ color: colors.textDark, fontWeight: '600' }}>Close</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.modalButton, { backgroundColor: colors.primary, flex: 1 }]}
-                onPress={() => setShowLobbyModal(false)}
-              >
-                <Text style={{ color: 'white', fontWeight: '600' }}>Copy ID</Text>
-              </TouchableOpacity>
-            </View>
+            
+            {lobbyCode ? (
+              <>
+                <View style={{ backgroundColor: colors.primaryLight, padding: 15, borderRadius: 10, alignItems: 'center', marginVertical: 10 }}>
+                  <Text style={{ color: colors.gray, fontSize: 12 }}>LOBBY CODE</Text>
+                  <Text style={{ color: colors.primary, fontSize: 32, fontWeight: 'bold', letterSpacing: 4 }}>{lobbyCode}</Text>
+                </View>
+                
+                {lobbyName && (
+                  <Text style={[styles.modalText, { color: colors.textDark }]}>Name: {lobbyName}</Text>
+                )}
+                <Text style={[styles.modalText, { color: colors.textDark }]}>Members: {memberLocations.length + 1}</Text>
+                <Text style={[styles.modalText, { color: colors.textDark }]}>Role: {isHost ? 'Host' : 'Member'}</Text>
+                <Text style={[styles.modalText, { marginTop: 10, color: colors.gray, textAlign: 'center', fontSize: 12 }]}>
+                  Share this code with friends to let them join your hiking group. All devices must use the same code.
+                </Text>
+                
+                <View style={{ flexDirection: 'row', marginTop: 20 }}>
+                  <TouchableOpacity 
+                    style={[styles.modalButton, { backgroundColor: '#F44336', marginRight: 10, flex: 1 }]}
+                    onPress={async () => {
+                      // Send LOBBY:0 to device to clear filter
+                      if (isConnected) {
+                        await sendCommand('LOBBY:0');
+                      }
+                      await leaveLobby();
+                      setShowLobbyModal(false);
+                      Alert.alert('Left Lobby', 'Your lobby code has been cleared. Device will now ignore/be ignored by your old group.');
+                    }}
+                  >
+                    <Text style={{ color: 'white', fontWeight: '600' }}>Leave</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.modalButton, { backgroundColor: colors.primary, flex: 1 }]}
+                    onPress={async () => {
+                      try {
+                        await Share.share({
+                          message: `Join my HikeSafe hiking group!\n\nLobby Code: ${lobbyCode}\n\nEnter this code in the HikeSafe app to connect.`,
+                        });
+                      } catch (error) {
+                        Alert.alert('Error', 'Could not share lobby code');
+                      }
+                    }}
+                  >
+                    <Text style={{ color: 'white', fontWeight: '600' }}>Share Code</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={[styles.modalText, { color: colors.gray, textAlign: 'center', marginVertical: 20 }]}>
+                  No lobby joined. Create or join a lobby from the Lobby screen.
+                </Text>
+                <TouchableOpacity 
+                  style={[styles.modalButton, { backgroundColor: colors.primary }]}
+                  onPress={() => setShowLobbyModal(false)}
+                >
+                  <Text style={{ color: 'white', fontWeight: '600' }}>Close</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </View>
       </Modal>

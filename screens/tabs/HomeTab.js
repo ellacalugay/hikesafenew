@@ -1,10 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Trees, User, MessageCircle, MapPin, Compass, AlertTriangle, Radio, Check } from 'lucide-react-native';
+import { Trees, User, MessageCircle, MapPin, Compass, AlertTriangle, Radio, Check, Users } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
+import { useLobby } from '../../context/LobbyContext';
 
 // Calculate distance between two GPS coordinates (Haversine formula)
 const calculateDistance = (lat1, lon1, lat2, lon2) => {
@@ -36,6 +37,7 @@ const ServiceItem = ({ icon: Icon, label, onPress, colors }) => (
 const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
   const { isConnected, connectedDevice, myLocation, memberLocations, statusMessage, sendSOS, sendOK } = useBluetoothDevice();
+  const { lobbyCode, lobbyName, isHost, isInLobby } = useLobby();
   
   // Calculate nearest member distance
   const nearestDistance = useMemo(() => {
@@ -151,8 +153,20 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
 
         <TouchableOpacity onPress={onLobbyPress} activeOpacity={0.8}>
           <LinearGradient colors={[colors.primaryLight, colors.primary]} style={styles.lobbyCard}>
-            <Text style={styles.lobbyLabel}>GROUP STATUS</Text>
-            <Text style={styles.lobbyCode}>{isConnected ? 'ACTIVE' : 'OFFLINE'}</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={styles.lobbyLabel}>{lobbyName || 'GROUP STATUS'}</Text>
+              {isHost && (
+                <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
+                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>HOST</Text>
+                </View>
+              )}
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+              <Users size={18} color="#fff" style={{ marginRight: 8 }} />
+              <Text style={styles.lobbyCode}>
+                {lobbyCode ? `LOBBY: ${lobbyCode}` : (isConnected ? 'ACTIVE' : 'NO LOBBY')}
+              </Text>
+            </View>
             
             <View style={styles.statsRow}>
               <View style={styles.statItem}>

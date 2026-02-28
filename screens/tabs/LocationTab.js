@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
-import { User, MapPin, Radio, Bluetooth, Satellite, AlertTriangle, WifiOff, Map, Target, List } from 'lucide-react-native';
+import { User, MapPin, Radio, Bluetooth, Satellite, AlertTriangle, WifiOff, Map, Target, List, Users } from 'lucide-react-native';
 import MapView, { Marker, Circle, PROVIDER_DEFAULT } from 'react-native-maps';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
+import { useLobby } from '../../context/LobbyContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const RADAR_SIZE = SCREEN_WIDTH - 64;
@@ -243,6 +244,7 @@ const MapViewComponent = ({ myLocation, members, colors, onMemberPress }) => {
 const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
   const { colors } = useTheme();
   const { isConnected, connectedDevice, myLocation, memberLocations } = useBluetoothDevice();
+  const { lobbyCode, lobbyName, isInLobby, isHost } = useLobby();
   const [viewMode, setViewMode] = useState('radar'); // 'map', 'radar', 'list'
   
   // Combine member locations with distance calculation
@@ -298,6 +300,31 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
             </View>
           </View>
         </TouchableOpacity>
+
+        {/* Lobby Status Card */}
+        {isInLobby && (
+          <View style={[localStyles.lobbyCard, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
+            <View style={localStyles.lobbyHeader}>
+              <Users size={20} color={colors.primary} />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={[localStyles.lobbyTitle, { color: colors.textDark }]}>
+                  {lobbyName || 'My Lobby'}
+                </Text>
+                <Text style={[localStyles.lobbySubtitle, { color: colors.gray }]}>
+                  {isHost ? 'You are the host' : 'Member'}
+                </Text>
+              </View>
+              <View style={[localStyles.lobbyCodeBadge, { backgroundColor: colors.primary }]}>
+                <Text style={localStyles.lobbyCodeText}>
+                  {lobbyCode}
+                </Text>
+              </View>
+            </View>
+            <Text style={[localStyles.lobbyMemberCount, { color: colors.gray }]}>
+              {memberLocations.length + 1} member{memberLocations.length !== 0 ? 's' : ''} in group
+            </Text>
+          </View>
+        )}
 
         {/* My GPS Location */}
         {isConnected && (
@@ -504,6 +531,40 @@ const localStyles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     marginBottom: 16,
+  },
+  lobbyCard: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  lobbyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  lobbyTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  lobbySubtitle: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  lobbyCodeBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  lobbyCodeText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  lobbyMemberCount: {
+    fontSize: 12,
+    marginTop: 8,
+    marginLeft: 30,
   },
   myLocationHeader: {
     flexDirection: 'row',
