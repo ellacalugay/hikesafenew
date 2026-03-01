@@ -103,8 +103,10 @@ const CompassTab = () => {
       style={[styles.tabContainer, { backgroundColor: colors.background }]}
       imageStyle={{ resizeMode: 'cover' }}
     >
-      <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
-         <Text style={[styles.headerTitle, { color: colors.textDark }]}>COMPASS</Text>
+      <View style={{ backgroundColor: colors.primaryLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12, marginHorizontal: 16, marginTop: 16, marginBottom: 6, borderRadius: 12 }}>
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={[styles.headerTitle, { color: colors.textDark }]}>COMPASS</Text>
+        </View>
       </View>
       
       <View style={styles.compassContainer}>
