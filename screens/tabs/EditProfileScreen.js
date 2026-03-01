@@ -1,22 +1,48 @@
-import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
-import { ArrowLeft, User } from 'lucide-react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert } from 'react-native';
+import { ArrowLeft, User, Radio } from 'lucide-react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
 import { InputField, MainButton } from '../../components/shared';
 import { useTheme } from '../../context/ThemeContext';
+import { useLobby } from '../../context/LobbyContext';
+import { useBluetoothDevice } from '../../context/BluetoothContext';
 
 const EditProfileScreen = ({ onBack }) => {
   const { colors } = useTheme();
+  const { myNickname, setMyNickname, deviceNickname, setDeviceNickname } = useLobby();
+  const { connectedDevice, isConnected } = useBluetoothDevice();
+  
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [nickname, setNickname] = useState('');
+  const [deviceName, setDeviceName] = useState('');
   const [contactName, setContactName] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [medicalCondition, setMedicalCondition] = useState('');
 
-  const handleSave = () => {
-    // Save profile logic here
+  // Load saved nickname on mount
+  useEffect(() => {
+    if (myNickname) {
+      setNickname(myNickname);
+    }
+    if (deviceNickname) {
+      setDeviceName(deviceNickname);
+    }
+  }, [myNickname, deviceNickname]);
+
+  const handleSave = async () => {
+    // Save nickname to LobbyContext
+    if (nickname.trim()) {
+      await setMyNickname(nickname.trim());
+    }
+    
+    // Save device nickname
+    if (deviceName.trim()) {
+      await setDeviceNickname(deviceName.trim());
+    }
+    
+    Alert.alert('Saved', 'Your profile has been updated.');
     onBack();
   };
 
@@ -67,10 +93,24 @@ const EditProfileScreen = ({ onBack }) => {
         />
         <InputField 
           label="Nickname" 
-          placeholder="Enter nickname"
+          placeholder="Your display name in the app"
           value={nickname}
           onChangeText={setNickname}
         />
+
+        <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Device Settings</Text>
+        
+        <InputField 
+          label="Device Nickname" 
+          placeholder={connectedDevice?.name || "Your HikeSafe device name"}
+          value={deviceName}
+          onChangeText={setDeviceName}
+        />
+        <Text style={{ color: colors.gray, fontSize: 12, marginTop: -8, marginBottom: 16, paddingHorizontal: 4 }}>
+          {isConnected 
+            ? `Connected to: ${connectedDevice?.name || 'HikeSafe Device'}`
+            : 'Connect a device to customize its name'}
+        </Text>
 
         <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Emergency Contact</Text>
         

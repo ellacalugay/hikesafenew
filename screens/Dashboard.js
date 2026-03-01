@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert } from 'react-native';
-import { Home, MapPin, MessageCircle, Compass, User, CheckSquare, Square, AlertTriangle, X, Users } from 'lucide-react-native';
+import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView } from 'react-native';
+import { Home, MapPin, MessageCircle, Compass, User, CheckSquare, Square, AlertTriangle, X, Users, Activity, UserPlus, UserMinus, Radio, Bell } from 'lucide-react-native';
 import { COLORS } from '../constants/theme';
 import { styles } from '../styles/styles';
 import { useTheme } from '../context/ThemeContext';
@@ -28,7 +28,7 @@ const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
 
 const Dashboard = ({ onLogout }) => {
   const { colors } = useTheme();
-  const { activeAlert, dismissAlert, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
+  const { activeAlert, dismissAlert, sendOK, sendCommand, isConnected, memberLocations, activityLog } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isHost, leaveLobby, isInLobby } = useLobby();
   const [activeTab, setActiveTab] = useState('home');
   const [chatName, setChatName] = useState('');
@@ -233,11 +233,16 @@ const Dashboard = ({ onLogout }) => {
         onRequestClose={() => setShowLobbyModal(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.modalBg }]}>
-            <Text style={[styles.modalTitle, { color: colors.textDark }]}>Lobby Information</Text>
+          <View style={[styles.modalContent, { backgroundColor: colors.modalBg, maxHeight: '80%' }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={[styles.modalTitle, { color: colors.textDark }]}>Lobby Information</Text>
+              <TouchableOpacity onPress={() => setShowLobbyModal(false)}>
+                <X size={24} color={colors.gray} />
+              </TouchableOpacity>
+            </View>
             
             {lobbyCode ? (
-              <>
+              <ScrollView showsVerticalScrollIndicator={false}>
                 <View style={{ backgroundColor: colors.primaryLight, padding: 15, borderRadius: 10, alignItems: 'center', marginVertical: 10 }}>
                   <Text style={{ color: colors.gray, fontSize: 12 }}>LOBBY CODE</Text>
                   <Text style={{ color: colors.primary, fontSize: 32, fontWeight: 'bold', letterSpacing: 4 }}>{lobbyCode}</Text>
@@ -248,8 +253,57 @@ const Dashboard = ({ onLogout }) => {
                 )}
                 <Text style={[styles.modalText, { color: colors.textDark }]}>Members: {memberLocations.length + 1}</Text>
                 <Text style={[styles.modalText, { color: colors.textDark }]}>Role: {isHost ? 'Host' : 'Member'}</Text>
+                
+                {/* Activity Feed */}
+                <View style={{ marginTop: 16 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <Activity size={16} color={colors.primary} />
+                    <Text style={{ color: colors.textDark, fontWeight: '600', marginLeft: 6 }}>Recent Activity</Text>
+                  </View>
+                  
+                  {activityLog && activityLog.length > 0 ? (
+                    <View style={{ backgroundColor: colors.cardBg, borderRadius: 8, padding: 10, maxHeight: 150 }}>
+                      {activityLog.slice(0, 5).map((activity) => {
+                        const getIcon = () => {
+                          switch(activity.type) {
+                            case 'join': return <UserPlus size={12} color="#4CAF50" />;
+                            case 'leave': return <UserMinus size={12} color="#F44336" />;
+                            case 'sos': return <AlertTriangle size={12} color="#F44336" />;
+                            case 'ok': return <Radio size={12} color="#4CAF50" />;
+                            case 'offline': return <Radio size={12} color="#9E9E9E" />;
+                            case 'online': return <Radio size={12} color="#4CAF50" />;
+                            default: return <Bell size={12} color={colors.gray} />;
+                          }
+                        };
+                        
+                        const timeAgo = () => {
+                          const diff = Date.now() - activity.timestamp;
+                          const mins = Math.floor(diff / 60000);
+                          if (mins < 1) return 'Just now';
+                          if (mins < 60) return `${mins}m ago`;
+                          return `${Math.floor(mins / 60)}h ago`;
+                        };
+                        
+                        return (
+                          <View key={activity.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4 }}>
+                            {getIcon()}
+                            <Text style={{ color: colors.textDark, fontSize: 12, flex: 1, marginLeft: 6 }} numberOfLines={1}>
+                              {activity.message}
+                            </Text>
+                            <Text style={{ color: colors.gray, fontSize: 10 }}>{timeAgo()}</Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : (
+                    <Text style={{ color: colors.gray, fontSize: 12, fontStyle: 'italic' }}>
+                      No activity yet. Activity will appear when members join or send alerts.
+                    </Text>
+                  )}
+                </View>
+                
                 <Text style={[styles.modalText, { marginTop: 10, color: colors.gray, textAlign: 'center', fontSize: 12 }]}>
-                  Share this code with friends to let them join your hiking group. All devices must use the same code.
+                  Share this code with friends to let them join your hiking group.
                 </Text>
                 
                 <View style={{ flexDirection: 'row', marginTop: 20 }}>
@@ -282,7 +336,18 @@ const Dashboard = ({ onLogout }) => {
                     <Text style={{ color: 'white', fontWeight: '600' }}>Share Code</Text>
                   </TouchableOpacity>
                 </View>
-              </>
+                
+                {/* View Members Button */}
+                <TouchableOpacity 
+                  style={[styles.modalButton, { backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.primary, marginTop: 10 }]}
+                  onPress={() => {
+                    setShowLobbyModal(false);
+                    setActiveTab('members');
+                  }}
+                >
+                  <Text style={{ color: colors.primary, fontWeight: '600' }}>View Members</Text>
+                </TouchableOpacity>
+              </ScrollView>
             ) : (
               <>
                 <Text style={[styles.modalText, { color: colors.gray, textAlign: 'center', marginVertical: 20 }]}>

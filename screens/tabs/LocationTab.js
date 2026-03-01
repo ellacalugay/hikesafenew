@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
-import { User, MapPin, Radio, Bluetooth, Satellite, AlertTriangle, WifiOff, Map, Target, List, Users } from 'lucide-react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Dimensions, Alert } from 'react-native';
+import { User, MapPin, Radio, Bluetooth, Satellite, AlertTriangle, WifiOff, Map, Target, List, Users, Play, Pause, Trash2, Route } from 'lucide-react-native';
 import MapView, { Marker, Circle, PROVIDER_DEFAULT } from 'react-native-maps';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
@@ -137,6 +137,224 @@ const RadarView = ({ myLocation, members, colors, onMemberPress }) => {
 };
 
 // Map View Component
+// Offline Grid Map Component - Works without internet
+const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumbs = [] }) => {
+  // Find the bounds to fit all members
+  const allPoints = [
+    ...(myLocation.valid ? [{ lat: myLocation.lat, lng: myLocation.lng }] : []),
+    ...members.filter(m => m.lat && m.lng),
+    ...breadcrumbs.filter(b => b.lat && b.lng)
+  ];
+  
+  if (allPoints.length === 0 || !myLocation.valid) {
+    return (
+      <View style={[localStyles.offlineMapContainer, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
+        <View style={localStyles.offlineMapHeader}>
+          <Map size={20} color={colors.primary} />
+          <Text style={[localStyles.radarTitle, { color: colors.textDark }]}>Offline Map</Text>
+          <Text style={[localStyles.radarRange, { color: colors.gray }]}>GPS Required</Text>
+        </View>
+        <View style={[localStyles.offlineMapGrid, { height: RADAR_SIZE }]}>
+          <Text style={{ color: colors.gray, textAlign: 'center' }}>
+            Waiting for GPS signal...{'\n'}Make sure you're outdoors.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+  
+  // Calculate bounds
+  const maxDistance = Math.max(
+    ...members.map(m => m.distance || 0).filter(d => d > 0),
+    200 // Minimum 200m view
+  );
+  
+  // Map size
+  const mapSize = RADAR_SIZE;
+  const padding = 40;
+  const usableSize = mapSize - padding * 2;
+  
+  // Scale: pixels per meter
+  const scale = usableSize / (maxDistance * 2);
+  
+  // Convert GPS to screen position relative to myLocation
+  const gpsToScreen = (lat, lng) => {
+    if (!myLocation.valid) return { x: mapSize / 2, y: mapSize / 2 };
+    
+    const distance = calculateDistance(myLocation.lat, myLocation.lng, lat, lng);
+    const bearing = calculateBearing(myLocation.lat, myLocation.lng, lat, lng);
+    
+    // Scale and clamp
+    const scaledDist = Math.min(distance * scale, usableSize / 2);
+    const angleRad = (bearing - 90) * Math.PI / 180;
+    
+    return {
+      x: mapSize / 2 + Math.cos(angleRad) * scaledDist,
+      y: mapSize / 2 + Math.sin(angleRad) * scaledDist,
+    };
+  };
+  
+  // Grid lines (N-S, E-W)
+  const gridLines = 5;
+  const gridSpacing = usableSize / gridLines;
+  
+  return (
+    <View style={[localStyles.offlineMapContainer, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
+      <View style={localStyles.offlineMapHeader}>
+        <Map size={20} color={colors.primary} />
+        <Text style={[localStyles.radarTitle, { color: colors.textDark }]}>Offline Map</Text>
+        <Text style={[localStyles.radarRange, { color: colors.gray }]}>
+          Scale: {formatDistance(maxDistance * 2)}
+        </Text>
+      </View>
+      
+      <View style={[localStyles.offlineMapGrid, { width: mapSize, height: mapSize }]}>
+        {/* Grid background */}
+        <View style={[localStyles.gridBg, { backgroundColor: colors.background }]}>
+          {/* Horizontal grid lines */}
+          {Array.from({ length: gridLines + 1 }).map((_, i) => (
+            <View
+              key={`h-${i}`}
+              style={{
+                position: 'absolute',
+                left: padding,
+                right: padding,
+                top: padding + i * gridSpacing,
+                height: 1,
+                backgroundColor: colors.borderColor,
+                opacity: i === Math.floor(gridLines / 2) ? 0.8 : 0.4,
+              }}
+            />
+          ))}
+          
+          {/* Vertical grid lines */}
+          {Array.from({ length: gridLines + 1 }).map((_, i) => (
+            <View
+              key={`v-${i}`}
+              style={{
+                position: 'absolute',
+                top: padding,
+                bottom: padding,
+                left: padding + i * gridSpacing,
+                width: 1,
+                backgroundColor: colors.borderColor,
+                opacity: i === Math.floor(gridLines / 2) ? 0.8 : 0.4,
+              }}
+            />
+          ))}
+          
+          {/* Cardinal directions */}
+          <Text style={[localStyles.gridDir, { top: 5, left: mapSize / 2 - 8, color: colors.primary }]}>N</Text>
+          <Text style={[localStyles.gridDir, { bottom: 5, left: mapSize / 2 - 8, color: colors.gray }]}>S</Text>
+          <Text style={[localStyles.gridDir, { top: mapSize / 2 - 10, right: 8, color: colors.gray }]}>E</Text>
+          <Text style={[localStyles.gridDir, { top: mapSize / 2 - 10, left: 8, color: colors.gray }]}>W</Text>
+          
+          {/* Distance markers at corners */}
+          <Text style={[localStyles.distMarker, { top: padding - 15, right: padding - 5, color: colors.gray }]}>
+            {formatDistance(maxDistance)}
+          </Text>
+          
+          {/* Breadcrumb trail (path you've walked) */}
+          {breadcrumbs.length > 1 && breadcrumbs.map((point, index) => {
+            if (index === 0) return null;
+            
+            const prevPoint = breadcrumbs[index - 1];
+            const pos1 = gpsToScreen(prevPoint.lat, prevPoint.lng);
+            const pos2 = gpsToScreen(point.lat, point.lng);
+            
+            // Calculate line properties for CSS positioning
+            const dx = pos2.x - pos1.x;
+            const dy = pos2.y - pos1.y;
+            const length = Math.sqrt(dx * dx + dy * dy);
+            const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+            
+            return (
+              <View
+                key={`trail-${index}`}
+                style={{
+                  position: 'absolute',
+                  left: pos1.x,
+                  top: pos1.y - 1.5,
+                  width: length,
+                  height: 3,
+                  backgroundColor: '#2ECC71',
+                  opacity: 0.7,
+                  transform: [{ rotate: `${angle}deg` }],
+                  transformOrigin: 'left center',
+                  borderRadius: 1.5,
+                }}
+              />
+            );
+          })}
+          
+          {/* Breadcrumb dots (every few points) */}
+          {breadcrumbs.filter((_, i) => i % 5 === 0).map((point, index) => {
+            const pos = gpsToScreen(point.lat, point.lng);
+            return (
+              <View
+                key={`dot-${index}`}
+                style={{
+                  position: 'absolute',
+                  left: pos.x - 3,
+                  top: pos.y - 3,
+                  width: 6,
+                  height: 6,
+                  borderRadius: 3,
+                  backgroundColor: '#27AE60',
+                }}
+              />
+            );
+          })}
+          
+          {/* Your position (center) */}
+          <View style={[localStyles.myPosMarker, { left: mapSize / 2 - 12, top: mapSize / 2 - 12, borderColor: colors.primary }]}>
+            <View style={[localStyles.myPosInner, { backgroundColor: colors.primary }]} />
+          </View>
+          <Text style={[localStyles.myPosLabel, { left: mapSize / 2 + 15, top: mapSize / 2 - 8, color: colors.primary }]}>
+            You
+          </Text>
+          
+          {/* Member markers */}
+          {members.map((member) => {
+            if (!member.lat || !member.lng) return null;
+            
+            const pos = gpsToScreen(member.lat, member.lng);
+            const isEmergency = member.alertType === 'SOS' || member.alertType === 'MORSE';
+            const isOffline = member.isOffline || member.alertType === 'OFFLINE';
+            const markerColor = isEmergency ? colors.accent : isOffline ? '#999' : '#3498DB';
+            
+            return (
+              <TouchableOpacity
+                key={member.deviceId}
+                style={[
+                  localStyles.memberMapMarker,
+                  {
+                    left: pos.x - 12,
+                    top: pos.y - 12,
+                    backgroundColor: markerColor,
+                    opacity: isOffline ? 0.6 : 1,
+                  }
+                ]}
+                onPress={() => onMemberPress(member)}
+              >
+                <Text style={localStyles.memberMapLabel}>{member.deviceId}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+      
+      {/* Coordinates display */}
+      <View style={localStyles.coordsDisplay}>
+        <Text style={[localStyles.coordsText, { color: colors.textDark }]}>
+          {myLocation.lat.toFixed(6)}, {myLocation.lng.toFixed(6)}
+        </Text>
+      </View>
+    </View>
+  );
+};
+
+// Legacy Map View Component (requires internet) - kept for reference
 const MapViewComponent = ({ myLocation, members, colors, onMemberPress }) => {
   const mapRef = useRef(null);
   const [mapError, setMapError] = useState(false);
@@ -243,9 +461,22 @@ const MapViewComponent = ({ myLocation, members, colors, onMemberPress }) => {
 
 const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
   const { colors } = useTheme();
-  const { isConnected, connectedDevice, myLocation, memberLocations } = useBluetoothDevice();
+  const { 
+    isConnected, 
+    connectedDevice, 
+    myLocation, 
+    memberLocations,
+    breadcrumbs,
+    isTrackingBreadcrumbs,
+    startBreadcrumbTracking,
+    stopBreadcrumbTracking,
+    clearBreadcrumbs,
+    getTrailDistance,
+  } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isInLobby, isHost } = useLobby();
-  const [viewMode, setViewMode] = useState('radar'); // 'map', 'radar', 'list'
+  // Note: Map view disabled - requires Google Maps API key configuration
+  // Use 'radar' (works offline) or 'list' view
+  const [viewMode, setViewMode] = useState('radar'); // 'radar', 'list' (map disabled)
   
   // Combine member locations with distance calculation
   const membersWithDistance = memberLocations.map(member => ({
@@ -394,13 +625,78 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
           </TouchableOpacity>
         </View>
 
-        {/* Map View */}
+        {/* Trail Tracking Controls */}
+        <View style={[localStyles.trailControls, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
+          <View style={localStyles.trailHeader}>
+            <Route size={18} color={colors.primary} />
+            <Text style={[localStyles.trailTitle, { color: colors.textDark }]}>Trail Breadcrumbs</Text>
+            {isTrackingBreadcrumbs && (
+              <View style={[localStyles.recordingBadge, { backgroundColor: '#2ECC71' }]}>
+                <Text style={localStyles.recordingText}>Recording</Text>
+              </View>
+            )}
+          </View>
+          
+          <View style={localStyles.trailStats}>
+            <Text style={[localStyles.trailDistance, { color: colors.textDark }]}>
+              Distance: {formatDistance(getTrailDistance())}
+            </Text>
+            <Text style={[localStyles.trailPoints, { color: colors.gray }]}>
+              {breadcrumbs.length} points
+            </Text>
+          </View>
+          
+          <View style={localStyles.trailButtons}>
+            <TouchableOpacity 
+              style={[
+                localStyles.trailBtn, 
+                { 
+                  backgroundColor: isTrackingBreadcrumbs ? '#E74C3C' : '#2ECC71',
+                  flex: 1,
+                }
+              ]}
+              onPress={isTrackingBreadcrumbs ? stopBreadcrumbTracking : startBreadcrumbTracking}
+            >
+              {isTrackingBreadcrumbs ? (
+                <Pause size={18} color="#fff" />
+              ) : (
+                <Play size={18} color="#fff" />
+              )}
+              <Text style={localStyles.trailBtnText}>
+                {isTrackingBreadcrumbs ? 'Stop Tracking' : 'Start Tracking'}
+              </Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[localStyles.trailBtn, { backgroundColor: colors.gray, marginLeft: 8 }]}
+              onPress={() => {
+                Alert.alert(
+                  'Clear Trail',
+                  'Are you sure you want to clear your trail history? This cannot be undone.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { 
+                      text: 'Clear', 
+                      style: 'destructive',
+                      onPress: clearBreadcrumbs
+                    },
+                  ]
+                );
+              }}
+            >
+              <Trash2 size={18} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Offline Grid Map View */}
         {viewMode === 'map' && (
-          <MapViewComponent
+          <OfflineGridMap
             myLocation={myLocation}
             members={membersWithDistance}
             colors={colors}
             onMemberPress={handleMemberPress}
+            breadcrumbs={breadcrumbs}
           />
         )}
 
@@ -777,6 +1073,144 @@ const localStyles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 12,
     lineHeight: 20,
+  },
+  // Offline Grid Map styles
+  offlineMapContainer: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 16,
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  offlineMapHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 12,
+  },
+  offlineMapGrid: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gridBg: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 8,
+    position: 'relative',
+  },
+  gridDir: {
+    position: 'absolute',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  distMarker: {
+    position: 'absolute',
+    fontSize: 10,
+  },
+  myPosMarker: {
+    position: 'absolute',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  myPosInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  myPosLabel: {
+    position: 'absolute',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  memberMapMarker: {
+    position: 'absolute',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  memberMapLabel: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  coordsDisplay: {
+    marginTop: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  coordsText: {
+    fontSize: 12,
+    fontFamily: 'monospace',
+  },
+  // Trail Tracking Styles
+  trailControls: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 12,
+    marginBottom: 16,
+  },
+  trailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  trailTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
+    flex: 1,
+  },
+  recordingBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  recordingText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  trailStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  trailDistance: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  trailPoints: {
+    fontSize: 12,
+  },
+  trailButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  trailBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    gap: 6,
+  },
+  trailBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
 

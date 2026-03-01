@@ -1,16 +1,20 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   View, 
   Text, 
   TouchableOpacity, 
   FlatList, 
   ActivityIndicator,
-  StyleSheet
+  StyleSheet,
+  Modal,
+  TextInput,
+  Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Bluetooth, BluetoothOff, Radio, Check, RefreshCw } from 'lucide-react-native';
+import { ArrowLeft, Bluetooth, BluetoothOff, Radio, Check, RefreshCw, Edit2, X } from 'lucide-react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
+import { useLobby } from '../../context/LobbyContext';
 
 const DeviceConnectionScreen = ({ onBack }) => {
   const { colors } = useTheme();
@@ -27,6 +31,10 @@ const DeviceConnectionScreen = ({ onBack }) => {
     connectToDevice,
     disconnect,
   } = useBluetoothDevice();
+  const { deviceNickname, setDeviceNickname } = useLobby();
+  
+  const [showNicknameModal, setShowNicknameModal] = useState(false);
+  const [nicknameInput, setNicknameInput] = useState('');
 
   useEffect(() => {
     if (isEnabled && !isConnected) {
@@ -40,6 +48,26 @@ const DeviceConnectionScreen = ({ onBack }) => {
     } else {
       await connectToDevice(device);
     }
+  };
+  
+  const handleEditNickname = () => {
+    setNicknameInput(deviceNickname || connectedDevice?.name || '');
+    setShowNicknameModal(true);
+  };
+  
+  const handleSaveNickname = async () => {
+    if (nicknameInput.trim()) {
+      await setDeviceNickname(nicknameInput.trim());
+    }
+    setShowNicknameModal(false);
+  };
+  
+  // Get display name for connected device
+  const getDeviceDisplayName = () => {
+    if (deviceNickname) {
+      return deviceNickname;
+    }
+    return connectedDevice?.name || 'Unknown Device';
   };
 
   const renderDevice = ({ item }) => {
@@ -133,10 +161,19 @@ const DeviceConnectionScreen = ({ onBack }) => {
         <View style={[styles.connectedCard, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
           <View style={styles.connectedHeader}>
             <Radio size={20} color={colors.primary} />
-            <Text style={[styles.connectedTitle, { color: colors.primary }]}>
-              Connected to {connectedDevice.name}
+            <Text style={[styles.connectedTitle, { color: colors.primary, flex: 1 }]} numberOfLines={1}>
+              Connected to {getDeviceDisplayName()}
             </Text>
+            <TouchableOpacity onPress={handleEditNickname} style={{ padding: 4 }}>
+              <Edit2 size={18} color={colors.primary} />
+            </TouchableOpacity>
           </View>
+          
+          {deviceNickname && (
+            <Text style={{ color: colors.gray, fontSize: 12, marginLeft: 28, marginBottom: 8 }}>
+              BLE: {connectedDevice.name}
+            </Text>
+          )}
           
           <View style={styles.gpsInfo}>
             <Text style={[styles.gpsLabel, { color: colors.textDark }]}>GPS Status:</Text>
@@ -215,6 +252,56 @@ const DeviceConnectionScreen = ({ onBack }) => {
           </View>
         </View>
       )}
+      
+      {/* Device Nickname Modal */}
+      <Modal
+        visible={showNicknameModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowNicknameModal(false)}
+      >
+        <View style={styles.connectingOverlay}>
+          <View style={[styles.connectingModal, { backgroundColor: colors.modalBg, padding: 20 }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <Text style={{ color: colors.textDark, fontSize: 18, fontWeight: '600' }}>Device Nickname</Text>
+              <TouchableOpacity onPress={() => setShowNicknameModal(false)}>
+                <X size={24} color={colors.gray} />
+              </TouchableOpacity>
+            </View>
+            <Text style={{ color: colors.gray, fontSize: 12, marginBottom: 12 }}>
+              Give your device a friendly name. This is stored locally on your phone.
+            </Text>
+            <TextInput
+              style={{
+                backgroundColor: colors.cardBg,
+                borderWidth: 1,
+                borderColor: colors.borderColor,
+                borderRadius: 8,
+                padding: 12,
+                color: colors.textDark,
+                fontSize: 16,
+                marginBottom: 16,
+              }}
+              value={nicknameInput}
+              onChangeText={setNicknameInput}
+              placeholder="Enter device nickname"
+              placeholderTextColor={colors.gray}
+              autoFocus
+            />
+            <TouchableOpacity
+              style={{
+                backgroundColor: colors.primary,
+                padding: 14,
+                borderRadius: 8,
+                alignItems: 'center',
+              }}
+              onPress={handleSaveNickname}
+            >
+              <Text style={{ color: '#fff', fontWeight: '600' }}>Save</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };

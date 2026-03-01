@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Image, ImageBackground, Alert, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, TextInput, TouchableOpacity, Image, ImageBackground, Alert, ActivityIndicator, StyleSheet } from 'react-native';
 import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
 import { useTheme } from '../context/ThemeContext';
@@ -9,7 +9,18 @@ import { useBluetoothDevice } from '../context/BluetoothContext';
 const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const { colors } = useTheme();
   const { createLobby, joinLobby, syncLobbyToDevice, lobbyCode, isInLobby } = useLobby();
-  const { sendCommand, isConnected } = useBluetoothDevice();
+  const { sendCommand, isConnected, statusMessage, memberLocations } = useBluetoothDevice();
+  
+  // For tracking lobby validation
+  const [validationState, setValidationState] = useState(null); // null, 'syncing', 'waiting', 'confirmed'
+  const pendingJoinRef = useRef(null);
+  const validationTimeoutRef = useRef(null);
+  const validationStateRef = useRef(null); // Ref to track current state for timeout callbacks
+  
+  // Keep ref in sync with state
+  useEffect(() => {
+    validationStateRef.current = validationState;
+  }, [validationState]);
   
   const [mode, setMode] = useState('join');
   const [remember, setRemember] = useState(false);
@@ -23,6 +34,42 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const [username, setUsername] = useState('');
   const [joinCode, setJoinCode] = useState('');
 
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (validationTimeoutRef.current) {
+        clearTimeout(validationTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Monitor for device confirmation (STATUS:LOBBY_SET)
+  useEffect(() => {
+    if (validationState === 'syncing' && statusMessage && statusMessage.includes('Lobby') && statusMessage.includes('synced')) {
+      // Device confirmed the lobby code was set - enter immediately
+      // Note: Other members will appear when their heartbeats arrive (every ~30 seconds)
+      setValidationState('confirmed');
+      completeJoin(true);
+    }
+  }, [statusMessage, validationState]);
+
+  const completeJoin = async (membersFound) => {
+    if (!pendingJoinRef.current) return;
+    
+    const { code, name } = pendingJoinRef.current;
+    
+    try {
+      await joinLobby(code, name);
+      setValidationState(null);
+      pendingJoinRef.current = null;
+      onLogin();
+    } catch (error) {
+      Alert.alert('Error', 'Failed to join lobby: ' + error.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   // Sync lobby code to device when connected
   useEffect(() => {
     if (isConnected && lobbyCode) {
@@ -35,14 +82,25 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       Alert.alert('Error', 'Please enter a lobby name');
       return;
     }
+
+    // Require device connection to create lobby
+    if (!isConnected) {
+      Alert.alert(
+        'Device Required',
+        'You must connect to your HikeSafe device before creating a lobby. The lobby code is synced to your device for LoRa communication.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
     
     setIsSubmitting(true);
     try {
       const code = await createLobby(lobbyName.trim(), parseInt(maxMember) || 10);
       
-      // Sync to device if connected
-      if (isConnected) {
-        await sendCommand(`LOBBY:${code}`);
+      // Send lobby code to device
+      const success = await sendCommand(`LOBBY:${code}`);
+      if (!success) {
+        throw new Error('Failed to sync lobby code to device');
       }
       
       onShowCreateSuccess({ 
@@ -67,22 +125,69 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       Alert.alert('Error', 'Lobby code must be 4 digits');
       return;
     }
+
+    const code = parseInt(joinCode, 10);
+    if (code < 1000 || code > 9999) {
+      Alert.alert('Error', 'Lobby code must be between 1000 and 9999');
+      return;
+    }
     
+    // Require device connection to join lobby
+    if (!isConnected) {
+      Alert.alert(
+        'Device Required',
+        'You must connect to your HikeSafe device before joining a lobby. The lobby code is synced to your device for LoRa communication.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
+    // Start validation process
+    performJoinLobby();
+  };
+  
+  const performJoinLobby = async () => {
     setIsSubmitting(true);
+    setValidationState('syncing');
+    
+    // Store pending join info
+    pendingJoinRef.current = {
+      code: joinCode,
+      name: username.trim() || 'Hiker'
+    };
+    
     try {
-      await joinLobby(joinCode, username.trim() || 'Hiker');
-      
-      // Sync to device if connected
-      if (isConnected) {
-        await sendCommand(`LOBBY:${joinCode}`);
+      // Send lobby code to device first
+      const success = await sendCommand(`LOBBY:${joinCode}`);
+      if (!success) {
+        throw new Error('Failed to sync lobby code to device');
       }
       
-      onLogin();
+      // Wait for device confirmation via statusMessage effect
+      // If no confirmation within 5 seconds, fail
+      setTimeout(() => {
+        if (validationStateRef.current === 'syncing') {
+          setIsSubmitting(false);
+          setValidationState(null);
+          pendingJoinRef.current = null;
+          Alert.alert('Error', 'Device did not confirm lobby code. Please try again.');
+        }
+      }, 5000);
+      
     } catch (error) {
       Alert.alert('Error', 'Failed to join lobby: ' + error.message);
-    } finally {
       setIsSubmitting(false);
+      setValidationState(null);
+      pendingJoinRef.current = null;
     }
+  };
+
+  // Get appropriate button text based on validation state
+  const getJoinButtonText = () => {
+    if (!isSubmitting) return 'Enter Lobby';
+    if (validationState === 'syncing') return 'Syncing to device...';
+    if (validationState === 'confirmed') return 'Entering...';
+    return 'Joining...';
   };
 
   if (mode === 'create') {
@@ -98,7 +203,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
             <View style={styles.separatorThin} />
 
             <Text style={[styles.cardSubtitleWhite, { textAlign: 'left', alignSelf: 'flex-start', fontSize: 20 }]}>Welcome to HIKESAFE!</Text>
-            <Text style={[styles.cardDescWhite, { textAlign: 'left', alignSelf: 'flex-start' }]} numberOfLines={1}>Please fill out the form below to create your lobby.</Text>
+            <Text style={[styles.cardDescWhite, { textAlign: 'left', alignSelf: 'flex-start' }]} numberOfLines={2}>Create a lobby and share the code with your group members.</Text>
             <View style={styles.separatorThin} />
 
             <View style={styles.formGrid}>
@@ -181,6 +286,10 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
             maxLength={4}
           />
           
+          <Text style={localStyles.infoText}>
+            Get the 4-digit code from your group leader who created the lobby.
+          </Text>
+          
           <View style={styles.row}>
             <TouchableOpacity
               onPress={() => setRemember(!remember)}
@@ -194,7 +303,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
         </View>
 
         <MainButton 
-          title={isSubmitting ? "Joining..." : "Enter Lobby"} 
+          title={getJoinButtonText()} 
           onPress={handleJoinLobby} 
           style={{ top: -30, width: '80%', alignSelf: 'center' }} 
           disabled={isSubmitting}
@@ -214,5 +323,16 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     </ImageBackground>
   );
 };
+
+const localStyles = StyleSheet.create({
+  infoText: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 4,
+    fontStyle: 'italic',
+  },
+});
 
 export default LobbyScreen;

@@ -38,7 +38,7 @@ const formatTimeSince = (timestamp) => {
   return `${Math.floor(seconds / 86400)}d ago`;
 };
 
-const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname, myNickname, onRemove }) => {
+const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname, myNickname, onRemove, isUserHost }) => {
   const distance = myLocation.valid && member.lat && member.lng
     ? calculateDistance(myLocation.lat, myLocation.lng, member.lat, member.lng)
     : null;
@@ -62,17 +62,26 @@ const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname
     return 'Online';
   };
 
-  const displayName = isMe 
-    ? (myNickname ? `${myNickname} (You - Host)` : 'You (Host)')
-    : nickname;
+  // Show correct host/member label
+  const getDisplayName = () => {
+    if (isMe) {
+      const roleSuffix = isUserHost ? 'Host' : 'Member';
+      return myNickname ? `${myNickname} (You - ${roleSuffix})` : `You (${roleSuffix})`;
+    }
+    return nickname;
+  };
+
+  const displayName = getDisplayName();
 
   return (
     <View style={[localStyles.memberCard, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
       <View style={localStyles.memberHeader}>
         <View style={localStyles.memberInfo}>
           <View style={[localStyles.avatar, { backgroundColor: getStatusColor() }]}>
-            {isMe ? (
+            {isMe && isUserHost ? (
               <Crown size={20} color="#fff" />
+            ) : isMe ? (
+              <Text style={localStyles.avatarText}>ME</Text>
             ) : (
               <Text style={localStyles.avatarText}>D{member.deviceId}</Text>
             )}
@@ -217,15 +226,99 @@ const MembersTab = ({ onNavigateToLocation }) => {
   }), [memberLocations]);
 
   if (!isHost) {
+    // Non-hosts can see members but not manage them
     return (
       <View style={[localStyles.container, { backgroundColor: colors.background }]}>
-        <View style={localStyles.notHostContainer}>
-          <Users size={60} color={colors.gray} />
-          <Text style={[localStyles.notHostTitle, { color: colors.textDark }]}>Host Only</Text>
-          <Text style={[localStyles.notHostText, { color: colors.gray }]}>
-            This feature is only available to lobby hosts.
-          </Text>
+        {/* Header for Members */}
+        <View style={[localStyles.header, { backgroundColor: colors.primary }]}>
+          <View style={localStyles.headerTop}>
+            <View>
+              <Text style={localStyles.headerTitle}>Group Members</Text>
+              <Text style={localStyles.headerSubtitle}>
+                {lobbyName || 'My Lobby'} • Code: {lobbyCode}
+              </Text>
+            </View>
+            <View style={[localStyles.hostBadge, { backgroundColor: colors.cardBg }]}>
+              <Text style={[localStyles.hostBadgeText, { color: colors.gray }]}>MEMBER</Text>
+            </View>
+          </View>
+          
+          {/* Stats Row */}
+          <View style={localStyles.statsRow}>
+            <View style={localStyles.stat}>
+              <Text style={localStyles.statValue}>{stats.total}</Text>
+              <Text style={localStyles.statLabel}>Total</Text>
+            </View>
+            <View style={localStyles.stat}>
+              <Text style={[localStyles.statValue, { color: '#4CAF50' }]}>{stats.online}</Text>
+              <Text style={localStyles.statLabel}>Online</Text>
+            </View>
+            <View style={localStyles.stat}>
+              <Text style={[localStyles.statValue, { color: '#9E9E9E' }]}>{stats.offline}</Text>
+              <Text style={localStyles.statLabel}>Offline</Text>
+            </View>
+            <View style={localStyles.stat}>
+              <Text style={[localStyles.statValue, { color: '#F44336' }]}>{stats.alerts}</Text>
+              <Text style={localStyles.statLabel}>Alerts</Text>
+            </View>
+          </View>
         </View>
+
+        <ScrollView 
+          contentContainerStyle={localStyles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Self Card */}
+          <MemberCard 
+            member={{
+              deviceId: 'You',
+              lat: myLocation.lat,
+              lng: myLocation.lng,
+              isOffline: false,
+              lastUpdate: Date.now(),
+            }}
+            myLocation={myLocation}
+            colors={colors}
+            isMe={true}
+            myNickname={myNickname}
+            isUserHost={false}
+          />
+
+          {/* Other Members (read-only for non-hosts) */}
+          {sortedMembers.length > 0 ? (
+            sortedMembers.map((member) => (
+              <MemberCard 
+                key={member.deviceId}
+                member={member}
+                myLocation={myLocation}
+                colors={colors}
+                isMe={false}
+                nickname={getMemberNickname(member.deviceId)}
+                // No onEditNickname or onRemove for non-hosts
+              />
+            ))
+          ) : (
+            <View style={localStyles.emptyState}>
+              <Radio size={40} color={colors.gray} />
+              <Text style={[localStyles.emptyTitle, { color: colors.textDark }]}>
+                No other members yet
+              </Text>
+              <Text style={[localStyles.emptyText, { color: colors.gray }]}>
+                Waiting for others to join with code: {lobbyCode}
+              </Text>
+            </View>
+          )}
+
+          {/* Connection Warning */}
+          {!isConnected && (
+            <View style={[localStyles.warningBanner, { backgroundColor: '#FFF3E0' }]}>
+              <WifiOff size={18} color="#F57C00" />
+              <Text style={localStyles.warningText}>
+                Device not connected. Connect to your HikeSafe device to see real-time member data.
+              </Text>
+            </View>
+          )}
+        </ScrollView>
       </View>
     );
   }
@@ -285,6 +378,7 @@ const MembersTab = ({ onNavigateToLocation }) => {
           colors={colors}
           isMe={true}
           myNickname={myNickname}
+          isUserHost={true}
         />
 
         {/* Other Members */}

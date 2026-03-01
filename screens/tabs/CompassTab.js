@@ -63,23 +63,46 @@ const CompassTab = () => {
 
   const _getLocation = async () => {
     try {
-      let location = await Location.getCurrentPositionAsync({});
+      let location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
       setLocation(location);
       
-      let addressResponse = await Location.reverseGeocodeAsync({
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude
-      });
-
-      if (addressResponse.length > 0) {
-        let addr = addressResponse[0];
-        let locationName = `${addr.city || addr.subregion || ''}\n${addr.region || addr.country || ''}`;
-        setAddress(locationName.trim());
-      }
+      // Display coordinates directly (works offline, no reverse geocoding)
+      const lat = location.coords.latitude.toFixed(6);
+      const lng = location.coords.longitude.toFixed(6);
+      const alt = location.coords.altitude ? `Alt: ${location.coords.altitude.toFixed(0)}m` : '';
+      setAddress(`${lat}, ${lng}\n${alt}`);
     } catch (e) {
-      setAddress("Location Unavailable");
+      setAddress("GPS Unavailable");
     }
   };
+
+  // Continuously update location when service is enabled
+  useEffect(() => {
+    let locationWatcher = null;
+    
+    if (isServiceEnabled) {
+      (async () => {
+        locationWatcher = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.High, distanceInterval: 5 },
+          (loc) => {
+            setLocation(loc);
+            const lat = loc.coords.latitude.toFixed(6);
+            const lng = loc.coords.longitude.toFixed(6);
+            const alt = loc.coords.altitude ? `Alt: ${loc.coords.altitude.toFixed(0)}m` : '';
+            setAddress(`${lat}, ${lng}\n${alt}`);
+          }
+        );
+      })();
+    }
+    
+    return () => {
+      if (locationWatcher) {
+        locationWatcher.remove();
+      }
+    };
+  }, [isServiceEnabled]);
 
   useEffect(() => {
     return () => {

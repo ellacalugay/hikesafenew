@@ -1,7 +1,20 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import { Alert, Platform, PermissionsAndroid } from 'react-native';
+import { Alert, Platform, PermissionsAndroid, Vibration } from 'react-native';
 import { Buffer } from 'buffer';
 import Constants from 'expo-constants';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Storage keys
+const CHAT_HISTORY_KEY = '@hikesafe_chat_history';
+const BREADCRUMBS_KEY = '@hikesafe_breadcrumbs';
+
+// Vibration patterns (milliseconds)
+const VIBRATION_PATTERNS = {
+  SOS: [0, 500, 200, 500, 200, 500, 400, 1000, 400, 1000, 400, 1000, 400, 500, 200, 500, 200, 500], // ...---...
+  ALERT: [0, 1000, 500, 1000, 500, 1000], // Long pulses
+  OK: [0, 200, 100, 200], // Short double pulse
+  MESSAGE: [0, 100, 50, 100], // Quick notification
+};
 
 // BLE Library - works with ESP32 BLE (NO system pairing required!)
 // Note: react-native-ble-plx requires a development build, won't work in Expo Go
@@ -69,6 +82,248 @@ export const BluetoothProvider = ({ children }) => {
   // Connection health monitoring
   const [lastDataReceived, setLastDataReceived] = useState(null);
   const [connectionHealth, setConnectionHealth] = useState('unknown'); // 'good', 'warning', 'lost'
+  
+  // Activity log for real-time updates
+  const [activityLog, setActivityLog] = useState([]);
+  const knownMembersRef = useRef(new Set());
+  
+  // Trail breadcrumbs for tracking path
+  const [breadcrumbs, setBreadcrumbs] = useState([]);
+  const [isTrackingBreadcrumbs, setIsTrackingBreadcrumbs] = useState(false);
+  const lastBreadcrumbRef = useRef(null);
+  
+  // Vibration control
+  const [vibrationEnabled, setVibrationEnabled] = useState(true);
+  
+  // Trigger vibration pattern
+  const triggerVibration = useCallback((patternName) => {
+    if (!vibrationEnabled) return;
+    
+    const pattern = VIBRATION_PATTERNS[patternName];
+    if (pattern) {
+      Vibration.vibrate(pattern);
+    }
+  }, [vibrationEnabled]);
+  
+  // Add activity to log
+  const addActivity = useCallback((type, deviceId, message) => {
+    const activity = {
+      id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      type, // 'join', 'leave', 'sos', 'ok', 'offline', 'online', 'message'
+      deviceId,
+      message,
+      timestamp: Date.now(),
+    };
+    setActivityLog(prev => [activity, ...prev].slice(0, 50)); // Keep last 50 activities
+  }, []);
+  
+  // Load chat history from storage on mount
+  useEffect(() => {
+    const loadChatHistory = async () => {
+      try {
+        const savedMessages = await AsyncStorage.getItem(CHAT_HISTORY_KEY);
+        if (savedMessages) {
+          const parsed = JSON.parse(savedMessages);
+          setMessages(parsed);
+          console.log(`Loaded ${parsed.length} messages from storage`);
+        }
+      } catch (error) {
+        console.error('Failed to load chat history:', error);
+      }
+    };
+    loadChatHistory();
+  }, []);
+  
+  // Save chat history when messages change
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+  
+  // Debounced save to avoid too many writes
+  const saveTimeoutRef = useRef(null);
+  useEffect(() => {
+    if (messages.length === 0) return;
+    
+    // Clear existing timeout
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    
+    // Save after 1 second of no changes
+    saveTimeoutRef.current = setTimeout(async () => {
+      try {
+        // Keep only last 200 messages to avoid storage bloat
+        const messagesToSave = messages.slice(-200);
+        await AsyncStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(messagesToSave));
+        console.log(`Saved ${messagesToSave.length} messages to storage`);
+      } catch (error) {
+        console.error('Failed to save chat history:', error);
+      }
+    }, 1000);
+    
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [messages]);
+  
+  // Clear all chat history
+  const clearChatHistory = useCallback(async () => {
+    try {
+      await AsyncStorage.removeItem(CHAT_HISTORY_KEY);
+      setMessages([]);
+      setUnreadCount(0);
+      console.log('Chat history cleared');
+      return true;
+    } catch (error) {
+      console.error('Failed to clear chat history:', error);
+      return false;
+    }
+  }, []);
+  
+  // --- BREADCRUMB TRACKING ---
+  
+  // Load breadcrumbs from storage on mount
+  useEffect(() => {
+    const loadBreadcrumbs = async () => {
+      try {
+        const saved = await AsyncStorage.getItem(BREADCRUMBS_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          setBreadcrumbs(parsed.points || []);
+          setIsTrackingBreadcrumbs(parsed.isTracking || false);
+          console.log(`Loaded ${parsed.points?.length || 0} breadcrumbs`);
+        }
+      } catch (error) {
+        console.error('Failed to load breadcrumbs:', error);
+      }
+    };
+    loadBreadcrumbs();
+  }, []);
+  
+  // Save breadcrumbs when they change
+  const breadcrumbSaveRef = useRef(null);
+  useEffect(() => {
+    if (breadcrumbs.length === 0 && !isTrackingBreadcrumbs) return;
+    
+    if (breadcrumbSaveRef.current) {
+      clearTimeout(breadcrumbSaveRef.current);
+    }
+    
+    breadcrumbSaveRef.current = setTimeout(async () => {
+      try {
+        await AsyncStorage.setItem(BREADCRUMBS_KEY, JSON.stringify({
+          points: breadcrumbs.slice(-500), // Keep last 500 points
+          isTracking: isTrackingBreadcrumbs,
+        }));
+      } catch (error) {
+        console.error('Failed to save breadcrumbs:', error);
+      }
+    }, 2000);
+    
+    return () => {
+      if (breadcrumbSaveRef.current) {
+        clearTimeout(breadcrumbSaveRef.current);
+      }
+    };
+  }, [breadcrumbs, isTrackingBreadcrumbs]);
+  
+  // Add a breadcrumb point (call when location updates)
+  const addBreadcrumb = useCallback((lat, lng, altitude = null) => {
+    if (!isTrackingBreadcrumbs) return;
+    if (!lat || !lng || lat === 0 || lng === 0) return;
+    
+    // Check minimum distance from last point (10 meters)
+    if (lastBreadcrumbRef.current) {
+      const lastLat = lastBreadcrumbRef.current.lat;
+      const lastLng = lastBreadcrumbRef.current.lng;
+      
+      // Haversine distance calculation
+      const R = 6371e3;
+      const φ1 = lastLat * Math.PI / 180;
+      const φ2 = lat * Math.PI / 180;
+      const Δφ = (lat - lastLat) * Math.PI / 180;
+      const Δλ = (lng - lastLng) * Math.PI / 180;
+      const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                Math.cos(φ1) * Math.cos(φ2) *
+                Math.sin(Δλ/2) * Math.sin(Δλ/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      const distance = R * c;
+      
+      if (distance < 10) return; // Skip if less than 10m
+    }
+    
+    const point = {
+      lat,
+      lng,
+      altitude,
+      timestamp: Date.now(),
+    };
+    
+    lastBreadcrumbRef.current = point;
+    setBreadcrumbs(prev => [...prev, point]);
+  }, [isTrackingBreadcrumbs]);
+  
+  // Start tracking breadcrumbs
+  const startBreadcrumbTracking = useCallback(() => {
+    setIsTrackingBreadcrumbs(true);
+    lastBreadcrumbRef.current = null;
+    console.log('Breadcrumb tracking started');
+  }, []);
+  
+  // Stop tracking breadcrumbs
+  const stopBreadcrumbTracking = useCallback(() => {
+    setIsTrackingBreadcrumbs(false);
+    console.log('Breadcrumb tracking stopped');
+  }, []);
+  
+  // Clear all breadcrumbs
+  const clearBreadcrumbs = useCallback(async () => {
+    try {
+      await AsyncStorage.removeItem(BREADCRUMBS_KEY);
+      setBreadcrumbs([]);
+      lastBreadcrumbRef.current = null;
+      console.log('Breadcrumbs cleared');
+      return true;
+    } catch (error) {
+      console.error('Failed to clear breadcrumbs:', error);
+      return false;
+    }
+  }, []);
+  
+  // Calculate total trail distance
+  const getTrailDistance = useCallback(() => {
+    if (breadcrumbs.length < 2) return 0;
+    
+    let total = 0;
+    for (let i = 1; i < breadcrumbs.length; i++) {
+      const prev = breadcrumbs[i - 1];
+      const curr = breadcrumbs[i];
+      
+      const R = 6371e3;
+      const φ1 = prev.lat * Math.PI / 180;
+      const φ2 = curr.lat * Math.PI / 180;
+      const Δφ = (curr.lat - prev.lat) * Math.PI / 180;
+      const Δλ = (curr.lng - prev.lng) * Math.PI / 180;
+      const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                Math.cos(φ1) * Math.cos(φ2) *
+                Math.sin(Δλ/2) * Math.sin(Δλ/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      total += R * c;
+    }
+    
+    return total; // meters
+  }, [breadcrumbs]);
+  
+  // Auto-record breadcrumbs when myLocation changes
+  useEffect(() => {
+    if (!isTrackingBreadcrumbs) return;
+    if (!myLocation.valid || myLocation.lat === 0) return;
+    
+    addBreadcrumb(myLocation.lat, myLocation.lng);
+  }, [myLocation, isTrackingBreadcrumbs, addBreadcrumb]);
   
   const bleManagerRef = useRef(null);
   const deviceRef = useRef(null);
@@ -336,6 +591,7 @@ export const BluetoothProvider = ({ children }) => {
             return [...prev, { deviceId, isOffline: true, alertType: 'OFFLINE', lastUpdate: Date.now() }];
           });
           setActiveAlert({ type: 'OFFLINE', deviceId, timestamp: Date.now() });
+          addActivity('offline', deviceId, `Device ${deviceId} went offline`);
           setStatusMessage(`Device ${deviceId} went OFFLINE`);
           setTimeout(() => setStatusMessage(''), 5000);
           return;
@@ -358,6 +614,7 @@ export const BluetoothProvider = ({ children }) => {
             }
             return prev;
           });
+          addActivity('online', deviceId, `Device ${deviceId} is back online`);
           setStatusMessage(`Device ${deviceId} is back ONLINE`);
           setTimeout(() => setStatusMessage(''), 3000);
           return;
@@ -367,6 +624,13 @@ export const BluetoothProvider = ({ children }) => {
         if (parts.length >= 4) {
           const lat = parseFloat(parts[2]);
           const lng = parseFloat(parts[3]);
+          
+          // Track new member joins
+          const isNewMember = !knownMembersRef.current.has(deviceId);
+          if (isNewMember) {
+            knownMembersRef.current.add(deviceId);
+            addActivity('join', deviceId, `Device ${deviceId} joined the group`);
+          }
           
           // Update member location
           setMemberLocations(prev => {
@@ -384,6 +648,18 @@ export const BluetoothProvider = ({ children }) => {
           // Handle different alert types
           if (type === 'SOS' || type === 'MORSE') {
             setActiveAlert({ type, deviceId, lat, lng, timestamp: Date.now() });
+            addActivity('sos', deviceId, `Device ${deviceId} triggered ${type} alert!`);
+            
+            // Vibrate with SOS pattern
+            triggerVibration('SOS');
+            
+            // Show notification alert
+            Alert.alert(
+              '🚨 EMERGENCY ALERT',
+              `Device ${deviceId} has triggered a ${type} alert!\n\nLocation: ${lat.toFixed(5)}, ${lng.toFixed(5)}\n\nCheck on this member immediately!`,
+              [{ text: 'View Location', style: 'default' }],
+              { cancelable: true }
+            );
           } else if (type === 'OK') {
             // OK received - clear any active alert from that device
             setActiveAlert(prev => {
@@ -403,9 +679,21 @@ export const BluetoothProvider = ({ children }) => {
               }
               return prev;
             });
+            addActivity('ok', deviceId, `Device ${deviceId} cancelled alert`);
             // Show status message
             setStatusMessage(`Device ${deviceId} is OK`);
             setTimeout(() => setStatusMessage(''), 3000);
+            
+            // Vibrate with OK pattern
+            triggerVibration('OK');
+            
+            // Show notification that alert was cancelled
+            Alert.alert(
+              '✅ Alert Cancelled',
+              `Device ${deviceId} has signaled they are OK.`,
+              [{ text: 'Dismiss' }],
+              { cancelable: true }
+            );
           }
         }
       }
@@ -453,6 +741,9 @@ export const BluetoothProvider = ({ children }) => {
           
           setMessages(prev => [...prev, newMessage]);
           setUnreadCount(prev => prev + 1);
+          
+          // Vibrate for incoming message (respects vibrationEnabled)
+          triggerVibration('MESSAGE');
         }
       }
       
@@ -467,23 +758,13 @@ export const BluetoothProvider = ({ children }) => {
   // Connect to a BLE device - direct connection, no pairing needed!
   const connectToDevice = useCallback(async (device) => {
     if (!bleAvailable || !bleManagerRef.current) {
-      // Mock connection for Expo Go development
-      console.log('Using mock device connection (BLE not available)');
-      setIsConnecting(true);
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      setConnectedDevice(device);
-      setIsConnected(true);
-      setIsConnecting(false);
-      setLastDataReceived(Date.now());
-      
-      // Start mock data stream
-      mockIntervalRef.current = setInterval(() => {
-        const mockLat = 14.5995 + (Math.random() - 0.5) * 0.01;
-        const mockLng = 120.9842 + (Math.random() - 0.5) * 0.01;
-        parseBluetoothData(`SELF:${mockLat.toFixed(6)},${mockLng.toFixed(6)},8`);
-      }, 2000);
-      
-      return true;
+      // BLE not available - cannot connect
+      Alert.alert(
+        'Bluetooth Not Available',
+        'Bluetooth is required to connect to your HikeSafe device. Please use a native build (not Expo Go) and ensure Bluetooth is enabled.',
+        [{ text: 'OK' }]
+      );
+      return false;
     }
 
     // Stop scanning if still running
@@ -678,8 +959,9 @@ export const BluetoothProvider = ({ children }) => {
   // Get messages for a specific conversation
   const getMessagesForDevice = useCallback((deviceId) => {
     if (deviceId === 0) {
-      // Broadcast messages - messages to/from device 0 (broadcast)
-      return messages.filter(msg => msg.to === 0 || msg.from === 0);
+      // Broadcast/Group chat - show ALL messages (sent and received)
+      // Since firmware doesn't distinguish broadcast from direct, show everything in group
+      return messages;
     }
     return messages.filter(msg => 
       (msg.from === deviceId && msg.to === 'me') ||
@@ -768,6 +1050,19 @@ export const BluetoothProvider = ({ children }) => {
     unreadCount,
     connectionHealth,
     lastDataReceived,
+    activityLog,
+    
+    // Breadcrumbs / Trail tracking
+    breadcrumbs,
+    isTrackingBreadcrumbs,
+    startBreadcrumbTracking,
+    stopBreadcrumbTracking,
+    clearBreadcrumbs,
+    getTrailDistance,
+    
+    // Vibration settings
+    vibrationEnabled,
+    setVibrationEnabled,
     
     // Actions
     requestEnable,
@@ -780,6 +1075,7 @@ export const BluetoothProvider = ({ children }) => {
     dismissAlert,
     clearMorseInput,
     removeMemberLocation,
+    addActivity,
     
     // Messaging
     sendMessage,
@@ -787,6 +1083,7 @@ export const BluetoothProvider = ({ children }) => {
     getMessagesForDevice,
     getConversations,
     markMessagesAsRead,
+    clearChatHistory,
   };
 
   return (

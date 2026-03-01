@@ -8,10 +8,11 @@ import {
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
-  ActivityIndicator
+  ActivityIndicator,
+  Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Send, Radio, Users, AlertCircle, Bluetooth } from 'lucide-react-native';
+import { ArrowLeft, Send, Radio, Users, AlertCircle, Bluetooth, Trash2 } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
@@ -23,7 +24,8 @@ const ChatScreen = ({ onBack, chatName }) => {
     getMessagesForDevice, 
     sendMessage, 
     sendBroadcastMessage,
-    markMessagesAsRead 
+    markMessagesAsRead,
+    clearChatHistory
   } = useBluetoothDevice();
   
   const [messageText, setMessageText] = useState('');
@@ -73,6 +75,26 @@ const ChatScreen = ({ onBack, chatName }) => {
     return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const handleClearChat = () => {
+    Alert.alert(
+      'Clear Chat History',
+      'Are you sure you want to delete all messages? This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete All', 
+          style: 'destructive',
+          onPress: async () => {
+            const success = await clearChatHistory();
+            if (success) {
+              Alert.alert('Cleared', 'All chat history has been deleted.');
+            }
+          }
+        }
+      ]
+    );
+  };
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
       <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
@@ -83,6 +105,12 @@ const ChatScreen = ({ onBack, chatName }) => {
           <ArrowLeft size={24} color={colors.textDark} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.textDark }]}>{chatInfo.name || 'Chat'}</Text>
+        <TouchableOpacity 
+          onPress={handleClearChat} 
+          style={{ position: 'absolute', right: 20, top: 15, padding: 5 }}
+        >
+          <Trash2 size={22} color={colors.gray} />
+        </TouchableOpacity>
       </View>
     <KeyboardAvoidingView 
       style={{ flex: 1 }}

@@ -10,6 +10,7 @@ const LOBBY_ROLE_KEY = '@hikesafe_lobby_role';
 const LOBBY_MAX_MEMBERS_KEY = '@hikesafe_lobby_max_members';
 const MEMBER_NICKNAMES_KEY = '@hikesafe_member_nicknames';
 const MY_NICKNAME_KEY = '@hikesafe_my_nickname';
+const DEVICE_NICKNAME_KEY = '@hikesafe_device_nickname';
 
 // Generate a random 4-digit lobby code
 const generateLobbyCode = () => {
@@ -34,6 +35,7 @@ export const LobbyProvider = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [memberNicknames, setMemberNicknames] = useState({}); // { deviceId: nickname }
   const [myNickname, setMyNicknameState] = useState('');
+  const [deviceNickname, setDeviceNicknameState] = useState(''); // Local nickname for connected device
   
   // BLE command callback - will be set by BluetoothContext integration
   const [sendLobbyCommand, setSendLobbyCommand] = useState(null);
@@ -45,13 +47,14 @@ export const LobbyProvider = ({ children }) => {
 
   const loadPersistedLobby = async () => {
     try {
-      const [savedCode, savedName, savedRole, savedMax, savedNicknames, savedMyNickname] = await Promise.all([
+      const [savedCode, savedName, savedRole, savedMax, savedNicknames, savedMyNickname, savedDeviceNick] = await Promise.all([
         AsyncStorage.getItem(LOBBY_CODE_KEY),
         AsyncStorage.getItem(LOBBY_NAME_KEY),
         AsyncStorage.getItem(LOBBY_ROLE_KEY),
         AsyncStorage.getItem(LOBBY_MAX_MEMBERS_KEY),
         AsyncStorage.getItem(MEMBER_NICKNAMES_KEY),
         AsyncStorage.getItem(MY_NICKNAME_KEY),
+        AsyncStorage.getItem(DEVICE_NICKNAME_KEY),
       ]);
 
       if (savedCode) {
@@ -69,6 +72,10 @@ export const LobbyProvider = ({ children }) => {
       
       if (savedMyNickname) {
         setMyNicknameState(savedMyNickname);
+      }
+      
+      if (savedDeviceNick) {
+        setDeviceNicknameState(savedDeviceNick);
       }
     } catch (error) {
       console.error('Failed to load lobby data:', error);
@@ -233,6 +240,16 @@ export const LobbyProvider = ({ children }) => {
     }
   }, []);
 
+  // Set device nickname (local name for connected BLE device)
+  const setDeviceNickname = useCallback(async (nickname) => {
+    setDeviceNicknameState(nickname);
+    try {
+      await AsyncStorage.setItem(DEVICE_NICKNAME_KEY, nickname);
+    } catch (error) {
+      console.error('Failed to save device nickname:', error);
+    }
+  }, []);
+
   // Clear all nicknames (on leave lobby)
   const clearNicknames = useCallback(async () => {
     setMemberNicknames({});
@@ -259,6 +276,7 @@ export const LobbyProvider = ({ children }) => {
     isLoading,
     memberNicknames,
     myNickname,
+    deviceNickname,
     
     // Actions
     createLobby,
@@ -273,6 +291,7 @@ export const LobbyProvider = ({ children }) => {
     setMemberNickname,
     getMemberNickname,
     setMyNickname,
+    setDeviceNickname,
     clearNicknames,
     
     // Helpers

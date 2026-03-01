@@ -1,13 +1,13 @@
 import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
-import { User, Radio, Users, MessageCircle, Bluetooth } from 'lucide-react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { User, Radio, Users, MessageCircle, Bluetooth, Trash2 } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
 
 const MessageTab = ({ onOpenChat }) => {
   const { colors } = useTheme();
-  const { isConnected, connectedDevice, memberLocations, getConversations, unreadCount } = useBluetoothDevice();
+  const { isConnected, connectedDevice, memberLocations, getConversations, unreadCount, clearChatHistory } = useBluetoothDevice();
   
   const conversations = getConversations();
   
@@ -27,6 +27,26 @@ const MessageTab = ({ onOpenChat }) => {
     return new Date(timestamp).toLocaleDateString();
   };
   
+  const handleClearAllChats = () => {
+    Alert.alert(
+      'Clear All Chat History',
+      'Are you sure you want to delete all messages from all conversations? This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete All', 
+          style: 'destructive',
+          onPress: async () => {
+            const success = await clearChatHistory();
+            if (success) {
+              Alert.alert('Cleared', 'All chat history has been deleted.');
+            }
+          }
+        }
+      ]
+    );
+  };
+  
   return (
     <View style={[styles.tabContainer, { backgroundColor: colors.background }]}>
       <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
@@ -36,6 +56,12 @@ const MessageTab = ({ onOpenChat }) => {
             <Text style={localStyles.badgeText}>{unreadCount}</Text>
           </View>
         )}
+        <TouchableOpacity 
+          onPress={handleClearAllChats} 
+          style={{ position: 'absolute', right: 20, top: 15, padding: 5 }}
+        >
+          <Trash2 size={22} color={colors.gray} />
+        </TouchableOpacity>
       </View>
       
       <ScrollView style={{flex:1, padding: 16}}>
