@@ -64,6 +64,7 @@ const MessageTab = ({ onOpenChat }) => {
       style={[styles.tabContainer, { backgroundColor: colors.background }]}
       imageStyle={{ resizeMode: 'cover' }}
     >
+      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
       <View style={{ backgroundColor: colors.primaryLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 10, marginHorizontal: 16, marginTop: 16, marginBottom: 6, borderRadius: 12 }}>
         {isSearching ? (
           <TextInput
@@ -108,7 +109,7 @@ const MessageTab = ({ onOpenChat }) => {
         </TouchableOpacity>
       </View>
       
-      <ScrollView style={{flex:1, padding: 16}}>        
+      <ScrollView style={{flex:1, padding: 16, backgroundColor: 'transparent'}}>
         {/* Group Chat - Broadcast - only show if not searching or matches */}
         {(!searchQuery || 'group chat broadcast'.includes(searchQuery.toLowerCase())) && (
           <TouchableOpacity 

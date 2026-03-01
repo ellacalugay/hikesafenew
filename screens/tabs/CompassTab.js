@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Switch, Animated, Alert, ImageBackground } from 'react-native';
+import { View, Text, Switch, Animated, Alert, ImageBackground, StyleSheet } from 'react-native';
 import * as Location from 'expo-location';
 import { Magnetometer } from 'expo-sensors';
 import { COLORS } from '../../constants/theme';
@@ -126,6 +126,7 @@ const CompassTab = () => {
       style={[styles.tabContainer, { backgroundColor: colors.background }]}
       imageStyle={{ resizeMode: 'cover' }}
     >
+      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
       <View style={{ backgroundColor: colors.primaryLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12, marginHorizontal: 16, marginTop: 16, marginBottom: 6, borderRadius: 12 }}>
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
           <Text style={[styles.headerTitle, { color: colors.textDark }]}>COMPASS</Text>

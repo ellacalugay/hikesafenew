@@ -94,7 +94,8 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
       style={[styles.tabContainer, { backgroundColor: colors.background }]}
       imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
     >
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent}>
+      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
+      <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={[styles.scrollContent, { backgroundColor: 'transparent', paddingBottom: 180 }]}>
         <View style={styles.headerRow}>
           <View>
             <Text style={[styles.welcomeText, { color: colors.textDark }]}>Hello!</Text>
@@ -113,26 +114,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
           </View>
         </View>
 
-        {/* SOS / OK Action Buttons */}
-        <View style={localStyles.emergencyButtons}>
-          <TouchableOpacity 
-            style={[localStyles.sosButton, { backgroundColor: isConnected ? colors.accent : colors.gray }]}
-            onPress={handleSOSPress}
-            activeOpacity={0.8}
-          >
-            <AlertTriangle size={28} color="#fff" />
-            <Text style={localStyles.sosButtonText}>SOS</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[localStyles.okButton, { backgroundColor: isConnected ? colors.primary : colors.gray }]}
-            onPress={handleOKPress}
-            activeOpacity={0.8}
-          >
-            <Check size={28} color="#fff" />
-            <Text style={localStyles.okButtonText}>I'm OK</Text>
-          </TouchableOpacity>
-        </View>
+        {/* SOS / OK Action Buttons moved to bottom fixed container */}
 
         {/* Status Message */}
         {statusMessage && (
@@ -202,6 +184,27 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
         </View>
 
       </ScrollView>
+
+      {/* Bottom SOS / OK Buttons (fixed) */}
+      <View style={localStyles.bottomContainer} pointerEvents="box-none">
+        <TouchableOpacity 
+          style={[localStyles.sosButton, { backgroundColor: isConnected ? colors.accent : colors.gray }]}
+          onPress={handleSOSPress}
+          activeOpacity={0.8}
+        >
+          <AlertTriangle size={28} color="#fff" />
+          <Text style={localStyles.sosButtonText}>SOS</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={[localStyles.okButton, { backgroundColor: isConnected ? colors.primary : colors.gray }]}
+          onPress={handleOKPress}
+          activeOpacity={0.8}
+        >
+          <Check size={28} color="#fff" />
+          <Text style={localStyles.okButtonText}>I'm OK</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* SOS Confirmation Modal */}
       <Modal visible={showSOSConfirm} transparent animationType="fade">
@@ -333,6 +336,15 @@ const localStyles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     fontFamily: 'monospace',
+  },
+  bottomContainer: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 120,
+    flexDirection: 'row',
+    alignItems: 'center',
+    zIndex: 10,
   },
 });
 

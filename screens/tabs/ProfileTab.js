@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ImageBackground } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, ImageBackground, StyleSheet } from 'react-native';
 import { User, Settings, HelpCircle, AlertOctagon, LogOut } from 'lucide-react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
@@ -21,6 +21,7 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
     style={[styles.tabContainer, { backgroundColor: colors.background }]}
     imageStyle={{ resizeMode: 'cover' }}
   >
+    <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
     <ScrollView style={[styles.tabContainer, { backgroundColor: colors.background }]}>
     <View style={[styles.profileHeader, { backgroundColor: colors.headerBg }]}>
       <View style={[styles.avatarLarge, { backgroundColor: colors.primary }]}>
