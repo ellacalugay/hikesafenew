@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, Alert, ImageBackground } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Trees, User, MessageCircle, MapPin, Compass, AlertTriangle, Radio, Check, Users } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
@@ -89,7 +89,11 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   };
   
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
+    <ImageBackground 
+      source={require('../../assets/dashboard_bg.png')} 
+      style={[styles.tabContainer, { backgroundColor: colors.background }]}
+      imageStyle={{ resizeMode: 'cover' }}
+    >
       <ScrollView contentContainerStyle={[styles.scrollContent, { backgroundColor: colors.background }]}>
         <View style={styles.headerRow}>
           <View>
@@ -252,7 +256,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
           </View>
         </View>
       </Modal>
-    </View>
+    </ImageBackground>
   );
 };
 

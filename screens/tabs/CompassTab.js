@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Switch, Animated, Alert } from 'react-native';
+import { View, Text, Switch, Animated, Alert, ImageBackground } from 'react-native';
 import * as Location from 'expo-location';
 import { Magnetometer } from 'expo-sensors';
 import { COLORS } from '../../constants/theme';
@@ -121,7 +121,11 @@ const CompassTab = () => {
   };
 
   return (
-    <View style={[styles.tabContainer, { backgroundColor: colors.background }]}>
+    <ImageBackground 
+      source={require('../../assets/dashboard_bg.png')} 
+      style={[styles.tabContainer, { backgroundColor: colors.background }]}
+      imageStyle={{ resizeMode: 'cover' }}
+    >
       <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
          <Text style={[styles.headerTitle, { color: colors.textDark }]}>COMPASS</Text>
       </View>
@@ -173,7 +177,7 @@ const CompassTab = () => {
          <Text style={styles.distanceLabel}>DISTANCE:</Text>
          <Text style={styles.distanceValue}>{location ? '0 m' : '--'}</Text>
       </View>
-    </View>
+    </ImageBackground>
   );
 };
 
