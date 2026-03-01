@@ -404,6 +404,7 @@ export const styles = StyleSheet.create({
     width: width,
   },
   tabItem: {
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 10,

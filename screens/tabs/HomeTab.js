@@ -26,8 +26,8 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
 };
 
 const ServiceItem = ({ icon: Icon, label, onPress, colors }) => (
-  <TouchableOpacity style={[styles.serviceItem, { backgroundColor: colors.cardBg }]} onPress={onPress}>
-    <View style={[styles.serviceIconBox, { backgroundColor: colors.surfaceBg }]}>
+  <TouchableOpacity style={[styles.serviceItem, { backgroundColor: 'transparent' }]} onPress={onPress}>
+    <View style={[styles.serviceIconBox, { backgroundColor: 'transparent' }]}>
       <Icon size={24} color={colors.textDark} />
     </View>
     <Text style={[styles.serviceText, { color: colors.textDark }]}>{label}</Text>
@@ -92,9 +92,9 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
     <ImageBackground 
       source={require('../../assets/dashboard_bg.png')} 
       style={[styles.tabContainer, { backgroundColor: colors.background }]}
-      imageStyle={{ resizeMode: 'cover' }}
+      imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
     >
-      <ScrollView contentContainerStyle={[styles.scrollContent, { backgroundColor: colors.background }]}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scrollContent}>
         <View style={styles.headerRow}>
           <View>
             <Text style={[styles.welcomeText, { color: colors.textDark }]}>Hello!</Text>
