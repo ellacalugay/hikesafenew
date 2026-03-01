@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, ImageBackground } from 'react-native';
 import { User, Settings, HelpCircle, AlertOctagon, LogOut } from 'lucide-react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
@@ -16,7 +16,12 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
   const { colors } = useTheme();
   
   return (
-  <ScrollView style={[styles.tabContainer, { backgroundColor: colors.background }]}>
+  <ImageBackground 
+    source={require('../../assets/dashboard_bg.png')} 
+    style={[styles.tabContainer, { backgroundColor: colors.background }]}
+    imageStyle={{ resizeMode: 'cover' }}
+  >
+    <ScrollView style={[styles.tabContainer, { backgroundColor: colors.background }]}>
     <View style={[styles.profileHeader, { backgroundColor: colors.headerBg }]}>
       <View style={[styles.avatarLarge, { backgroundColor: colors.primary }]}>
         <User size={40} color="white" />
@@ -32,6 +37,7 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
       <MenuOption icon={LogOut} label="Logout" onPress={onLogout} colors={colors} />
     </View>
   </ScrollView>
+  </ImageBackground>
   );
 };
 
