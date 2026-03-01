@@ -11,7 +11,7 @@ export const LIGHT_COLORS = {
   textDark: '#1a2e05',
   textLight: '#ffffff',
   gray: '#9ca3af',
-  cardBg: 'rgba(255, 255, 255, 0.9)',
+  cardBg: 'white',
   headerBg: '#f7fee7',
   inputBg: '#f3f4f6',
   borderColor: '#e5e7eb',
