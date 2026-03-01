@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Dimensions, ImageBackground } from 'react-native';
 import { User, MapPin, Radio, Bluetooth, Satellite, AlertTriangle, WifiOff, Map, Target, List, Users } from 'lucide-react-native';
 import MapView, { Marker, Circle, PROVIDER_DEFAULT } from 'react-native-maps';
 import { styles } from '../../styles/styles';
@@ -269,7 +269,11 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
   };
 
   return (
-    <View style={[styles.tabContainer, { backgroundColor: colors.background }]}>
+    <ImageBackground 
+      source={require('../../assets/dashboard_bg.png')} 
+      style={[styles.tabContainer, { backgroundColor: colors.background }]}
+      imageStyle={{ resizeMode: 'cover' }}
+    >
       <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
         <Text style={[styles.headerTitle, { color: colors.textDark }]}>LOCATION</Text>
       </View>
@@ -499,7 +503,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
             : 'Connect to your HikeSafe device to enable GPS tracking'}
         </Text>
       </ScrollView>
-    </View>
+    </ImageBackground>
   );
 };
 
