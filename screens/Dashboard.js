@@ -162,8 +162,13 @@ const Dashboard = ({ onLogout }) => {
       >
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.modalBg }]}>
-            <Text style={[styles.modalTitle, { color: colors.textDark }]}>Logout</Text>
-            <Text style={[styles.modalText, { color: colors.textDark }]}>Are you sure you want to logout?</Text>
+            <View style={{ alignItems: 'center', marginBottom: 16 }}>
+              <View style={{ width: 64, height: 64, borderRadius: 20, backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center' }}>
+                <User size={32} color={colors.primary} />
+              </View>
+            </View>
+            <Text style={[styles.modalTitle, { color: colors.textDark, textAlign: 'center' }]}>Logout</Text>
+            <Text style={[styles.modalText, { color: colors.textDark, textAlign: 'center' }]}>Are you sure you want to logout?</Text>
             
             <Pressable 
               style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 15 }}
@@ -204,19 +209,31 @@ const Dashboard = ({ onLogout }) => {
       >
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.modalBg }]}>
-            <Text style={[styles.modalTitle, { color: colors.textDark }]}>Hiker Location</Text>
+            <View style={{ alignItems: 'center', marginBottom: 16 }}>
+              <View style={{ width: 64, height: 64, borderRadius: 20, backgroundColor: '#D6EAF8', alignItems: 'center', justifyContent: 'center' }}>
+                <MapPin size={32} color="#2980B9" />
+              </View>
+            </View>
+            <Text style={[styles.modalTitle, { color: colors.textDark, textAlign: 'center' }]}>Hiker Location</Text>
             {selectedLocation && (
-              <>
-                <Text style={[styles.modalText, { color: colors.textDark }]}>Name: {selectedLocation.name}</Text>
-                <Text style={[styles.modalText, { color: colors.textDark }]}>Distance: {selectedLocation.distance}</Text>
-                <Text style={[styles.modalText, { color: colors.textDark }]}>Status: Online</Text>
-                <Text style={[styles.modalText, { marginTop: 10, color: colors.gray }]}>
-                  Last updated: Just now
-                </Text>
-              </>
+              <View style={{ backgroundColor: colors.inputBg, borderRadius: 12, padding: 14, marginVertical: 12 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <Text style={{ color: colors.gray, fontSize: 12, fontWeight: '600' }}>NAME</Text>
+                  <Text style={{ color: colors.textDark, fontWeight: '600' }}>{selectedLocation.name}</Text>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <Text style={{ color: colors.gray, fontSize: 12, fontWeight: '600' }}>DISTANCE</Text>
+                  <Text style={{ color: colors.textDark, fontWeight: '600' }}>{selectedLocation.distance}</Text>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <Text style={{ color: colors.gray, fontSize: 12, fontWeight: '600' }}>STATUS</Text>
+                  <Text style={{ color: colors.primary, fontWeight: '600' }}>Online</Text>
+                </View>
+              </View>
             )}
+            <Text style={{ color: colors.gray, fontSize: 12, textAlign: 'center', marginBottom: 16 }}>Last updated: Just now</Text>
             <TouchableOpacity 
-              style={[styles.modalButton, { backgroundColor: colors.primary, marginTop: 20 }]}
+              style={[styles.modalButton, { backgroundColor: colors.primary }]}
               onPress={() => setShowLocationModal(false)}
             >
               <Text style={{ color: 'white', fontWeight: '600' }}>Close</Text>
@@ -234,8 +251,13 @@ const Dashboard = ({ onLogout }) => {
       >
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.modalBg, maxHeight: '80%' }]}>
+            <View style={{ alignItems: 'center', marginBottom: 16 }}>
+              <View style={{ width: 64, height: 64, borderRadius: 20, backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center' }}>
+                <Users size={32} color={colors.primary} />
+              </View>
+            </View>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={[styles.modalTitle, { color: colors.textDark }]}>Lobby Information</Text>
+              <Text style={[styles.modalTitle, { color: colors.textDark, textAlign: 'center' }]}>Lobby Information</Text>
               <TouchableOpacity onPress={() => setShowLobbyModal(false)}>
                 <X size={24} color={colors.gray} />
               </TouchableOpacity>
@@ -243,16 +265,27 @@ const Dashboard = ({ onLogout }) => {
             
             {lobbyCode ? (
               <ScrollView showsVerticalScrollIndicator={false}>
-                <View style={{ backgroundColor: colors.primaryLight, padding: 15, borderRadius: 10, alignItems: 'center', marginVertical: 10 }}>
-                  <Text style={{ color: colors.gray, fontSize: 12 }}>LOBBY CODE</Text>
-                  <Text style={{ color: colors.primary, fontSize: 32, fontWeight: 'bold', letterSpacing: 4 }}>{lobbyCode}</Text>
+                <View style={{ backgroundColor: colors.primaryLight, padding: 15, borderRadius: 12, alignItems: 'center', marginVertical: 12 }}>
+                  <Text style={{ color: colors.gray, fontSize: 11, fontWeight: '600', letterSpacing: 1 }}>LOBBY CODE</Text>
+                  <Text style={{ color: colors.primary, fontSize: 36, fontWeight: 'bold', letterSpacing: 6, marginTop: 4 }}>{lobbyCode}</Text>
                 </View>
                 
-                {lobbyName && (
-                  <Text style={[styles.modalText, { color: colors.textDark }]}>Name: {lobbyName}</Text>
-                )}
-                <Text style={[styles.modalText, { color: colors.textDark }]}>Members: {memberLocations.length + 1}</Text>
-                <Text style={[styles.modalText, { color: colors.textDark }]}>Role: {isHost ? 'Host' : 'Member'}</Text>
+                <View style={{ backgroundColor: colors.inputBg, borderRadius: 12, padding: 14, marginBottom: 10 }}>
+                  {lobbyName && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <Text style={{ color: colors.gray, fontSize: 12, fontWeight: '600' }}>NAME</Text>
+                      <Text style={{ color: colors.textDark, fontWeight: '600' }}>{lobbyName}</Text>
+                    </View>
+                  )}
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <Text style={{ color: colors.gray, fontSize: 12, fontWeight: '600' }}>MEMBERS</Text>
+                    <Text style={{ color: colors.textDark, fontWeight: '600' }}>{memberLocations.length + 1}</Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                    <Text style={{ color: colors.gray, fontSize: 12, fontWeight: '600' }}>ROLE</Text>
+                    <Text style={{ color: colors.primary, fontWeight: '600' }}>{isHost ? 'Host' : 'Member'}</Text>
+                  </View>
+                </View>
                 
                 {/* Activity Feed */}
                 <View style={{ marginTop: 16 }}>
@@ -302,7 +335,7 @@ const Dashboard = ({ onLogout }) => {
                   )}
                 </View>
                 
-                <Text style={[styles.modalText, { marginTop: 10, color: colors.gray, textAlign: 'center', fontSize: 12 }]}>
+                <Text style={{ color: colors.gray, fontSize: 12, textAlign: 'center', marginBottom: 4, lineHeight: 18 }}>
                   Share this code with friends to let them join your hiking group.
                 </Text>
                 
@@ -373,25 +406,24 @@ const Dashboard = ({ onLogout }) => {
         onRequestClose={handleDismissSOSAlert}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: '#FFF0F0', borderWidth: 2, borderColor: colors.accent }]}>
-            <View style={{ alignItems: 'center', marginBottom: 15 }}>
+          <View style={[styles.modalContent, { backgroundColor: '#FFF0F0', borderWidth: 2, borderColor: activeAlert?.type === 'OFFLINE' ? '#999' : colors.accent }]}>
+            <View style={{ alignItems: 'center', marginBottom: 16 }}>
               <View style={{ 
-                backgroundColor: activeAlert?.type === 'OFFLINE' ? '#666' : colors.accent, 
-                width: 60, 
-                height: 60, 
-                borderRadius: 30, 
-                justifyContent: 'center', 
-                alignItems: 'center',
-                marginBottom: 10
+                width: 64, 
+                height: 64, 
+                borderRadius: 20, 
+                backgroundColor: activeAlert?.type === 'OFFLINE' ? '#E0E0E0' : '#FDECEA',
+                alignItems: 'center', 
+                justifyContent: 'center',
               }}>
-                <AlertTriangle size={32} color="white" />
+                <AlertTriangle size={32} color={activeAlert?.type === 'OFFLINE' ? '#666' : colors.accent} />
               </View>
-              <Text style={[styles.modalTitle, { color: activeAlert?.type === 'OFFLINE' ? '#666' : colors.accent, fontSize: 22 }]}>
-                {activeAlert?.type === 'MORSE' ? 'MORSE SOS' : activeAlert?.type === 'OFFLINE' ? 'DEVICE OFFLINE' : 'SOS ALERT'}
-              </Text>
             </View>
+            <Text style={[styles.modalTitle, { color: activeAlert?.type === 'OFFLINE' ? '#666' : colors.accent, textAlign: 'center' }]}>
+              {activeAlert?.type === 'MORSE' ? 'MORSE SOS' : activeAlert?.type === 'OFFLINE' ? 'DEVICE OFFLINE' : 'SOS ALERT'}
+            </Text>
             
-            <Text style={[styles.modalText, { color: colors.textDark, textAlign: 'center', fontSize: 16 }]}>
+            <Text style={[styles.modalText, { color: colors.textDark, textAlign: 'center', fontSize: 16, marginVertical: 8 }]}>
               {activeAlert?.type === 'OFFLINE' 
                 ? `Device ${activeAlert?.deviceId} has gone offline!`
                 : `Device ${activeAlert?.deviceId} needs help!`
@@ -399,9 +431,9 @@ const Dashboard = ({ onLogout }) => {
             </Text>
             
             {activeAlert?.lat && activeAlert?.lng && (
-              <View style={{ backgroundColor: colors.cardBg, padding: 12, borderRadius: 8, marginTop: 12 }}>
-                <Text style={{ color: colors.gray, fontSize: 12 }}>Location</Text>
-                <Text style={{ color: colors.textDark, fontFamily: 'monospace', fontSize: 14 }}>
+              <View style={{ backgroundColor: colors.inputBg, padding: 14, borderRadius: 12, marginTop: 8 }}>
+                <Text style={{ color: colors.gray, fontSize: 11, fontWeight: '600', letterSpacing: 1, marginBottom: 4 }}>LOCATION</Text>
+                <Text style={{ color: colors.textDark, fontFamily: 'monospace', fontSize: 14, fontWeight: '600' }}>
                   {activeAlert.lat.toFixed(6)}, {activeAlert.lng.toFixed(6)}
                 </Text>
               </View>
