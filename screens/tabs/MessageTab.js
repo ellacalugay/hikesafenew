@@ -59,7 +59,8 @@ const MessageTab = ({ onOpenChat }) => {
           />
         ) : (
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text style={[styles.headerTitle, { color: colors.textDark }]}>Messages</Text>
+            <Text style={[styles.headerTitle, { color: colors.textDark }]}>
+              Messages</Text>
             {unreadCount > 0 && (
               <View style={[localStyles.badge, { backgroundColor: colors.accent, marginLeft: 8 }]}>
                 <Text style={localStyles.badgeText}>{unreadCount}</Text>
