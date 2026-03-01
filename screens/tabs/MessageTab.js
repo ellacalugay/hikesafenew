@@ -1,6 +1,6 @@
-import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
-import { User, Radio, Users, MessageCircle, Bluetooth } from 'lucide-react-native';
+import React, { useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, TextInput, ImageBackground } from 'react-native';
+import { User, Radio, Users, MessageCircle, Bluetooth, Search, X } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
@@ -8,6 +8,9 @@ import { useBluetoothDevice } from '../../context/BluetoothContext';
 const MessageTab = ({ onOpenChat }) => {
   const { colors } = useTheme();
   const { isConnected, connectedDevice, memberLocations, getConversations, unreadCount } = useBluetoothDevice();
+  
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
   
   const conversations = getConversations();
   
@@ -17,6 +20,17 @@ const MessageTab = ({ onOpenChat }) => {
     name: `Device ${m.deviceId}`,
     online: Date.now() - m.lastUpdate < 60000, // Online if updated within 1 minute
   }));
+  
+  // Filter conversations and devices based on search query
+  const filteredConversations = conversations.filter(conv => 
+    conv.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (conv.lastMessage && conv.lastMessage.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
+  
+  const filteredDevices = knownDevices.filter(d => 
+    !conversations.find(c => c.deviceId === d.deviceId) &&
+    d.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
   
   const formatTime = (timestamp) => {
     if (!timestamp) return '';
@@ -28,47 +42,71 @@ const MessageTab = ({ onOpenChat }) => {
   };
   
   return (
-    <View style={[styles.tabContainer, { backgroundColor: colors.background }]}>
-      <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
-        <Text style={[styles.headerTitle, { color: colors.textDark }]}>Messages</Text>
-        {unreadCount > 0 && (
-          <View style={[localStyles.badge, { backgroundColor: colors.accent }]}>
-            <Text style={localStyles.badgeText}>{unreadCount}</Text>
+    <ImageBackground 
+      source={require('../../assets/dashboard_bg.png')} 
+      style={[styles.tabContainer, { backgroundColor: colors.background }]}
+      imageStyle={{ resizeMode: 'cover' }}
+    >
+      <View style={{ backgroundColor: colors.primaryLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 10, marginHorizontal: 16, marginTop: 16, marginBottom: 6, borderRadius: 12 }}>
+        {isSearching ? (
+          <TextInput
+            style={{ flex: 1, fontSize: 16, color: colors.textDark, paddingVertical: 0 }}
+            placeholder="Search messages..."
+            placeholderTextColor={colors.black}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoFocus
+          />
+        ) : (
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={[styles.headerTitle, { color: colors.textDark }]}>Messages</Text>
+            {unreadCount > 0 && (
+              <View style={[localStyles.badge, { backgroundColor: colors.accent, marginLeft: 8 }]}>
+                <Text style={localStyles.badgeText}>{unreadCount}</Text>
+              </View>
+            )}
           </View>
         )}
+        <TouchableOpacity 
+          style={{ padding: 5 }}
+          onPress={() => {
+            if (isSearching) {
+              setSearchQuery('');
+            }
+            setIsSearching(!isSearching);
+          }}
+        >
+          {isSearching ? (
+            <X size={22} color={colors.textDark} />
+          ) : (
+            <Search size={22} color={colors.textDark} />
+          )}
+        </TouchableOpacity>
       </View>
       
-      <ScrollView style={{flex:1, padding: 16}}>
-        {/* Connection Status */}
-        {!isConnected && (
-          <View style={[localStyles.connectionBanner, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
-            <Bluetooth size={20} color={colors.gray} />
-            <Text style={[localStyles.connectionText, { color: colors.gray }]}>
-              Connect to your device to send messages via LoRa
-            </Text>
-          </View>
+      <ScrollView style={{flex:1, padding: 16}}>        
+        {/* Group Chat - Broadcast - only show if not searching or matches */}
+        {(!searchQuery || 'group chat broadcast'.includes(searchQuery.toLowerCase())) && (
+          <TouchableOpacity 
+            style={[styles.chatItem, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]} 
+            onPress={() => onOpenChat({ type: 'broadcast', name: 'Group Chat', deviceId: 0 })}
+          >
+            <View style={[localStyles.groupIcon, { backgroundColor: colors.primary }]}>
+              <Users size={18} color="#000000" />
+            </View>
+            <View style={localStyles.chatInfo}>
+              <Text style={[styles.chatName, { color: colors.textDark }]}>Group Chat (Broadcast)</Text>
+              <Text style={[localStyles.chatPreview, { color: colors.black }]}>Send to all devices</Text>
+            </View>
+            {isConnected && <View style={styles.onlineDot} />}
+          </TouchableOpacity>
         )}
         
-        {/* Group Chat - Broadcast */}
-        <TouchableOpacity 
-          style={[styles.chatItem, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]} 
-          onPress={() => onOpenChat({ type: 'broadcast', name: 'Group Chat', deviceId: 0 })}
-        >
-          <View style={[localStyles.groupIcon, { backgroundColor: colors.primary }]}>
-            <Users size={18} color="#fff" />
-          </View>
-          <View style={localStyles.chatInfo}>
-            <Text style={[styles.chatName, { color: colors.textDark }]}>Group Chat (Broadcast)</Text>
-            <Text style={[localStyles.chatPreview, { color: colors.gray }]}>Send to all devices</Text>
-          </View>
-          {isConnected && <View style={styles.onlineDot} />}
-        </TouchableOpacity>
-        
         {/* Recent Conversations */}
-        {conversations.length > 0 && (
+        {filteredConversations.length > 0 && (
           <>
             <Text style={[localStyles.sectionTitle, { color: colors.textDark }]}>Recent Conversations</Text>
-            {conversations.map((conv) => (
+            {filteredConversations.map((conv) => (
               <TouchableOpacity 
                 key={conv.deviceId}
                 style={[styles.chatItem, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]} 
@@ -97,10 +135,10 @@ const MessageTab = ({ onOpenChat }) => {
         )}
         
         {/* Known Devices */}
-        {knownDevices.length > 0 && (
+        {filteredDevices.length > 0 && (
           <>
             <Text style={[localStyles.sectionTitle, { color: colors.textDark }]}>Nearby Devices</Text>
-            {knownDevices.filter(d => !conversations.find(c => c.deviceId === d.deviceId)).map((device) => (
+            {filteredDevices.map((device) => (
               <TouchableOpacity 
                 key={device.deviceId}
                 style={[styles.chatItem, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]} 
@@ -120,7 +158,7 @@ const MessageTab = ({ onOpenChat }) => {
         )}
         
         {/* Empty State */}
-        {knownDevices.length === 0 && conversations.length === 0 && (
+        {knownDevices.length === 0 && conversations.length === 0 && !searchQuery && (
           <View style={[localStyles.emptyState, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
             <MessageCircle size={40} color={colors.gray} />
             <Text style={[localStyles.emptyTitle, { color: colors.textDark }]}>No Contacts Yet</Text>
@@ -131,8 +169,19 @@ const MessageTab = ({ onOpenChat }) => {
             </Text>
           </View>
         )}
+        
+        {/* No Search Results */}
+        {searchQuery && filteredConversations.length === 0 && filteredDevices.length === 0 && (
+          <View style={[localStyles.emptyState, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
+            <Search size={40} color={colors.gray} />
+            <Text style={[localStyles.emptyTitle, { color: colors.textDark }]}>No Results</Text>
+            <Text style={[localStyles.emptyText, { color: colors.gray }]}>
+              No conversations or devices match "{searchQuery}"
+            </Text>
+          </View>
+        )}
       </ScrollView>
-    </View>
+    </ImageBackground>
   );
 };
 
