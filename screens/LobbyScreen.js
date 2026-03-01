@@ -84,23 +84,26 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     }
 
     // Require device connection to create lobby
-    if (!isConnected) {
-      Alert.alert(
-        'Device Required',
-        'You must connect to your HikeSafe device before creating a lobby. The lobby code is synced to your device for LoRa communication.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
+    // TEMPORARILY BYPASSED FOR UI TESTING
+    // if (!isConnected) {
+    //   Alert.alert(
+    //     'Device Required',
+    //     'You must connect to your HikeSafe device before creating a lobby. The lobby code is synced to your device for LoRa communication.',
+    //     [{ text: 'OK' }]
+    //   );
+    //   return;
+    // }
     
     setIsSubmitting(true);
     try {
       const code = await createLobby(lobbyName.trim(), parseInt(maxMember) || 10);
       
-      // Send lobby code to device
-      const success = await sendCommand(`LOBBY:${code}`);
-      if (!success) {
-        throw new Error('Failed to sync lobby code to device');
+      // Send lobby code to device (skip if not connected - TEMPORARILY BYPASSED FOR UI TESTING)
+      if (isConnected) {
+        const success = await sendCommand(`LOBBY:${code}`);
+        if (!success) {
+          throw new Error('Failed to sync lobby code to device');
+        }
       }
       
       onShowCreateSuccess({ 
@@ -133,14 +136,15 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     }
     
     // Require device connection to join lobby
-    if (!isConnected) {
-      Alert.alert(
-        'Device Required',
-        'You must connect to your HikeSafe device before joining a lobby. The lobby code is synced to your device for LoRa communication.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
+    // TEMPORARILY BYPASSED FOR UI TESTING
+    // if (!isConnected) {
+    //   Alert.alert(
+    //     'Device Required',
+    //     'You must connect to your HikeSafe device before joining a lobby. The lobby code is synced to your device for LoRa communication.',
+    //     [{ text: 'OK' }]
+    //   );
+    //   return;
+    // }
     
     // Start validation process
     performJoinLobby();
@@ -157,22 +161,29 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     };
     
     try {
-      // Send lobby code to device first
-      const success = await sendCommand(`LOBBY:${joinCode}`);
-      if (!success) {
-        throw new Error('Failed to sync lobby code to device');
-      }
-      
-      // Wait for device confirmation via statusMessage effect
-      // If no confirmation within 5 seconds, fail
-      setTimeout(() => {
-        if (validationStateRef.current === 'syncing') {
-          setIsSubmitting(false);
-          setValidationState(null);
-          pendingJoinRef.current = null;
-          Alert.alert('Error', 'Device did not confirm lobby code. Please try again.');
+      // TEMPORARILY BYPASSED FOR UI TESTING
+      // Send lobby code to device first (skip if not connected)
+      if (isConnected) {
+        const success = await sendCommand(`LOBBY:${joinCode}`);
+        if (!success) {
+          throw new Error('Failed to sync lobby code to device');
         }
-      }, 5000);
+        
+        // Wait for device confirmation via statusMessage effect
+        // If no confirmation within 5 seconds, fail
+        setTimeout(() => {
+          if (validationStateRef.current === 'syncing') {
+            setIsSubmitting(false);
+            setValidationState(null);
+            pendingJoinRef.current = null;
+            Alert.alert('Error', 'Device did not confirm lobby code. Please try again.');
+          }
+        }, 5000);
+      } else {
+        // No device - skip validation and join directly
+        setValidationState('confirmed');
+        completeJoin(true);
+      }
       
     } catch (error) {
       Alert.alert('Error', 'Failed to join lobby: ' + error.message);
