@@ -11,6 +11,8 @@ const LOBBY_MAX_MEMBERS_KEY = '@hikesafe_lobby_max_members';
 const MEMBER_NICKNAMES_KEY = '@hikesafe_member_nicknames';
 const MY_NICKNAME_KEY = '@hikesafe_my_nickname';
 const DEVICE_NICKNAME_KEY = '@hikesafe_device_nickname';
+const HOST_DEVICE_ID_KEY = '@hikesafe_host_device_id';
+const MY_DEVICE_ID_KEY = '@hikesafe_my_device_id';
 
 // Generate a random 4-digit lobby code
 const generateLobbyCode = () => {
@@ -36,6 +38,8 @@ export const LobbyProvider = ({ children }) => {
   const [memberNicknames, setMemberNicknames] = useState({}); // { deviceId: nickname }
   const [myNickname, setMyNicknameState] = useState('');
   const [deviceNickname, setDeviceNicknameState] = useState(''); // Local nickname for connected device
+  const [hostDeviceId, setHostDeviceId] = useState(null);
+  const [myDeviceId, setMyDeviceIdState] = useState(null);
   
   // BLE command callback - will be set by BluetoothContext integration
   const [sendLobbyCommand, setSendLobbyCommand] = useState(null);
@@ -47,7 +51,7 @@ export const LobbyProvider = ({ children }) => {
 
   const loadPersistedLobby = async () => {
     try {
-      const [savedCode, savedName, savedRole, savedMax, savedNicknames, savedMyNickname, savedDeviceNick] = await Promise.all([
+      const [savedCode, savedName, savedRole, savedMax, savedNicknames, savedMyNickname, savedDeviceNick, savedHostDeviceId, savedMyDeviceId] = await Promise.all([
         AsyncStorage.getItem(LOBBY_CODE_KEY),
         AsyncStorage.getItem(LOBBY_NAME_KEY),
         AsyncStorage.getItem(LOBBY_ROLE_KEY),
@@ -55,15 +59,33 @@ export const LobbyProvider = ({ children }) => {
         AsyncStorage.getItem(MEMBER_NICKNAMES_KEY),
         AsyncStorage.getItem(MY_NICKNAME_KEY),
         AsyncStorage.getItem(DEVICE_NICKNAME_KEY),
+        AsyncStorage.getItem(HOST_DEVICE_ID_KEY),
+        AsyncStorage.getItem(MY_DEVICE_ID_KEY),
       ]);
 
       if (savedCode) {
         setLobbyCodeState(parseInt(savedCode, 10));
         setLobbyName(savedName || '');
-        setIsHost(savedRole === 'host');
         setMaxMembers(savedMax ? parseInt(savedMax, 10) : 10);
         setIsInLobby(true);
         console.log('Loaded persisted lobby:', savedCode);
+      }
+
+      const parsedHostId = savedHostDeviceId ? parseInt(savedHostDeviceId, 10) : null;
+      const parsedMyId = savedMyDeviceId ? parseInt(savedMyDeviceId, 10) : null;
+
+      if (!isNaN(parsedHostId) && parsedHostId !== null) {
+        setHostDeviceId(parsedHostId);
+      }
+
+      if (!isNaN(parsedMyId) && parsedMyId !== null) {
+        setMyDeviceIdState(parsedMyId);
+      }
+
+      if (parsedHostId !== null && parsedMyId !== null && !isNaN(parsedHostId) && !isNaN(parsedMyId)) {
+        setIsHost(parsedHostId === parsedMyId);
+      } else {
+        setIsHost(savedRole === 'host');
       }
       
       if (savedNicknames) {
@@ -104,32 +126,114 @@ export const LobbyProvider = ({ children }) => {
         AsyncStorage.removeItem(LOBBY_NAME_KEY),
         AsyncStorage.removeItem(LOBBY_ROLE_KEY),
         AsyncStorage.removeItem(LOBBY_MAX_MEMBERS_KEY),
+        AsyncStorage.removeItem(HOST_DEVICE_ID_KEY),
+        AsyncStorage.removeItem(MY_DEVICE_ID_KEY),
       ]);
     } catch (error) {
       console.error('Failed to clear lobby data:', error);
     }
   };
 
+  const persistRole = useCallback(async (role) => {
+    try {
+      await AsyncStorage.setItem(LOBBY_ROLE_KEY, role);
+    } catch (error) {
+      console.error('Failed to persist role:', error);
+    }
+  }, []);
+
+  const persistHostDeviceId = useCallback(async (deviceId) => {
+    try {
+      if (deviceId === null || deviceId === undefined) {
+        await AsyncStorage.removeItem(HOST_DEVICE_ID_KEY);
+      } else {
+        await AsyncStorage.setItem(HOST_DEVICE_ID_KEY, String(deviceId));
+      }
+    } catch (error) {
+      console.error('Failed to persist host device id:', error);
+    }
+  }, []);
+
+  const persistMyDeviceId = useCallback(async (deviceId) => {
+    try {
+      if (deviceId === null || deviceId === undefined) {
+        await AsyncStorage.removeItem(MY_DEVICE_ID_KEY);
+      } else {
+        await AsyncStorage.setItem(MY_DEVICE_ID_KEY, String(deviceId));
+      }
+    } catch (error) {
+      console.error('Failed to persist my device id:', error);
+    }
+  }, []);
+
+  const sortByJoinTime = (a, b) => {
+    const aJoin = a.joinedAt || Number.MAX_SAFE_INTEGER;
+    const bJoin = b.joinedAt || Number.MAX_SAFE_INTEGER;
+    if (aJoin !== bJoin) return aJoin - bJoin;
+    return (a.deviceId || Number.MAX_SAFE_INTEGER) - (b.deviceId || Number.MAX_SAFE_INTEGER);
+  };
+
+  const getNextHostCandidate = (members, excludedDeviceId = null) => {
+    const candidates = members
+      .filter(m => m.deviceId !== null && m.deviceId !== undefined)
+      .filter(m => !m.isOffline)
+      .filter(m => m.deviceId !== excludedDeviceId)
+      .sort(sortByJoinTime);
+    return candidates.length > 0 ? candidates[0].deviceId : null;
+  };
+
+  const transferHostToFirstJoined = useCallback(async (excludedDeviceId = null) => {
+    let nextHostId = null;
+
+    setLobbyMembers(prev => {
+      nextHostId = getNextHostCandidate(prev, excludedDeviceId);
+      return prev.map(member => ({
+        ...member,
+        isHost: nextHostId !== null && member.deviceId === nextHostId,
+      }));
+    });
+
+    setHostDeviceId(nextHostId);
+
+    if (nextHostId === null || myDeviceId === null) {
+      setIsHost(false);
+      await persistRole('member');
+    } else {
+      const amHost = nextHostId === myDeviceId;
+      setIsHost(amHost);
+      await persistRole(amHost ? 'host' : 'member');
+    }
+
+    await persistHostDeviceId(nextHostId);
+    return nextHostId;
+  }, [myDeviceId, persistHostDeviceId, persistRole]);
+
   // Create a new lobby (user becomes host)
   const createLobby = useCallback(async (name, maxMemberCount = 10) => {
     const code = generateLobbyCode();
+    const now = Date.now();
     
     setLobbyCodeState(code);
     setLobbyName(name);
     setMaxMembers(maxMemberCount);
     setIsHost(true);
     setIsInLobby(true);
-    setLobbyMembers([{ id: 'self', name: 'You (Host)', isHost: true }]);
+    setLobbyMembers([{ id: 'self', name: 'You (Host)', isHost: true, isSelf: true, joinedAt: now, isOffline: false, deviceId: myDeviceId }]);
     
     await persistLobbyData(code, name, 'host', maxMemberCount);
+    if (myDeviceId !== null) {
+      setHostDeviceId(myDeviceId);
+      await persistHostDeviceId(myDeviceId);
+    }
     
     console.log(`Created lobby: ${name} with code ${code}`);
     return code;
-  }, []);
+  }, [myDeviceId, persistHostDeviceId]);
 
   // Join an existing lobby with code
   const joinLobby = useCallback(async (code, userName = 'Member') => {
     const numericCode = typeof code === 'string' ? parseInt(code, 10) : code;
+    const now = Date.now();
     
     if (isNaN(numericCode) || numericCode < 1000 || numericCode > 9999) {
       throw new Error('Invalid lobby code. Must be 4 digits.');
@@ -140,13 +244,15 @@ export const LobbyProvider = ({ children }) => {
     setMaxMembers(10);
     setIsHost(false);
     setIsInLobby(true);
-    setLobbyMembers([{ id: 'self', name: userName, isHost: false }]);
+    setLobbyMembers([{ id: 'self', name: userName, isHost: false, isSelf: true, joinedAt: now, isOffline: false, deviceId: myDeviceId }]);
+    setHostDeviceId(null);
     
     await persistLobbyData(numericCode, '', 'member', 10);
+    await persistHostDeviceId(null);
     
     console.log(`Joined lobby with code ${numericCode}`);
     return numericCode;
-  }, []);
+  }, [myDeviceId, persistHostDeviceId]);
 
   // Send lobby code to ESP32 device via BLE
   const syncLobbyToDevice = useCallback(async (bleCommandFn) => {
@@ -190,6 +296,8 @@ export const LobbyProvider = ({ children }) => {
     setMaxMembers(10);
     setIsHost(false);
     setIsInLobby(false);
+    setHostDeviceId(null);
+    setMyDeviceIdState(null);
     setLobbyMembers([]);
     setMemberNicknames({});
     
@@ -197,6 +305,90 @@ export const LobbyProvider = ({ children }) => {
     await AsyncStorage.removeItem(MEMBER_NICKNAMES_KEY);
     console.log('Left lobby');
   }, [sendLobbyCommand]);
+
+  const setMyDeviceId = useCallback(async (deviceId) => {
+    if (deviceId === null || deviceId === undefined || Number.isNaN(deviceId)) {
+      return;
+    }
+
+    setMyDeviceIdState(deviceId);
+    await persistMyDeviceId(deviceId);
+
+    setLobbyMembers(prev => {
+      if (!prev || prev.length === 0) return prev;
+      return prev.map(member => member.id === 'self' ? { ...member, deviceId } : member);
+    });
+
+    if (isHost && (hostDeviceId === null || hostDeviceId === undefined)) {
+      setHostDeviceId(deviceId);
+      await persistHostDeviceId(deviceId);
+      await persistRole('host');
+    } else if (hostDeviceId !== null && hostDeviceId !== undefined) {
+      const amHost = hostDeviceId === deviceId;
+      setIsHost(amHost);
+      await persistRole(amHost ? 'host' : 'member');
+    }
+  }, [hostDeviceId, isHost, persistHostDeviceId, persistMyDeviceId, persistRole]);
+
+  const registerMemberSync = useCallback(async (deviceId, joinedAt = Date.now(), options = {}) => {
+    if (deviceId === null || deviceId === undefined || Number.isNaN(deviceId)) {
+      return;
+    }
+
+    const safeJoinTime = Number.isFinite(joinedAt) ? joinedAt : Date.now();
+    const isSelf = options.isSelf === true;
+
+    setLobbyMembers(prev => {
+      const existingIndex = prev.findIndex(m => m.deviceId === deviceId);
+      if (existingIndex >= 0) {
+        const updated = [...prev];
+        const existing = updated[existingIndex];
+        updated[existingIndex] = {
+          ...existing,
+          joinedAt: existing.joinedAt ? Math.min(existing.joinedAt, safeJoinTime) : safeJoinTime,
+          isOffline: false,
+        };
+        return updated;
+      }
+
+      return [
+        ...prev,
+        {
+          id: `device-${deviceId}`,
+          deviceId,
+          name: `Device ${deviceId}`,
+          isHost: false,
+          isOffline: false,
+          joinedAt: safeJoinTime,
+          isSelf,
+        },
+      ];
+    });
+
+    if (isSelf) {
+      await setMyDeviceId(deviceId);
+    }
+
+    if (hostDeviceId === null || hostDeviceId === undefined) {
+      await transferHostToFirstJoined();
+    }
+  }, [hostDeviceId, setMyDeviceId, transferHostToFirstJoined]);
+
+  const setMemberOffline = useCallback(async (deviceId, isOffline = true) => {
+    if (deviceId === null || deviceId === undefined || Number.isNaN(deviceId)) {
+      return;
+    }
+
+    setLobbyMembers(prev => prev.map(member =>
+      member.deviceId === deviceId
+        ? { ...member, isOffline }
+        : member
+    ));
+
+    if (isOffline && hostDeviceId === deviceId) {
+      await transferHostToFirstJoined(deviceId);
+    }
+  }, [hostDeviceId, transferHostToFirstJoined]);
 
   // Add a member to the lobby (called when receiving device data)
   const addMember = useCallback((member) => {
@@ -211,8 +403,24 @@ export const LobbyProvider = ({ children }) => {
 
   // Remove a member from the lobby
   const removeMember = useCallback((memberId) => {
-    setLobbyMembers(prev => prev.filter(m => m.id !== memberId));
-  }, []);
+    let removedDeviceId = null;
+    setLobbyMembers(prev => {
+      const found = prev.find(m => m.id === memberId);
+      removedDeviceId = found?.deviceId ?? null;
+      return prev.filter(m => m.id !== memberId);
+    });
+
+    if (removedDeviceId !== null && removedDeviceId === hostDeviceId) {
+      transferHostToFirstJoined(removedDeviceId);
+    }
+  }, [hostDeviceId, transferHostToFirstJoined]);
+
+  useEffect(() => {
+    if (!isInLobby || myDeviceId === null || hostDeviceId === null) return;
+    const amHost = myDeviceId === hostDeviceId;
+    setIsHost(amHost);
+    persistRole(amHost ? 'host' : 'member');
+  }, [hostDeviceId, isInLobby, myDeviceId, persistRole]);
 
   // Set nickname for a device (host only)
   const setMemberNickname = useCallback(async (deviceId, nickname) => {
@@ -277,6 +485,8 @@ export const LobbyProvider = ({ children }) => {
     memberNicknames,
     myNickname,
     deviceNickname,
+    hostDeviceId,
+    myDeviceId,
     
     // Actions
     createLobby,
@@ -285,6 +495,10 @@ export const LobbyProvider = ({ children }) => {
     syncLobbyToDevice,
     addMember,
     removeMember,
+    setMyDeviceId,
+    registerMemberSync,
+    setMemberOffline,
+    transferHostToFirstJoined,
     registerBleCommandSender,
     
     // Nicknames
