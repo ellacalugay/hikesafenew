@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Modal } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ScreenContainer } from './components/shared';
@@ -6,6 +6,7 @@ import { styles } from './styles/styles';
 import { ThemeProvider } from './context/ThemeContext';
 import { BluetoothProvider } from './context/BluetoothContext';
 import { LobbyProvider } from './context/LobbyContext';
+import { useBluetoothDevice } from './context/BluetoothContext';
 import DeviceSetupScreen from './screens/DeviceSetupScreen';
 import OnboardingName from './screens/OnboardingName';
 import OnboardingDetails from './screens/OnboardingDetails';
@@ -13,13 +14,23 @@ import LobbyScreen from './screens/LobbyScreen';
 import Dashboard from './screens/Dashboard';
 
 function AppContent() {
+  const { isConnected } = useBluetoothDevice();
   const [screen, setScreen] = useState('deviceSetup');
+  const [resumeAfterReconnect, setResumeAfterReconnect] = useState(false);
   const [showReminder, setShowReminder] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [lobbyData, setLobbyData] = useState({ lobbyName: '', groupId: '', maxMember: '' });
+  const wasConnectedRef = useRef(false);
 
-  const handleDeviceSetupComplete = () => setScreen('onboarding1');
+  const handleDeviceSetupComplete = () => {
+    if (resumeAfterReconnect) {
+      setResumeAfterReconnect(false);
+      setScreen('dashboard');
+      return;
+    }
+    setScreen('onboarding1');
+  };
   const handleNextOnboarding = () => setScreen('onboarding2');
   
   const handleShowReminder = () => setShowReminder(true);
@@ -41,13 +52,42 @@ function AppContent() {
 
   const handleLogout = () => setScreen('deviceSetup');
 
+  // If connection drops after being connected, force user back to setup connection screen.
+  useEffect(() => {
+    if (isConnected) {
+      wasConnectedRef.current = true;
+      return;
+    }
+
+    if (wasConnectedRef.current && screen === 'dashboard') {
+      setResumeAfterReconnect(true);
+      setScreen('deviceSetup');
+    }
+  }, [isConnected, screen]);
+
+  const handleRequireDeviceSetup = () => {
+    setResumeAfterReconnect(true);
+    setScreen('deviceSetup');
+  };
+
   return (
     <ScreenContainer>
-      {screen === 'deviceSetup' && <DeviceSetupScreen onNext={handleDeviceSetupComplete} onSkip={handleDeviceSetupComplete} />}
+      {screen === 'deviceSetup' && (
+        <DeviceSetupScreen
+          onNext={handleDeviceSetupComplete}
+          onSkip={handleDeviceSetupComplete}
+          allowSkip={!resumeAfterReconnect}
+        />
+      )}
       {screen === 'onboarding1' && <OnboardingName next={handleNextOnboarding} />}
       {screen === 'onboarding2' && <OnboardingDetails next={handleShowReminder} onShowReminder={handleShowReminder} />}
       {screen === 'lobby' && <LobbyScreen onLogin={handleEnterDashboard} onShowCreateSuccess={handleCreateLobbySuccess} />}
-      {screen === 'dashboard' && <Dashboard onLogout={handleLogout} />}
+      {screen === 'dashboard' && (
+        <Dashboard
+          onLogout={handleLogout}
+          onRequireDeviceSetup={handleRequireDeviceSetup}
+        />
+      )}
 
       {/* HikeSafe Reminder Modal */}
       <Modal visible={showReminder} transparent animationType="fade">
