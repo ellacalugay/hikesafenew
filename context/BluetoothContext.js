@@ -121,6 +121,7 @@ export const BluetoothProvider = ({ children }) => {
   const emergencyAlarmActiveRef = useRef(false);
   const emergencySoundRef = useRef(null);
   const emergencyThrottleRef = useRef(new Map());
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   
   // Trigger vibration pattern
   const triggerVibration = useCallback((patternName) => {
@@ -199,6 +200,9 @@ export const BluetoothProvider = ({ children }) => {
 
   const pushEmergencyNotification = useCallback(async (title, body, eventKey) => {
     try {
+      if (!notificationsEnabled) {
+        return;
+      }
       if (shouldThrottleEmergency(`notif-${eventKey}`, 15000)) {
         return;
       }
@@ -217,7 +221,7 @@ export const BluetoothProvider = ({ children }) => {
     } catch (error) {
       console.log('Emergency notification failed:', error?.message || error);
     }
-  }, [shouldThrottleEmergency]);
+  }, [notificationsEnabled, shouldThrottleEmergency]);
 
   useEffect(() => {
     Notifications.setNotificationHandler({
@@ -230,7 +234,9 @@ export const BluetoothProvider = ({ children }) => {
 
     const setupNotifications = async () => {
       try {
-        await Notifications.requestPermissionsAsync();
+        const perm = await Notifications.requestPermissionsAsync();
+        const granted = perm?.granted === true || perm?.status === 'granted';
+        setNotificationsEnabled(granted);
 
         if (Platform.OS === 'android') {
           await Notifications.setNotificationChannelAsync('emergency-alerts', {
@@ -243,6 +249,7 @@ export const BluetoothProvider = ({ children }) => {
         }
       } catch (error) {
         console.log('Notification setup failed:', error?.message || error);
+        setNotificationsEnabled(false);
       }
     };
 

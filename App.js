@@ -14,7 +14,6 @@ import OnboardingName from './screens/OnboardingName';
 import OnboardingDetails from './screens/OnboardingDetails';
 import LobbyScreen from './screens/LobbyScreen';
 import Dashboard from './screens/Dashboard';
-import { UserProvider } from './context/UserContext';
 
 function AppContent() {
   const { isConnected } = useBluetoothDevice();
@@ -26,6 +25,7 @@ function AppContent() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [lobbyData, setLobbyData] = useState({ lobbyName: '', groupId: '', maxMember: '' });
   const wasConnectedRef = useRef(false);
+  const disconnectTimerRef = useRef(null);
   const screenFadeAnim = useRef(new Animated.Value(0)).current;
 
   const handleDeviceSetupComplete = () => {
@@ -67,14 +67,32 @@ function AppContent() {
   useEffect(() => {
     if (isConnected) {
       wasConnectedRef.current = true;
+      if (disconnectTimerRef.current) {
+        clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current = null;
+      }
       return;
     }
 
     if (wasConnectedRef.current && screen === 'dashboard') {
-      setResumeAfterReconnect(true);
-      setScreen('deviceSetup');
+      // Debounce disconnect handling; BLE can briefly flicker during operations.
+      if (disconnectTimerRef.current) return;
+      disconnectTimerRef.current = setTimeout(() => {
+        disconnectTimerRef.current = null;
+        setResumeAfterReconnect(true);
+        setScreen('deviceSetup');
+      }, 1500);
     }
   }, [isConnected, screen]);
+
+  useEffect(() => {
+    return () => {
+      if (disconnectTimerRef.current) {
+        clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const handleRequireDeviceSetup = () => {
     setResumeAfterReconnect(true);

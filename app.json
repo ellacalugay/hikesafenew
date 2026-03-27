@@ -19,6 +19,7 @@
       "package": "com.hikesafe.app",
       "edgeToEdgeEnabled": true,
       "permissions": [
+        "android.permission.POST_NOTIFICATIONS",
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
         "android.permission.BLUETOOTH_CONNECT",

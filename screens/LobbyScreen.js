@@ -45,7 +45,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
 
   // Monitor for device confirmation (STATUS:LOBBY_SET)
   useEffect(() => {
-    if (validationState === 'syncing' && statusMessage && statusMessage.includes('Lobby') && statusMessage.includes('synced')) {
+    if (validationState === 'syncing' && statusMessage && statusMessage.includes('Lobby') && statusMessage.includes('synced to device')) {
       // Device confirmed the lobby code was set - enter immediately
       // Note: Other members will appear when their heartbeats arrive (every ~30 seconds)
       setValidationState('confirmed');
@@ -59,7 +59,8 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     const { code, name } = pendingJoinRef.current;
     
     try {
-      await joinLobby(code, name);
+      const numericCode = typeof code === 'string' ? parseInt(code, 10) : code;
+      await joinLobby(numericCode, name);
       setValidationState(null);
       pendingJoinRef.current = null;
       onLogin();
@@ -73,6 +74,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   // Sync lobby code to device when connected
   useEffect(() => {
     if (isConnected && lobbyCode) {
+      // syncLobbyToDevice() can use the registered BLE sender if available
       syncLobbyToDevice(sendCommand);
     }
   }, [isConnected, lobbyCode]);
@@ -156,7 +158,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     
     // Store pending join info
     pendingJoinRef.current = {
-      code: joinCode,
+      code: parseInt(joinCode, 10),
       name: username.trim() || 'Hiker'
     };
     
@@ -164,7 +166,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       // TEMPORARILY BYPASSED FOR UI TESTING
       // Send lobby code to device first (skip if not connected)
       if (isConnected) {
-        const success = await sendCommand(`LOBBY:${joinCode}`);
+        const success = await sendCommand(`LOBBY:${parseInt(joinCode, 10)}`);
         if (!success) {
           throw new Error('Failed to sync lobby code to device');
         }
