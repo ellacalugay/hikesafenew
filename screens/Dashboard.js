@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback } from 'react-native';
+import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, ImageBackground } from 'react-native';
 import { Home, MapPin, MessageCircle, Compass, User, Check, CheckSquare, Square, AlertTriangle, X, Users, Radio } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS } from '../constants/theme';
@@ -279,22 +279,27 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
         <TouchableWithoutFeedback onPress={() => setShowLobbyModal(false)}>
           <View style={styles.modalOverlay}>
             <TouchableWithoutFeedback onPress={() => {}}>
-              <View style={[styles.modalContent, { backgroundColor: colors.modalBg, maxHeight: '80%' }]}>
+              <ImageBackground
+                source={require('../assets/int bg 1.png')}
+                resizeMode="cover"
+                imageStyle={{ borderRadius: 20 }}
+                style={[styles.modalContent, { maxHeight: '80%', overflow: 'hidden', backgroundColor: 'transparent' }]}
+              >
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Users size={16} color={colors.primary} />
                     <Text style={[styles.modalTitle, { color: colors.textDark, marginBottom: 0, fontSize: 14, marginLeft: 6 }]}>LOBBY INFORMATION</Text>
                   </View>
                   <TouchableOpacity onPress={() => setShowLobbyModal(false)} style={{ marginTop: -4 }}>
-                    <X size={24} color={colors.gray} />
+                    <X size={24} color="#000" />
                   </TouchableOpacity>
                 </View>
 
                 {lobbyCode ? (
                   <ScrollView showsVerticalScrollIndicator={false}>
                     <View style={{ backgroundColor: colors.primaryLight, padding: 15, borderRadius: 12, alignItems: 'center', marginBottom: 12 }}>
-                      <Text style={{ color: colors.gray, fontSize: 11, fontWeight: '600', letterSpacing: 1 }}>LOBBY CODE</Text>
-                      <Text style={{ color: colors.primary, fontSize: 36, fontWeight: 'bold', letterSpacing: 6, marginTop: 4 }}>{lobbyCode}</Text>
+                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', letterSpacing: 1 }}>LOBBY CODE</Text>
+                      <Text style={{ color: '#0B1F16', fontSize: 36, fontWeight: 'bold', letterSpacing: 6, marginTop: 4 }}>{lobbyCode}</Text>
                     </View>
 
                     <View style={{ backgroundColor: colors.inputBg, borderRadius: 12, padding: 14, marginBottom: 10 }}>
@@ -352,7 +357,7 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
                       </TouchableOpacity>
                     </View>
 
-                    <Text style={{ color: colors.gray, fontSize: 12, textAlign: 'center', marginBottom: 4, lineHeight: 18 }}>
+                    <Text style={{ color: '#000', fontSize: 12, textAlign: 'center', marginBottom: 4, lineHeight: 18 }}>
                       Share this code with friends to let them join your hiking group.
                     </Text>
 
@@ -411,7 +416,7 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
                     </TouchableOpacity>
                   </>
                 )}
-              </View>
+              </ImageBackground>
             </TouchableWithoutFeedback>
           </View>
         </TouchableWithoutFeedback>
