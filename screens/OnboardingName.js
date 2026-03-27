@@ -3,6 +3,8 @@ import { View, Text, TouchableOpacity, KeyboardAvoidingView, ScrollView, Platfor
 import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
 import { useTheme } from '../context/ThemeContext';
+import { useLobby } from '../context/LobbyContext';
+import { useUser } from '../context/UserContext';
 
 const OnboardingName = ({ next }) => {
   const { colors } = useTheme();
@@ -13,6 +15,9 @@ const OnboardingName = ({ next }) => {
   const buttonsOpacity = useRef(new Animated.Value(0)).current;
   const buttonsScale = useRef(new Animated.Value(0.9)).current;
 
+  const { myNickname, setMyNickname } = useLobby();
+  const { firstName, setFirstName, lastName, setLastName } = useUser();
+  
   useEffect(() => {
     Animated.stagger(150, [
       Animated.parallel([
@@ -76,9 +81,9 @@ const OnboardingName = ({ next }) => {
             </Text>
           
             <View style={[styles.formSection, { marginTop: 16 }]}>
-              <InputField label="First Name" placeholder="e.g. John" />
-              <InputField label="Last Name" placeholder="e.g. Doe" />
-              <InputField label="Nickname" placeholder="e.g. JD" />
+              <InputField label="First Name" placeholder="e.g. John" value={firstName} onChangeText={setFirstName} />
+              <InputField label="Last Name" placeholder="e.g. Doe" value={lastName} onChangeText={setLastName} />
+              <InputField label="Nickname" placeholder="e.g. JD" value={myNickname} onChangeText={setMyNickname} />
             </View>
 
             <View style={[styles.footer, { marginTop: 20 }]}>
