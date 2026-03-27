@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -18,11 +18,9 @@ import {
   ChevronRight,
   Satellite,
 } from 'lucide-react-native';
-import { useTheme } from '../context/ThemeContext';
 import { useBluetoothDevice } from '../context/BluetoothContext';
 
 const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
-  const { colors } = useTheme();
   const {
     isEnabled,
     isScanning,
@@ -37,11 +35,21 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
     disconnect,
   } = useBluetoothDevice();
 
+  const [dotCount, setDotCount] = useState(0);
+
   useEffect(() => {
     if (isEnabled && !isConnected) {
       scanForDevices();
     }
   }, [isEnabled, isConnected, scanForDevices]);
+
+  // Animated dots for "Connecting..." effect
+  useEffect(() => {
+    const dotInterval = setInterval(() => {
+      setDotCount((prev) => (prev + 1) % 4);
+    }, 500);
+    return () => clearInterval(dotInterval);
+  }, []);
 
   const handleDevicePress = async (device) => {
     if (isConnected && connectedDevice?.id === device.id) {
@@ -99,7 +107,7 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
 
   return (
     <ImageBackground
-      source={require('../assets/forest_bg 1.png')}
+      source={require('../assets/int bg 1.png')}
       resizeMode="cover"
       style={localStyles.background}
     >
@@ -108,7 +116,9 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
         <View style={localStyles.headerArea}>
           <Text style={localStyles.brandTitle}>HikeSafe</Text>
           <Text style={localStyles.connectingLabel}>Long Range Device</Text>
-          <Text style={localStyles.connectingText}>Connecting...</Text>
+          <Text style={localStyles.connectingText}>
+            Connecting{'.'.repeat(Math.max(1, dotCount))}
+          </Text>
         </View>
 
         <View style={localStyles.statusStrip}>
@@ -163,7 +173,7 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
         )}
 
         <View style={localStyles.listCard}>
-          <Text style={localStyles.listTitle}>Available Devices</Text>
+          <Text style={localStyles.listTitle}>Nearby HikeSafe Devices</Text>
 
           {isScanning && availableDevices.length === 0 ? (
             <View style={localStyles.centerState}>
@@ -197,8 +207,8 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
               onPress={onNext}
               disabled={isConnecting}
             >
-              <Text style={localStyles.primaryButtonText}>CONTINUE</Text>
-              <ChevronRight size={18} color="#2E8B57" />
+              <Text style={localStyles.primaryButtonText}>CONNECT</Text>
+              <ChevronRight size={18} color="#198D39" />
             </TouchableOpacity>
           ) : (
             <>
@@ -211,7 +221,7 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
                 disabled={!allowSkip || isConnecting}
               >
                 <Text style={localStyles.primaryButtonText}>
-                  {allowSkip ? 'SKIP FOR NOW' : 'RECONNECT REQUIRED'}
+                  {allowSkip ? 'CONNECT' : 'RECONNECT REQUIRED'}
                 </Text>
               </TouchableOpacity>
               <Text style={localStyles.bottomHint}>
@@ -239,11 +249,11 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
 const localStyles = StyleSheet.create({
   background: {
     flex: 1,
-    backgroundColor: '#E8F0D6',
+    backgroundColor: '#E7EFD8',
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,255,255,0.25)',
+    backgroundColor: 'rgba(255,255,255,0.12)',
   },
   container: {
     flex: 1,
@@ -251,32 +261,32 @@ const localStyles = StyleSheet.create({
     paddingBottom: 22,
   },
   headerArea: {
-    marginTop: 12,
-    marginBottom: 14,
+    marginTop: 10,
+    marginBottom: 12,
   },
   brandTitle: {
     fontSize: 44,
     fontWeight: '800',
     color: '#2E6B3F',
-    letterSpacing: 0.5,
-    marginBottom: 6,
+    letterSpacing: 1,
+    marginBottom: 2,
   },
   connectingLabel: {
-    fontSize: 24,
-    color: '#465A42',
+    fontSize: 22,
+    color: '#3E4B3A',
     fontWeight: '500',
   },
   connectingText: {
     fontSize: 34,
-    lineHeight: 40,
+    lineHeight: 38,
     fontWeight: '800',
-    color: '#1F3A22',
+    color: '#1B2F1D',
     marginTop: 2,
   },
   statusStrip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.86)',
+    backgroundColor: 'rgba(255,255,255,0.88)',
     borderRadius: 14,
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.08)',
@@ -309,7 +319,7 @@ const localStyles = StyleSheet.create({
   },
   connectedInfoCard: {
     borderRadius: 16,
-    backgroundColor: 'rgba(128, 199, 88, 0.2)',
+    backgroundColor: 'rgba(128, 199, 88, 0.28)',
     borderWidth: 1,
     borderColor: 'rgba(46,139,87,0.35)',
     padding: 12,
@@ -334,27 +344,27 @@ const localStyles = StyleSheet.create({
   },
   listCard: {
     flex: 1,
-    borderRadius: 22,
+    borderRadius: 20,
     padding: 14,
-    backgroundColor: 'rgba(128, 199, 88, 0.7)',
+    backgroundColor: 'rgba(116, 206, 66, 0.68)',
     borderWidth: 1,
-    borderColor: 'rgba(46,139,87,0.3)',
+    borderColor: 'rgba(86,160,56,0.35)',
   },
   listTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
-    color: '#244126',
-    marginBottom: 10,
+    color: '#274228',
+    marginBottom: 8,
   },
   listContent: {
     paddingBottom: 8,
   },
   deviceItem: {
-    minHeight: 58,
-    backgroundColor: '#F1F1F1',
-    borderRadius: 12,
+    minHeight: 56,
+    backgroundColor: '#EDEDED',
+    borderRadius: 10,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 8,
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 10,
@@ -369,8 +379,8 @@ const localStyles = StyleSheet.create({
     paddingRight: 8,
   },
   deviceName: {
-    fontSize: 22,
-    color: '#3D3D3D',
+    fontSize: 26,
+    color: '#4A4A4A',
     fontWeight: '700',
   },
   deviceAddress: {
@@ -384,9 +394,9 @@ const localStyles = StyleSheet.create({
     minWidth: 76,
   },
   signalDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
   },
   connectedPill: {
     flexDirection: 'row',
@@ -425,29 +435,28 @@ const localStyles = StyleSheet.create({
     lineHeight: 18,
   },
   bottomArea: {
-    paddingTop: 14,
+    paddingTop: 6,
   },
   primaryButton: {
-    height: 54,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.85)',
-    borderWidth: 1,
-    borderColor: 'rgba(46,139,87,0.35)',
+    height: 52,
+    borderRadius: 12,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
   },
   primaryButtonText: {
-    color: '#2E8B57',
-    fontSize: 16,
+    color: '#198D39',
+    fontSize: 24,
     fontWeight: '800',
-    letterSpacing: 0.6,
+    letterSpacing: 0.5,
   },
   bottomHint: {
-    marginTop: 8,
+    marginTop: 2,
     textAlign: 'center',
-    color: '#3D533C',
-    fontSize: 12,
+    color: '#304F30',
+    fontSize: 11,
   },
   connectingOverlay: {
     ...StyleSheet.absoluteFillObject,

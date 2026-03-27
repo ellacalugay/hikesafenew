@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Modal, Animated } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ScreenContainer } from './components/shared';
 import { styles } from './styles/styles';
@@ -22,6 +22,7 @@ function AppContent() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [lobbyData, setLobbyData] = useState({ lobbyName: '', groupId: '', maxMember: '' });
   const wasConnectedRef = useRef(false);
+  const screenFadeAnim = useRef(new Animated.Value(0)).current;
 
   const handleDeviceSetupComplete = () => {
     if (resumeAfterReconnect) {
@@ -70,27 +71,39 @@ function AppContent() {
     setScreen('deviceSetup');
   };
 
+  // Screen transition animation
+  useEffect(() => {
+    screenFadeAnim.setValue(0);
+    Animated.timing(screenFadeAnim, {
+      toValue: 1,
+      duration: 400,
+      useNativeDriver: true,
+    }).start();
+  }, [screen]);
+
   return (
     <ScreenContainer>
-      {screen === 'deviceSetup' && (
-        <DeviceSetupScreen
-          onNext={handleDeviceSetupComplete}
-          onSkip={handleDeviceSetupComplete}
-          allowSkip={!resumeAfterReconnect}
-        />
-      )}
-      {screen === 'onboarding1' && <OnboardingName next={handleNextOnboarding} />}
-      {screen === 'onboarding2' && <OnboardingDetails next={handleShowReminder} onShowReminder={handleShowReminder} />}
-      {screen === 'lobby' && <LobbyScreen onLogin={handleEnterDashboard} onShowCreateSuccess={handleCreateLobbySuccess} />}
-      {screen === 'dashboard' && (
-        <Dashboard
-          onLogout={handleLogout}
-          onRequireDeviceSetup={handleRequireDeviceSetup}
-        />
-      )}
+      <Animated.View style={{ flex: 1, opacity: screenFadeAnim }}>
+        {screen === 'deviceSetup' && (
+          <DeviceSetupScreen
+            onNext={handleDeviceSetupComplete}
+            onSkip={handleDeviceSetupComplete}
+            allowSkip={!resumeAfterReconnect}
+          />
+        )}
+        {screen === 'onboarding1' && <OnboardingName next={handleNextOnboarding} />}
+        {screen === 'onboarding2' && <OnboardingDetails next={handleShowReminder} onShowReminder={handleShowReminder} />}
+        {screen === 'lobby' && <LobbyScreen onLogin={handleEnterDashboard} onShowCreateSuccess={handleCreateLobbySuccess} />}
+        {screen === 'dashboard' && (
+          <Dashboard
+            onLogout={handleLogout}
+            onRequireDeviceSetup={handleRequireDeviceSetup}
+          />
+        )}
+      </Animated.View>
 
       {/* HikeSafe Reminder Modal */}
-      <Modal visible={showReminder} transparent animationType="fade">
+      <Modal visible={showReminder && !showTerms} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContentGreen}>
                 <Text style={styles.modalTitleWhite}>HikeSafe Reminder</Text>
@@ -98,7 +111,7 @@ function AppContent() {
                   Before continuing, please read and agree to our {' '}
                   <Text
                     onPress={() => setShowTerms(true)}
-                    style={{ textDecorationLine: 'underline', fontWeight: '700' }}
+                    style={{ fontWeight: '700' }}
                   >
                     Terms and Conditions
                   </Text>
@@ -117,19 +130,20 @@ function AppContent() {
 
       {/* Terms Modal */}
       <Modal visible={showTerms} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContentGreen}>
-            <Text style={[styles.modalTitleWhite, {textAlign: 'center'}]}>Terms and Condition</Text>
-            <ScrollView style={{maxHeight: 360, marginVertical: 10}}>
-              <View style={{marginBottom: 12}}>
-                <View style={{flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6}}>
-                  <Text style={styles.modalNumber}>1.</Text>
-                  <Text style={styles.modalSectionTitle}>Acceptance of Terms</Text>
+        <View style={[styles.modalOverlay, { justifyContent: 'center', alignItems: 'center' }]}>
+          <View style={{ width: '90%', height: '90%', backgroundColor: '#2E8B57', borderRadius: 20, padding: 20, flexDirection: 'column' }}>
+            <Text style={[styles.modalTitleWhite, {textAlign: 'center', marginBottom: 12}]}>Terms and Conditions</Text>
+            <ScrollView style={{flex: 1, marginBottom: 12}} showsVerticalScrollIndicator={false}>
+              <View style={{ paddingRight: 8 }}>
+                <View style={{marginBottom: 12}}>
+                  <View style={{flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6}}>
+                    <Text style={styles.modalNumber}>1.</Text>
+                    <Text style={styles.modalSectionTitle}>Acceptance of Terms</Text>
+                  </View>
+                  <Text style={styles.modalParagraph}>
+                    By using the HikeSafe app, you agree to comply with these Terms and Conditions. Please read them carefully before using the app.
+                  </Text>
                 </View>
-                <Text style={styles.modalParagraph}>
-                  By using the HikeSafe app, you agree to comply with these Terms and Conditions. Please read them carefully before using the app.
-                </Text>
-              </View>
 
               <View style={{marginBottom: 12}}>
                 <View style={{flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6}}>
@@ -223,9 +237,12 @@ function AppContent() {
                   If you have questions about these Terms, please reach out at hikesafe.team@gmail.com
                 </Text>
               </View>
+              </View>
             </ScrollView>
-            <TouchableOpacity style={[styles.buttonWhite, { alignSelf: 'center', width: '80%'}]} onPress={() => setShowTerms(false)}>
-              <Text style={[styles.buttonTextGreen, {textAlign: 'center'}]}>I UNDERSTAND</Text>
+            <TouchableOpacity style={{ backgroundColor: 'white', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10, alignItems: 'center' }} onPress={() => {
+              setShowTerms(false);
+            }}>
+              <Text style={{ color: '#2E8B57', fontSize: 14, fontWeight: '700', textAlign: 'center' }}>I UNDERSTAND</Text>
             </TouchableOpacity>
           </View>
         </View>

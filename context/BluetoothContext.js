@@ -3,6 +3,7 @@ import { Alert, Platform, PermissionsAndroid, Vibration } from 'react-native';
 import { Buffer } from 'buffer';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Audio } from 'expo-av';
 
 // Storage keys
 const CHAT_HISTORY_KEY = '@hikesafe_chat_history';
@@ -105,15 +106,28 @@ export const BluetoothProvider = ({ children }) => {
       Vibration.vibrate(pattern);
     }
   }, [vibrationEnabled]);
-  
-  // Add activity to log
-  const addActivity = useCallback((type, deviceId, message) => {
+
+  // Play connection success sound
+  const playConnectionSound = useCallback(async () => {
+    try {
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==' },
+        { shouldPlay: true }
+      );
+      await sound.playAsync();
+      sound.unloadAsync();
+    } catch (error) {
+      console.log('Connection sound disabled or unavailable');
+    }
+  }, []);
+
+  // Log activity
+  const addActivity = useCallback((type, details) => {
     const activity = {
-      id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      type, // 'join', 'leave', 'sos', 'ok', 'offline', 'online', 'message'
-      deviceId,
-      message,
-      timestamp: Date.now(),
+      id: Date.now(),
+      type,
+      details,
+      timestamp: new Date().toISOString(),
     };
     setActivityLog(prev => [activity, ...prev].slice(0, 50)); // Keep last 50 activities
   }, []);
@@ -827,6 +841,9 @@ export const BluetoothProvider = ({ children }) => {
       setLastDataReceived(Date.now());
       setConnectionHealth('good');
       
+      // Play connection success sound
+      playConnectionSound();
+      
       return true;
     } catch (error) {
       console.error('Connection error:', error);
@@ -838,7 +855,7 @@ export const BluetoothProvider = ({ children }) => {
     } finally {
       setIsConnecting(false);
     }
-  }, [parseBluetoothData, handleConnectionLost]);
+  }, [parseBluetoothData, handleConnectionLost, playConnectionSound]);
 
   // Disconnect from device
   const disconnect = useCallback(async () => {

@@ -1,49 +1,96 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, KeyboardAvoidingView, ScrollView, Platform } from 'react-native';
-import { Trees } from 'lucide-react-native';
+import React, { useRef, useEffect } from 'react';
+import { View, Text, TouchableOpacity, KeyboardAvoidingView, ScrollView, Platform, ImageBackground, Animated } from 'react-native';
 import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
 import { useTheme } from '../context/ThemeContext';
 
 const OnboardingName = ({ next }) => {
   const { colors } = useTheme();
+  const titleOpacity = useRef(new Animated.Value(0)).current;
+  const titleTranslateY = useRef(new Animated.Value(-20)).current;
+  const formOpacity = useRef(new Animated.Value(0)).current;
+  const formTranslateY = useRef(new Animated.Value(20)).current;
+  const buttonsOpacity = useRef(new Animated.Value(0)).current;
+  const buttonsScale = useRef(new Animated.Value(0.9)).current;
+
+  useEffect(() => {
+    Animated.stagger(150, [
+      Animated.parallel([
+        Animated.timing(titleOpacity, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.timing(titleTranslateY, {
+          toValue: 0,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.parallel([
+        Animated.timing(formOpacity, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.timing(formTranslateY, {
+          toValue: 0,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.parallel([
+        Animated.timing(buttonsOpacity, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+        Animated.timing(buttonsScale, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start();
+  }, []);
   
   return (
-    <KeyboardAvoidingView 
-      style={{ flex: 1, backgroundColor: colors.background }} 
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <ImageBackground
+      source={require('../assets/int bg 1.png')}
+      resizeMode="cover"
+      style={{ flex: 1 }}
     >
-      <ScrollView 
-        contentContainerStyle={{ flexGrow: 1 }}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        bounces={false}
+      <KeyboardAvoidingView 
+        style={{ flex: 1 }} 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <View style={[styles.contentContainer, { backgroundColor: colors.background }]}>
-          <View style={styles.headerSpacer} />
-          <Text style={[styles.titleLarge, { color: colors.textDark }]}>
-            What do we{'\n'}call you?
-          </Text>
-        
-          <View style={[styles.formSection, styles.centeredForm, { top: 50 }]}>
-            <InputField label="First Name" placeholder="e.g. John" />
-            <InputField label="Last Name" placeholder="e.g. Doe" />
-            <InputField label="Nickname" placeholder="e.g. JD" />
-          </View>
+        <ScrollView 
+          contentContainerStyle={{ flexGrow: 1, paddingBottom: 24 }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+        >
+          <View style={[styles.contentContainer, { justifyContent: 'center' }]}>
+            <Text style={[styles.titleLarge, { color: colors.textDark, top: 0, marginTop: 0, marginBottom: 18 }]}>
+              What do we{'\n'}call you?
+            </Text>
+          
+            <View style={[styles.formSection, { marginTop: 16 }]}>
+              <InputField label="First Name" placeholder="e.g. John" />
+              <InputField label="Last Name" placeholder="e.g. Doe" />
+              <InputField label="Nickname" placeholder="e.g. JD" />
+            </View>
 
-          <View style={styles.illustrationSpace}>
-            <Trees size={120} color={colors.primary} style={{opacity: 0.5}} />
+            <View style={[styles.footer, { marginTop: 20 }]}>
+              <MainButton title="NEXT" onPress={next} style={{ marginBottom: 8 }} />
+              <TouchableOpacity style={styles.skipButton} onPress={next}>
+                <Text style={[styles.skipText, { color: colors.gray }]}>SKIP</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-
-          <View style={styles.footer}>
-            <MainButton title="NEXT" onPress={next} />
-            <TouchableOpacity style={styles.skipButton} onPress={next}>
-              <Text style={[styles.skipText, { color: colors.gray }]}>SKIP</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </ImageBackground>
   );
 };
 
