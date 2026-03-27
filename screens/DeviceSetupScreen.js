@@ -1,19 +1,27 @@
 import React, { useEffect } from 'react';
-import { 
-  View, 
-  Text, 
-  TouchableOpacity, 
-  FlatList, 
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  FlatList,
   ActivityIndicator,
   StyleSheet,
-  Image
+  ImageBackground,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Bluetooth, BluetoothOff, Radio, Check, RefreshCw, ChevronRight, Satellite } from 'lucide-react-native';
+import {
+  Bluetooth,
+  BluetoothOff,
+  Radio,
+  Check,
+  RefreshCw,
+  ChevronRight,
+  Satellite,
+} from 'lucide-react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useBluetoothDevice } from '../context/BluetoothContext';
 
-const DeviceSetupScreen = ({ onNext, onSkip }) => {
+const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
   const { colors } = useTheme();
   const {
     isEnabled,
@@ -33,7 +41,7 @@ const DeviceSetupScreen = ({ onNext, onSkip }) => {
     if (isEnabled && !isConnected) {
       scanForDevices();
     }
-  }, [isEnabled]);
+  }, [isEnabled, isConnected, scanForDevices]);
 
   const handleDevicePress = async (device) => {
     if (isConnected && connectedDevice?.id === device.id) {
@@ -43,400 +51,425 @@ const DeviceSetupScreen = ({ onNext, onSkip }) => {
     }
   };
 
+  const getSignalDotColor = (rssi) => {
+    if (rssi === undefined || rssi === null) return '#6FAF4C';
+    if (rssi > -75) return '#2E8B57';
+    if (rssi > -90) return '#6FAF4C';
+    return '#E74C3C';
+  };
+
   const renderDevice = ({ item }) => {
     const isCurrentDevice = connectedDevice?.id === item.id;
-    
+
     return (
       <TouchableOpacity
         style={[
-          styles.deviceItem,
-          { 
-            backgroundColor: colors.cardBg,
-            borderColor: isCurrentDevice ? colors.primary : colors.borderColor,
+          localStyles.deviceItem,
+          {
+            borderColor: isCurrentDevice ? '#2E8B57' : 'rgba(0,0,0,0.08)',
             borderWidth: isCurrentDevice ? 2 : 1,
-          }
+          },
         ]}
         onPress={() => handleDevicePress(item)}
         disabled={isConnecting}
       >
-        <View style={styles.deviceInfo}>
-          <Radio size={24} color={isCurrentDevice ? colors.primary : colors.gray} />
-          <View style={styles.deviceText}>
-            <Text style={[styles.deviceName, { color: colors.textDark }]}>
-              {item.name || 'Unknown Device'}
-            </Text>
-            <Text style={[styles.deviceAddress, { color: colors.gray }]}>
-              {item.address || item.id}
-            </Text>
-          </View>
+        <View style={localStyles.deviceLeftSection}>
+          <Text style={localStyles.deviceName}>{item.name || 'Unknown Device'}</Text>
+          <Text style={localStyles.deviceAddress}>{item.address || item.id}</Text>
         </View>
-        
-        {isCurrentDevice && isConnected ? (
-          <View style={[styles.connectedBadge, { backgroundColor: colors.primary }]}>
-            <Check size={16} color="#fff" />
-            <Text style={styles.connectedText}>Connected</Text>
-          </View>
-        ) : (
-          <Text style={[styles.tapToConnect, { color: colors.gray }]}>Tap to connect</Text>
-        )}
+
+        <View style={localStyles.deviceRightSection}>
+          {isCurrentDevice && isConnected ? (
+            <View style={localStyles.connectedPill}>
+              <Check size={14} color="#2E8B57" />
+              <Text style={localStyles.connectedPillText}>Connected</Text>
+            </View>
+          ) : (
+            <View
+              style={[
+                localStyles.signalDot,
+                { backgroundColor: getSignalDotColor(item.rssi) },
+              ]}
+            />
+          )}
+        </View>
       </TouchableOpacity>
     );
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={[styles.title, { color: colors.textDark }]}>Connect Your Device</Text>
-        <Text style={[styles.subtitle, { color: colors.gray }]}>
-          Connect your HikeSafe device to enable GPS tracking, messaging, and emergency alerts.
-        </Text>
-      </View>
-
-      {/* Bluetooth Status */}
-      <View style={[styles.statusCard, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
-        {isEnabled ? (
-          <Bluetooth size={32} color={colors.primary} />
-        ) : (
-          <BluetoothOff size={32} color={colors.gray} />
-        )}
-        <View style={styles.statusText}>
-          <Text style={[styles.statusTitle, { color: colors.textDark }]}>
-            Bluetooth {isEnabled ? 'Enabled' : 'Disabled'}
-          </Text>
-          <Text style={[styles.statusDesc, { color: colors.gray }]}>
-            {isEnabled 
-              ? 'Ready to connect to HikeSafe devices' 
-              : 'Enable Bluetooth to connect to your device'}
-          </Text>
+    <ImageBackground
+      source={require('../assets/forest_bg 1.png')}
+      resizeMode="cover"
+      style={localStyles.background}
+    >
+      <View style={localStyles.backdrop} />
+      <SafeAreaView style={localStyles.container}>
+        <View style={localStyles.headerArea}>
+          <Text style={localStyles.brandTitle}>HikeSafe</Text>
+          <Text style={localStyles.connectingLabel}>Long Range Device</Text>
+          <Text style={localStyles.connectingText}>Connecting...</Text>
         </View>
-        {!isEnabled && (
-          <TouchableOpacity
-            style={[styles.enableButton, { backgroundColor: colors.primary }]}
-            onPress={requestEnable}
-          >
-            <Text style={styles.enableButtonText}>Enable</Text>
-          </TouchableOpacity>
-        )}
-        {isEnabled && (
-          <TouchableOpacity onPress={scanForDevices} disabled={isScanning}>
-            <RefreshCw size={22} color={colors.primary} />
-          </TouchableOpacity>
-        )}
-      </View>
 
-      {/* Connected Device Info */}
-      {isConnected && connectedDevice && (
-        <View style={[styles.connectedCard, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
-          <View style={styles.connectedHeader}>
-            <Radio size={20} color={colors.primary} />
-            <Text style={[styles.connectedTitle, { color: colors.primary }]}>
-              Connected: {connectedDevice.name}
-            </Text>
-          </View>
-          
-          <View style={styles.gpsInfo}>
-            <Satellite size={16} color={colors.textDark} />
-            <Text style={[styles.gpsLabel, { color: colors.textDark, marginLeft: 8 }]}>GPS Status:</Text>
-            {myLocation.valid ? (
-              <Text style={[styles.gpsValue, { color: colors.primary, marginLeft: 8 }]}>
-                {myLocation.satellites} satellites locked
-              </Text>
-            ) : (
-              <Text style={[styles.gpsValue, { color: colors.gray, marginLeft: 8 }]}>
-                Acquiring... ({myLocation.satellites} sats)
-              </Text>
-            )}
-          </View>
-        </View>
-      )}
-
-      {/* Device List */}
-      <View style={styles.listSection}>
-        <View style={styles.listHeader}>
-          <Text style={[styles.sectionTitle, { color: colors.textDark }]}>
-            Available Devices
+        <View style={localStyles.statusStrip}>
+          {isEnabled ? (
+            <Bluetooth size={18} color="#2E8B57" />
+          ) : (
+            <BluetoothOff size={18} color="#6B6B6B" />
+          )}
+          <Text style={localStyles.statusStripText}>
+            Bluetooth {isEnabled ? 'enabled' : 'disabled'}
           </Text>
-          {isScanning && <ActivityIndicator size="small" color={colors.primary} />}
-        </View>
-        
-        {isScanning && availableDevices.length === 0 ? (
-          <View style={styles.scanningContainer}>
-            <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={[styles.scanningText, { color: colors.gray }]}>
-              Scanning for devices...
-            </Text>
-          </View>
-        ) : (
-          <FlatList
-            data={availableDevices}
-            renderItem={renderDevice}
-            keyExtractor={(item) => item.id || item.address}
-            ListEmptyComponent={
-              <View style={[styles.emptyContainer, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
-                <BluetoothOff size={40} color={colors.gray} />
-                <Text style={[styles.emptyText, { color: colors.gray }]}>
-                  No HikeSafe devices found
-                </Text>
-                <Text style={[styles.emptyHint, { color: colors.gray }]}>
-                  1. Power on your HikeSafe device{'\n'}
-                  2. Make sure you are within range{'\n'}
-                  3. Tap refresh to scan again
-                </Text>
-              </View>
-            }
-            contentContainerStyle={styles.listContent}
-          />
-        )}
-      </View>
-
-      {/* Bottom Buttons */}
-      <View style={styles.bottomButtons}>
-        {isConnected ? (
-          <TouchableOpacity
-            style={[styles.primaryButton, { backgroundColor: colors.primary }]}
-            onPress={onNext}
-          >
-            <Text style={styles.primaryButtonText}>Continue to Setup</Text>
-            <ChevronRight size={20} color="#fff" />
-          </TouchableOpacity>
-        ) : (
-          <>
+          {!isEnabled ? (
             <TouchableOpacity
-              style={[styles.skipButton, { borderColor: colors.borderColor }]}
-              onPress={onSkip}
+              style={localStyles.smallActionButton}
+              onPress={requestEnable}
+              disabled={isConnecting}
             >
-              <Text style={[styles.skipButtonText, { color: colors.gray }]}>Skip for Now</Text>
+              <Text style={localStyles.smallActionText}>Enable</Text>
             </TouchableOpacity>
-            <Text style={[styles.skipHint, { color: colors.gray }]}>
-              You can connect your device later in the Location tab
-            </Text>
-          </>
-        )}
-      </View>
-
-      {/* Connecting Overlay */}
-      {isConnecting && (
-        <View style={styles.connectingOverlay}>
-          <View style={[styles.connectingModal, { backgroundColor: colors.modalBg }]}>
-            <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={[styles.connectingText, { color: colors.textDark }]}>
-              Connecting to device...
-            </Text>
-          </View>
+          ) : (
+            <TouchableOpacity
+              style={localStyles.smallActionButton}
+              onPress={scanForDevices}
+              disabled={isScanning || isConnecting}
+            >
+              {isScanning ? (
+                <ActivityIndicator size="small" color="#2E8B57" />
+              ) : (
+                <RefreshCw size={16} color="#2E8B57" />
+              )}
+            </TouchableOpacity>
+          )}
         </View>
-      )}
-    </SafeAreaView>
+
+        {isConnected && connectedDevice && (
+          <View style={localStyles.connectedInfoCard}>
+            <View style={localStyles.connectedRow}>
+              <Radio size={18} color="#2E8B57" />
+              <Text style={localStyles.connectedInfoTitle}>
+                Connected to {connectedDevice.name}
+              </Text>
+            </View>
+            <View style={localStyles.connectedRow}>
+              <Satellite size={14} color="#345A2A" />
+              <Text style={localStyles.connectedInfoSubtext}>
+                {myLocation.valid
+                  ? `${myLocation.satellites} satellites locked`
+                  : `Acquiring GPS... (${myLocation.satellites} sats)`}
+              </Text>
+            </View>
+          </View>
+        )}
+
+        <View style={localStyles.listCard}>
+          <Text style={localStyles.listTitle}>Available Devices</Text>
+
+          {isScanning && availableDevices.length === 0 ? (
+            <View style={localStyles.centerState}>
+              <ActivityIndicator size="large" color="#2E8B57" />
+              <Text style={localStyles.centerStateText}>Scanning for HikeSafe devices...</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={availableDevices}
+              renderItem={renderDevice}
+              keyExtractor={(item) => item.id || item.address}
+              contentContainerStyle={localStyles.listContent}
+              showsVerticalScrollIndicator={false}
+              ListEmptyComponent={
+                <View style={localStyles.centerState}>
+                  <BluetoothOff size={30} color="#7A7A7A" />
+                  <Text style={localStyles.centerStateText}>No devices found nearby</Text>
+                  <Text style={localStyles.centerStateHint}>
+                    Power on device, stay within range, then tap refresh.
+                  </Text>
+                </View>
+              }
+            />
+          )}
+        </View>
+
+        <View style={localStyles.bottomArea}>
+          {isConnected ? (
+            <TouchableOpacity
+              style={localStyles.primaryButton}
+              onPress={onNext}
+              disabled={isConnecting}
+            >
+              <Text style={localStyles.primaryButtonText}>CONTINUE</Text>
+              <ChevronRight size={18} color="#2E8B57" />
+            </TouchableOpacity>
+          ) : (
+            <>
+              <TouchableOpacity
+                style={[
+                  localStyles.primaryButton,
+                  { opacity: allowSkip ? 1 : 0.55 },
+                ]}
+                onPress={allowSkip ? onSkip : undefined}
+                disabled={!allowSkip || isConnecting}
+              >
+                <Text style={localStyles.primaryButtonText}>
+                  {allowSkip ? 'SKIP FOR NOW' : 'RECONNECT REQUIRED'}
+                </Text>
+              </TouchableOpacity>
+              <Text style={localStyles.bottomHint}>
+                {allowSkip
+                  ? 'You can connect your device later in setup.'
+                  : 'Your previous device disconnected. Reconnect to continue.'}
+              </Text>
+            </>
+          )}
+        </View>
+
+        {isConnecting && (
+          <View style={localStyles.connectingOverlay}>
+            <View style={localStyles.connectingCard}>
+              <ActivityIndicator size="large" color="#2E8B57" />
+              <Text style={localStyles.connectingCardText}>Connecting to device...</Text>
+            </View>
+          </View>
+        )}
+      </SafeAreaView>
+    </ImageBackground>
   );
 };
 
-const styles = StyleSheet.create({
+const localStyles = StyleSheet.create({
+  background: {
+    flex: 1,
+    backgroundColor: '#E8F0D6',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+  },
   container: {
     flex: 1,
+    paddingHorizontal: 20,
+    paddingBottom: 22,
   },
-  header: {
-    paddingHorizontal: 24,
-    paddingTop: 40,
-    paddingBottom: 20,
+  headerArea: {
+    marginTop: 12,
+    marginBottom: 14,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    marginBottom: 8,
+  brandTitle: {
+    fontSize: 44,
+    fontWeight: '800',
+    color: '#2E6B3F',
+    letterSpacing: 0.5,
+    marginBottom: 6,
   },
-  subtitle: {
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  statusCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginHorizontal: 16,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  statusText: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  statusTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  statusDesc: {
-    fontSize: 13,
-    marginTop: 2,
-  },
-  enableButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  enableButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-  },
-  connectedCard: {
-    margin: 16,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  connectedHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  connectedTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginLeft: 8,
-  },
-  gpsInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  gpsLabel: {
-    fontSize: 14,
-  },
-  gpsValue: {
-    fontSize: 14,
+  connectingLabel: {
+    fontSize: 24,
+    color: '#465A42',
     fontWeight: '500',
   },
-  listSection: {
-    flex: 1,
-    paddingHorizontal: 16,
+  connectingText: {
+    fontSize: 34,
+    lineHeight: 40,
+    fontWeight: '800',
+    color: '#1F3A22',
+    marginTop: 2,
   },
-  listHeader: {
+  statusStrip: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
+    backgroundColor: 'rgba(255,255,255,0.86)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.08)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
   },
-  sectionTitle: {
-    fontSize: 16,
+  statusStripText: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 13,
+    color: '#3F5340',
     fontWeight: '600',
+  },
+  smallActionButton: {
+    minWidth: 42,
+    minHeight: 32,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(46,139,87,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F7FBF2',
+    paddingHorizontal: 10,
+  },
+  smallActionText: {
+    color: '#2E8B57',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  connectedInfoCard: {
+    borderRadius: 16,
+    backgroundColor: 'rgba(128, 199, 88, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(46,139,87,0.35)',
+    padding: 12,
+    marginBottom: 10,
+  },
+  connectedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  connectedInfoTitle: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#2F4F2F',
+    fontWeight: '700',
+  },
+  connectedInfoSubtext: {
+    marginLeft: 8,
+    fontSize: 12,
+    color: '#345A2A',
+    fontWeight: '500',
+  },
+  listCard: {
+    flex: 1,
+    borderRadius: 22,
+    padding: 14,
+    backgroundColor: 'rgba(128, 199, 88, 0.7)',
+    borderWidth: 1,
+    borderColor: 'rgba(46,139,87,0.3)',
+  },
+  listTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#244126',
+    marginBottom: 10,
   },
   listContent: {
-    paddingBottom: 20,
+    paddingBottom: 8,
   },
   deviceItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 16,
+    minHeight: 58,
+    backgroundColor: '#F1F1F1',
     borderRadius: 12,
-    marginBottom: 12,
-  },
-  deviceInfo: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
+    marginBottom: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 2,
+    elevation: 1,
   },
-  deviceText: {
-    marginLeft: 12,
+  deviceLeftSection: {
+    flex: 1,
+    paddingRight: 8,
   },
   deviceName: {
-    fontSize: 16,
-    fontWeight: '500',
+    fontSize: 22,
+    color: '#3D3D3D',
+    fontWeight: '700',
   },
   deviceAddress: {
-    fontSize: 12,
+    fontSize: 11,
+    color: '#7A7A7A',
     marginTop: 2,
   },
-  connectedBadge: {
+  deviceRightSection: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    minWidth: 76,
+  },
+  signalDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  connectedPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  connectedText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-    marginLeft: 4,
-  },
-  tapToConnect: {
-    fontSize: 12,
-  },
-  scanningContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 60,
-  },
-  scanningText: {
-    marginTop: 16,
-    fontSize: 14,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    paddingVertical: 32,
-    paddingHorizontal: 24,
-    borderRadius: 12,
     borderWidth: 1,
+    borderColor: 'rgba(46,139,87,0.35)',
+    backgroundColor: '#EBF7EE',
+    borderRadius: 999,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
   },
-  emptyText: {
-    fontSize: 16,
-    fontWeight: '500',
-    marginTop: 16,
-    marginBottom: 8,
+  connectedPillText: {
+    marginLeft: 4,
+    color: '#2E8B57',
+    fontSize: 11,
+    fontWeight: '700',
   },
-  emptyHint: {
-    fontSize: 13,
+  centerState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 30,
+    paddingHorizontal: 18,
+  },
+  centerStateText: {
+    marginTop: 12,
+    color: '#344F36',
+    fontSize: 14,
+    fontWeight: '600',
     textAlign: 'center',
-    lineHeight: 20,
   },
-  bottomButtons: {
-    padding: 24,
-    paddingBottom: 32,
+  centerStateHint: {
+    marginTop: 6,
+    color: '#4A6148',
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  bottomArea: {
+    paddingTop: 14,
   },
   primaryButton: {
-    flexDirection: 'row',
+    height: 54,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(46,139,87,0.35)',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 12,
+    flexDirection: 'row',
   },
   primaryButtonText: {
-    color: '#fff',
+    color: '#2E8B57',
     fontSize: 16,
-    fontWeight: '600',
-    marginRight: 8,
+    fontWeight: '800',
+    letterSpacing: 0.6,
   },
-  skipButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  skipButtonText: {
-    fontSize: 15,
-    fontWeight: '500',
-  },
-  skipHint: {
-    fontSize: 12,
+  bottomHint: {
+    marginTop: 8,
     textAlign: 'center',
-    marginTop: 12,
+    color: '#3D533C',
+    fontSize: 12,
   },
   connectingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(20, 30, 20, 0.35)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  connectingModal: {
-    padding: 32,
+  connectingCard: {
+    width: '72%',
     borderRadius: 16,
+    paddingVertical: 22,
+    paddingHorizontal: 16,
+    backgroundColor: '#F7FBF2',
+    borderWidth: 1,
+    borderColor: 'rgba(46,139,87,0.35)',
     alignItems: 'center',
   },
-  connectingText: {
-    marginTop: 16,
-    fontSize: 16,
-    fontWeight: '500',
+  connectingCardText: {
+    marginTop: 10,
+    color: '#2E4E2F',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });
 

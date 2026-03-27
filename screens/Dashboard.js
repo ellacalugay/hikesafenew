@@ -16,7 +16,6 @@ import ChatScreen from './tabs/ChatScreen';
 import SettingsScreen from './tabs/SettingsScreen';
 import HelpScreen from './tabs/HelpScreen';
 import ReportProblemScreen from './tabs/ReportProblemScreen';
-import DeviceConnectionScreen from './tabs/DeviceConnectionScreen';
 import MembersTab from './tabs/MembersTab';
 
 const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
@@ -26,7 +25,7 @@ const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
   </TouchableOpacity>
 );
 
-const Dashboard = ({ onLogout }) => {
+const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
   const { colors } = useTheme();
   const { activeAlert, dismissAlert, sendOK, sendCommand, isConnected, memberLocations, activityLog } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isHost, leaveLobby, isInLobby } = useLobby();
@@ -109,7 +108,7 @@ const Dashboard = ({ onLogout }) => {
   const renderContent = () => {
     switch (activeTab) {
       case 'home': return <HomeTab onChangeTab={setActiveTab} onLobbyPress={handleLobbyPress} />;
-      case 'location': return <LocationTab onLocationPress={handleLocationPress} onShowDeviceConnection={() => setActiveTab('deviceConnection')} />;
+      case 'location': return <LocationTab onLocationPress={handleLocationPress} onShowDeviceConnection={onRequireDeviceSetup} />;
       case 'message': return <MessageTab onOpenChat={handleOpenChat} />;
       case 'compass': return <CompassTab />;
       case 'profile': return (
@@ -126,14 +125,13 @@ const Dashboard = ({ onLogout }) => {
       case 'settings': return <SettingsScreen onBack={() => setActiveTab('profile')} />;
       case 'help': return <HelpScreen onBack={() => setActiveTab('profile')} />;
       case 'reportProblem': return <ReportProblemScreen onBack={() => setActiveTab('profile')} />;
-      case 'deviceConnection': return <DeviceConnectionScreen onBack={() => setActiveTab('location')} />;
       case 'members': return <MembersTab />;
       default: return <HomeTab />;
     }
   };
 
   // Hide bottom nav when on sub-screens
-  const subScreens = ['editProfile', 'chat', 'settings', 'help', 'reportProblem', 'deviceConnection'];
+  const subScreens = ['editProfile', 'chat', 'settings', 'help', 'reportProblem'];
   const showBottomNav = !subScreens.includes(activeTab);
 
   return (
