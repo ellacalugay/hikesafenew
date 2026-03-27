@@ -4,6 +4,7 @@ import { ChevronRight } from 'lucide-react-native';
 import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
 import { useTheme } from '../context/ThemeContext';
+import { useUser } from '../context/UserContext';
 
 const OnboardingDetails = ({ next, onShowReminder }) => {
   const { colors } = useTheme();
@@ -63,6 +64,15 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
   const [medicalCondition, setMedicalCondition] = useState('');
   const options = ['Beginner', 'Intermediate', 'Advanced', 'Expert'];
 
+  const {
+    contactName: ctxContactName,
+    contactPhone: ctxContactPhone,
+    medicalCondition: ctxMedicalCondition,
+    setContactName: setCtxContactName,
+    setContactPhone: setCtxContactPhone,
+    setMedicalCondition: setCtxMedicalCondition,
+  } = useUser();
+
   const validatePhone = (phone) => {
     if (!phone || phone.trim().length === 0) return 'Phone is required';
     const digits = phone.replace(/[^0-9+]/g, '');
@@ -87,8 +97,28 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
 
     setContactPhoneError('');
     setContactNameError('');
-    onShowReminder();
+
+    // persist to UserContext (which also saves to AsyncStorage)
+    const saveAndContinue = async () => {
+      try {
+        await setCtxContactName(contactName);
+        await setCtxContactPhone(contactPhone);
+        await setCtxMedicalCondition(medicalCondition);
+      } catch (e) {
+        console.error('Failed to save onboarding details:', e);
+      }
+      onShowReminder();
+    };
+
+    saveAndContinue();
   };
+
+  // Seed local state from context values
+  useEffect(() => {
+    if (ctxContactName) setContactName(ctxContactName);
+    if (ctxContactPhone) setContactPhone(ctxContactPhone);
+    if (ctxMedicalCondition) setMedicalCondition(ctxMedicalCondition);
+  }, [ctxContactName, ctxContactPhone, ctxMedicalCondition]);
 
   return (
     <ImageBackground

@@ -12,6 +12,7 @@ import OnboardingName from './screens/OnboardingName';
 import OnboardingDetails from './screens/OnboardingDetails';
 import LobbyScreen from './screens/LobbyScreen';
 import Dashboard from './screens/Dashboard';
+import { UserProvider } from './context/UserContext';
 
 function AppContent() {
   const { isConnected } = useBluetoothDevice();
@@ -283,11 +284,13 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <LobbyProvider>
-          <BluetoothProvider>
-            <AppContent />
-          </BluetoothProvider>
-        </LobbyProvider>
+        <UserProvider>
+          <LobbyProvider>
+            <BluetoothProvider>
+             <AppContent />
+            </BluetoothProvider>
+          </LobbyProvider>
+        </UserProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );

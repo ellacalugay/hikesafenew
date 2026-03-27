@@ -7,12 +7,25 @@ import { InputField, MainButton } from '../../components/shared';
 import { useTheme } from '../../context/ThemeContext';
 import { useLobby } from '../../context/LobbyContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
+import { useUser } from '../../context/UserContext';
 
 const EditProfileScreen = ({ onBack }) => {
   const { colors } = useTheme();
   const { myNickname, setMyNickname, deviceNickname, setDeviceNickname } = useLobby();
   const { connectedDevice, isConnected } = useBluetoothDevice();
-  
+  const {
+    firstName: ctxFirstName,
+    lastName: ctxLastName,
+    contactName: ctxContactName,
+    contactPhone: ctxContactPhone,
+    medicalCondition: ctxMedicalCondition,
+    setFirstName: setCtxFirstName,
+    setLastName: setCtxLastName,
+    setContactName: setCtxContactName,
+    setContactPhone: setCtxContactPhone,
+    setMedicalCondition: setCtxMedicalCondition,
+  } = useUser();
+
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [nickname, setNickname] = useState('');
@@ -29,7 +42,27 @@ const EditProfileScreen = ({ onBack }) => {
     if (deviceNickname) {
       setDeviceName(deviceNickname);
     }
-  }, [myNickname, deviceNickname]);
+  }
+    , [myNickname, deviceNickname]);
+
+  useEffect(() => {
+    if (ctxFirstName) {
+      setFirstName(ctxFirstName);
+    }
+    if (ctxLastName) {
+      setLastName(ctxLastName);
+    }
+    if (ctxContactName) {
+      setContactName(ctxContactName);
+    }
+    if (ctxContactPhone) {
+      setContactPhone(ctxContactPhone);
+    }
+    if (ctxMedicalCondition) {
+      setMedicalCondition(ctxMedicalCondition);
+    }
+
+  }, [ctxFirstName, ctxLastName, ctxContactName, ctxContactPhone, ctxMedicalCondition]);
 
   const handleSave = async () => {
     // Save nickname to LobbyContext
@@ -41,6 +74,12 @@ const EditProfileScreen = ({ onBack }) => {
     if (deviceName.trim()) {
       await setDeviceNickname(deviceName.trim());
     }
+    // Save personal info to UserContext
+    if (firstName.trim()) await setCtxFirstName(firstName.trim());
+    if (lastName.trim()) await setCtxLastName(lastName.trim());
+    if (contactName.trim()) await setCtxContactName(contactName.trim());
+    if (contactPhone.trim()) await setCtxContactPhone(contactPhone.trim());
+    if (medicalCondition.trim()) await setCtxMedicalCondition(medicalCondition.trim());
     
     Alert.alert('Saved', 'Your profile has been updated.');
     onBack();
