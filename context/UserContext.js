@@ -25,6 +25,7 @@ export const UserProvider = ({ children }) => {
   const [contactName, setContactNameState] = useState('');
   const [contactPhone, setContactPhoneState] = useState('');
   const [medicalCondition, setMedicalConditionState] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const load = async () => {

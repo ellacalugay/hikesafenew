@@ -36,6 +36,8 @@ const ServiceItem = ({ icon: Icon, label, onPress, colors }) => (
 
 const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
+  const { isConnected, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength } = useBluetoothDevice();
+  const { lobbyCode, lobbyName, isHost, myNickname } = useLobby();
   const { isConnected, isDeviceReachable, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isHost } = useLobby();
   
@@ -80,7 +82,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
         <View style={styles.headerRow}>
           <View>
             <Text style={[styles.welcomeText, { color: colors.textDark }]}>Hello!</Text>
-            <Text style={[styles.usernameTitle, { color: colors.textDark }]}>Hiker</Text>
+            <Text style={[styles.usernameTitle, { color: colors.textDark }]}>{myNickname}</Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             {isConnected && (

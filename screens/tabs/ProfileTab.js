@@ -4,6 +4,7 @@ import { User, Settings, HelpCircle, AlertOctagon, LogOut } from 'lucide-react-n
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
+import { useLobby } from '../../context/LobbyContext';
 
 const MenuOption = ({ icon: Icon, label, onPress, colors }) => (
   <TouchableOpacity style={[styles.menuOption, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]} onPress={onPress}>
@@ -14,6 +15,7 @@ const MenuOption = ({ icon: Icon, label, onPress, colors }) => (
 
 const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProblem }) => {
   const { colors } = useTheme();
+  const {myNickname} = useLobby();
   
   return (
   <ImageBackground 
@@ -27,7 +29,7 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
       <View style={[styles.avatarLarge, { backgroundColor: colors.primary }]}>
         <User size={40} color="white" />
       </View>
-      <Text style={[styles.profileName, { color: colors.textDark }]}>Hello!{'\n'}Hiker</Text>
+      <Text style={[styles.profileName, { color: colors.textDark }]}>Hello!{'\n'}{myNickname}</Text>
     </View>
 
     <View style={styles.menuList}>

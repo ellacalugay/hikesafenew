@@ -20,6 +20,9 @@ const OnboardingName = ({ next }) => {
   const buttonsOpacity = useRef(new Animated.Value(0)).current;
   const buttonsScale = useRef(new Animated.Value(0.9)).current;
 
+  const { myNickname, setMyNickname } = useLobby();
+  const { firstName, setFirstName, lastName, setLastName } = useUser();
+  
   useEffect(() => {
     Animated.stagger(150, [
       Animated.parallel([

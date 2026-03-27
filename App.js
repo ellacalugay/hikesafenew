@@ -8,14 +8,17 @@ import { BluetoothProvider } from './context/BluetoothContext';
 import { LobbyProvider } from './context/LobbyContext';
 import { UserProvider } from './context/UserContext';
 import { useBluetoothDevice } from './context/BluetoothContext';
+import { useUser } from './context/UserContext';
 import DeviceSetupScreen from './screens/DeviceSetupScreen';
 import OnboardingName from './screens/OnboardingName';
 import OnboardingDetails from './screens/OnboardingDetails';
 import LobbyScreen from './screens/LobbyScreen';
 import Dashboard from './screens/Dashboard';
+import { UserProvider } from './context/UserContext';
 
 function AppContent() {
   const { isConnected } = useBluetoothDevice();
+  const { firstName, lastName, isLoading: userLoading } = useUser();
   const [screen, setScreen] = useState('deviceSetup');
   const [resumeAfterReconnect, setResumeAfterReconnect] = useState(false);
   const [showReminder, setShowReminder] = useState(false);
@@ -29,6 +32,11 @@ function AppContent() {
     if (resumeAfterReconnect) {
       setResumeAfterReconnect(false);
       setScreen('dashboard');
+      return;
+    }
+    // If user profile already exists, skip onboarding and go to lobby
+    if (!userLoading && (firstName || lastName)) {
+      setScreen('lobby');
       return;
     }
     setScreen('onboarding1');
