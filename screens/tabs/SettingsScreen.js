@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Switch, Modal } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, Switch, Modal, Animated } from 'react-native';
 import { ArrowLeft, Bell, Moon, MapPin, Shield, ChevronRight, X } from 'lucide-react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
@@ -32,24 +32,40 @@ const SettingsScreen = ({ onBack }) => {
   const [notifications, setNotifications] = useState(true);
   const [locationTracking, setLocationTracking] = useState(true);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  const themeTransitionAnim = useRef(new Animated.Value(1)).current;
 
   const handleDarkModeToggle = (value) => {
-    toggleDarkMode(value);
+    // Fade out
+    Animated.timing(themeTransitionAnim, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => {
+      // Change theme
+      toggleDarkMode(value);
+      // Fade in
+      Animated.timing(themeTransitionAnim, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    });
   };
 
   return (
-    <View style={[styles.tabContainer, { backgroundColor: colors.background }]}>
-      <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
-        <TouchableOpacity 
-          onPress={onBack} 
-          style={{ position: 'absolute', left: 20, top: 15, padding: 5 }}
-        >
-          <ArrowLeft size={24} color={colors.textDark} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.textDark }]}>SETTINGS</Text>
-      </View>
+    <Animated.View style={[{ flex: 1, opacity: themeTransitionAnim }]}>
+      <View style={[styles.tabContainer, { backgroundColor: colors.background }]}>
+        <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
+          <TouchableOpacity 
+            onPress={onBack} 
+            style={{ position: 'absolute', left: 20, top: 15, padding: 5 }}
+          >
+            <ArrowLeft size={24} color={colors.textDark} />
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: colors.textDark }]}>SETTINGS</Text>
+        </View>
 
-      <ScrollView style={{ flex: 1, padding: 20 }}>
+        <ScrollView style={{ flex: 1, padding: 20 }}>
         <Text style={[styles.sectionHeader, { marginTop: 0, color: colors.textDark }]}>Notifications</Text>
         <SettingRow 
           icon={Bell} 
@@ -161,7 +177,8 @@ const SettingsScreen = ({ onBack }) => {
           </ScrollView>
         </View>
       </Modal>
-    </View>
+      </View>
+    </Animated.View>
   );
 };
 
