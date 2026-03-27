@@ -4,10 +4,17 @@ import { ChevronRight } from 'lucide-react-native';
 import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
 import { useTheme } from '../context/ThemeContext';
+import { useLobby } from '../context/LobbyContext';
 import { useUser } from '../context/UserContext';
 
 const OnboardingDetails = ({ next, onShowReminder }) => {
   const { colors } = useTheme();
+  const { setMyEmergencyContact } = useLobby();
+  const {
+    setContactName: setCtxContactName,
+    setContactPhone: setCtxContactPhone,
+    setMedicalCondition: setCtxMedicalCondition,
+  } = useUser();
   const titleOpacity = useRef(new Animated.Value(0)).current;
   const titleTranslateY = useRef(new Animated.Value(-20)).current;
   const formOpacity = useRef(new Animated.Value(0)).current;
@@ -98,8 +105,8 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
     setContactPhoneError('');
     setContactNameError('');
 
-    // persist to UserContext (which also saves to AsyncStorage)
-    const saveAndContinue = async () => {
+    const persistAndContinue = async () => {
+      // Persist to UserContext (main-branch onboarding expectations)
       try {
         await setCtxContactName(contactName);
         await setCtxContactPhone(contactPhone);
@@ -107,10 +114,16 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
       } catch (e) {
         console.error('Failed to save onboarding details:', e);
       }
+
+      // Persist to LobbyContext so we can sync to device later.
+      if (setMyEmergencyContact) {
+        setMyEmergencyContact({ name: contactName.trim(), phone: contactPhone.trim() });
+      }
+
       onShowReminder();
     };
 
-    saveAndContinue();
+    persistAndContinue();
   };
 
   // Seed local state from context values

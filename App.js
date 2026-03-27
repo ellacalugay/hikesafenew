@@ -6,6 +6,7 @@ import { styles } from './styles/styles';
 import { ThemeProvider } from './context/ThemeContext';
 import { BluetoothProvider } from './context/BluetoothContext';
 import { LobbyProvider } from './context/LobbyContext';
+import { UserProvider } from './context/UserContext';
 import { useBluetoothDevice } from './context/BluetoothContext';
 import { useUser } from './context/UserContext';
 import DeviceSetupScreen from './screens/DeviceSetupScreen';
@@ -295,7 +296,7 @@ export default function App() {
         <UserProvider>
           <LobbyProvider>
             <BluetoothProvider>
-             <AppContent />
+              <AppContent />
             </BluetoothProvider>
           </LobbyProvider>
         </UserProvider>

@@ -1,24 +1,25 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const UserContext = createContext(null);
 
-// Storage keys
-const FIRST_NAME_KEY = '@hikesafe_first_name';
-const LAST_NAME_KEY = '@hikesafe_last_name';
-const CONTACT_NAME_KEY = '@hikesafe_contact_name';
-const CONTACT_PHONE_KEY = '@hikesafe_contact_phone';
-const MEDICAL_CONDITION_KEY = '@hikesafe_medical_condition';
+const FIRST_NAME_KEY = '@hikesafe_user_first_name';
+const LAST_NAME_KEY = '@hikesafe_user_last_name';
+const CONTACT_NAME_KEY = '@hikesafe_user_contact_name';
+const CONTACT_PHONE_KEY = '@hikesafe_user_contact_phone';
+const MEDICAL_CONDITION_KEY = '@hikesafe_user_medical_condition';
 
 export const useUser = () => {
-  const context = useContext(UserContext);
-  if (!context) {
+  const ctx = useContext(UserContext);
+  if (!ctx) {
     throw new Error('useUser must be used within a UserProvider');
   }
-  return context;
+  return ctx;
 };
 
 export const UserProvider = ({ children }) => {
+  const [isLoading, setIsLoading] = useState(true);
+
   const [firstName, setFirstNameState] = useState('');
   const [lastName, setLastNameState] = useState('');
   const [contactName, setContactNameState] = useState('');
@@ -29,112 +30,95 @@ export const UserProvider = ({ children }) => {
   useEffect(() => {
     const load = async () => {
       try {
-        const [f, l, cName, cPhone, med] = await Promise.all([
+        const [fn, ln, cn, cp, mc] = await Promise.all([
           AsyncStorage.getItem(FIRST_NAME_KEY),
           AsyncStorage.getItem(LAST_NAME_KEY),
           AsyncStorage.getItem(CONTACT_NAME_KEY),
           AsyncStorage.getItem(CONTACT_PHONE_KEY),
           AsyncStorage.getItem(MEDICAL_CONDITION_KEY),
         ]);
-
-        if (f) setFirstNameState(f);
-        if (l) setLastNameState(l);
-        if (cName) setContactNameState(cName);
-        if (cPhone) setContactPhoneState(cPhone);
-        if (med) setMedicalConditionState(med);
-      } catch (error) {
-        console.error('Failed to load user data:', error);
+        if (fn) setFirstNameState(fn);
+        if (ln) setLastNameState(ln);
+        if (cn) setContactNameState(cn);
+        if (cp) setContactPhoneState(cp);
+        if (mc) setMedicalConditionState(mc);
+      } catch (e) {
+        console.error('Failed to load user profile:', e);
       } finally {
         setIsLoading(false);
       }
     };
+
     load();
   }, []);
 
   const setFirstName = useCallback(async (value) => {
-    setFirstNameState(value);
+    const next = (value || '').toString();
+    setFirstNameState(next);
     try {
-      await AsyncStorage.setItem(FIRST_NAME_KEY, value);
+      await AsyncStorage.setItem(FIRST_NAME_KEY, next);
     } catch (e) {
-      console.error('Failed to save first name:', e);
+      console.error('Failed to persist first name:', e);
     }
   }, []);
 
   const setLastName = useCallback(async (value) => {
-    setLastNameState(value);
+    const next = (value || '').toString();
+    setLastNameState(next);
     try {
-      await AsyncStorage.setItem(LAST_NAME_KEY, value);
+      await AsyncStorage.setItem(LAST_NAME_KEY, next);
     } catch (e) {
-      console.error('Failed to save last name:', e);
+      console.error('Failed to persist last name:', e);
     }
   }, []);
 
   const setContactName = useCallback(async (value) => {
-    setContactNameState(value);
+    const next = (value || '').toString();
+    setContactNameState(next);
     try {
-      await AsyncStorage.setItem(CONTACT_NAME_KEY, value);
+      await AsyncStorage.setItem(CONTACT_NAME_KEY, next);
     } catch (e) {
-      console.error('Failed to save contact name:', e);
+      console.error('Failed to persist contact name:', e);
     }
   }, []);
 
   const setContactPhone = useCallback(async (value) => {
-    setContactPhoneState(value);
+    const next = (value || '').toString();
+    setContactPhoneState(next);
     try {
-      await AsyncStorage.setItem(CONTACT_PHONE_KEY, value);
+      await AsyncStorage.setItem(CONTACT_PHONE_KEY, next);
     } catch (e) {
-      console.error('Failed to save contact phone:', e);
+      console.error('Failed to persist contact phone:', e);
     }
   }, []);
 
   const setMedicalCondition = useCallback(async (value) => {
-    setMedicalConditionState(value);
+    const next = (value || '').toString();
+    setMedicalConditionState(next);
     try {
-      await AsyncStorage.setItem(MEDICAL_CONDITION_KEY, value);
+      await AsyncStorage.setItem(MEDICAL_CONDITION_KEY, next);
     } catch (e) {
-      console.error('Failed to save medical condition:', e);
+      console.error('Failed to persist medical condition:', e);
     }
   }, []);
-
-  const clearUser = useCallback(async () => {
-    setFirstNameState('');
-    setLastNameState('');
-    setContactNameState('');
-    setContactPhoneState('');
-    setMedicalConditionState('');
-    try {
-      await Promise.all([
-        AsyncStorage.removeItem(FIRST_NAME_KEY),
-        AsyncStorage.removeItem(LAST_NAME_KEY),
-        AsyncStorage.removeItem(CONTACT_NAME_KEY),
-        AsyncStorage.removeItem(CONTACT_PHONE_KEY),
-        AsyncStorage.removeItem(MEDICAL_CONDITION_KEY),
-      ]);
-    } catch (e) {
-      console.error('Failed to clear user data:', e);
-    }
-  }, []);
-
-  const value = {
-    firstName,
-    lastName,
-    contactName,
-    contactPhone,
-    medicalCondition,
-    isLoading,
-    setFirstName,
-    setLastName,
-    setContactName,
-    setContactPhone,
-    setMedicalCondition,
-    clearUser,
-  };
 
   return (
-    <UserContext.Provider value={value}>
+    <UserContext.Provider
+      value={{
+        isLoading,
+        firstName,
+        lastName,
+        contactName,
+        contactPhone,
+        medicalCondition,
+        setFirstName,
+        setLastName,
+        setContactName,
+        setContactPhone,
+        setMedicalCondition,
+      }}
+    >
       {children}
     </UserContext.Provider>
   );
 };
-
-export default UserContext;
