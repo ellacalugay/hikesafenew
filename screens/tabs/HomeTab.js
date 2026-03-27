@@ -36,8 +36,19 @@ const ServiceItem = ({ icon: Icon, label, onPress, colors }) => (
 
 const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
-  const { isConnected, connectedDevice, myLocation, memberLocations, statusMessage, sendSOS, sendOK } = useBluetoothDevice();
+  const { isConnected, connectedDevice, myLocation, memberLocations, statusMessage, sendSOS, sendOK, loraSignalStrength } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isHost, isInLobby } = useLobby();
+  
+  // Get signal quality from RSSI (LoRa typical ranges: -30 to -120 dBm)
+  const getSignalQuality = (rssi) => {
+    if (rssi === null || rssi === undefined) return 0;
+    if (rssi > -70) return 3;  // Excellent
+    if (rssi > -90) return 2;  // Good
+    if (rssi > -110) return 1; // Fair
+    return 0; // Poor/No signal
+  };
+  
+  const signalQuality = getSignalQuality(loraSignalStrength);
   
   // Calculate nearest member distance
   const nearestDistance = useMemo(() => {
@@ -128,7 +139,14 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
         {/* GPS Status Preview */}
         {isConnected && (
           <View style={[localStyles.gpsPreview, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
-            <Text style={[localStyles.gpsLabel, { color: colors.gray }]}>GPS Status</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={[localStyles.gpsLabel, { color: colors.gray }]}>GPS Status</Text>
+              {loraSignalStrength && (
+                <Text style={[localStyles.rssiText, { color: loraSignalStrength > -90 ? colors.primary : colors.accent }]}>
+                  LoRa: {loraSignalStrength} dBm
+                </Text>
+              )}
+            </View>
             <Text style={[localStyles.gpsValue, { color: myLocation.valid ? colors.primary : colors.gray }]}>
               {myLocation.valid 
                 ? `${myLocation.lat.toFixed(4)}, ${myLocation.lng.toFixed(4)} (${myLocation.satellites} sats)`
@@ -165,11 +183,15 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
               </View>
               <View style={styles.statItem}>
                 <Text style={styles.statLabel}>SIGNAL</Text>
-                <View style={styles.signalIcon}>
-                  <View style={[styles.bar, {height: 6, backgroundColor: isConnected ? '#fff' : '#999'}]} />
-                  <View style={[styles.bar, {height: 10, backgroundColor: isConnected ? '#fff' : '#999'}]} />
-                  <View style={[styles.bar, {height: 14, backgroundColor: isConnected ? '#fff' : '#666'}]} />
-                </View>
+                {loraSignalStrength ? (
+                  <Text style={[styles.statValue, { fontSize: 12 }]}>{loraSignalStrength} dBm</Text>
+                ) : (
+                  <View style={styles.signalIcon}>
+                    <View style={[styles.bar, {height: 6, backgroundColor: signalQuality >= 1 ? '#fff' : '#666'}]} />
+                    <View style={[styles.bar, {height: 10, backgroundColor: signalQuality >= 2 ? '#fff' : '#666'}]} />
+                    <View style={[styles.bar, {height: 14, backgroundColor: signalQuality >= 3 ? '#fff' : '#666'}]} />
+                  </View>
+                )}
               </View>
             </View>
           </LinearGradient>
@@ -336,6 +358,10 @@ const localStyles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     fontFamily: 'monospace',
+  },
+  rssiText: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   bottomContainer: {
     position: 'absolute',

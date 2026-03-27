@@ -82,6 +82,7 @@ export const BluetoothProvider = ({ children }) => {
   // Connection health monitoring
   const [lastDataReceived, setLastDataReceived] = useState(null);
   const [connectionHealth, setConnectionHealth] = useState('unknown'); // 'good', 'warning', 'lost'
+  const [loraSignalStrength, setLoraSignalStrength] = useState(null); // RSSI in dBm from device
   
   // Activity log for real-time updates
   const [activityLog, setActivityLog] = useState([]);
@@ -558,7 +559,7 @@ export const BluetoothProvider = ({ children }) => {
     lines.forEach(line => {
       const trimmed = line.trim();
       
-      // SELF:[LAT],[LON],[SATS] - Own GPS location from connected device
+      // SELF:[LAT],[LON],[SATS],[RSSI] - Own GPS location and LoRa signal from connected device
       if (trimmed.startsWith('SELF:')) {
         const parts = trimmed.substring(5).split(',');
         if (parts.length >= 3) {
@@ -567,6 +568,14 @@ export const BluetoothProvider = ({ children }) => {
           const satellites = parseInt(parts[2], 10);
           const valid = lat !== 0 || lng !== 0;
           setMyLocation({ lat, lng, satellites, valid });
+          
+          // Parse RSSI if provided (4th parameter)
+          if (parts.length >= 4) {
+            const rssi = parseInt(parts[3], 10);
+            if (!isNaN(rssi) && rssi !== 0) {
+              setLoraSignalStrength(rssi);
+            }
+          }
         }
       }
       
@@ -862,6 +871,7 @@ export const BluetoothProvider = ({ children }) => {
     setMyLocation({ lat: 0, lng: 0, satellites: 0, valid: false });
     setConnectionHealth('unknown');
     setLastDataReceived(null);
+    setLoraSignalStrength(null);
   }, []);
 
   // Send command to device via BLE
@@ -1050,6 +1060,7 @@ export const BluetoothProvider = ({ children }) => {
     unreadCount,
     connectionHealth,
     lastDataReceived,
+    loraSignalStrength,
     activityLog,
     
     // Breadcrumbs / Trail tracking
