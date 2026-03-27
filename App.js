@@ -62,6 +62,7 @@ function AppContent() {
   const handleLogout = () => setScreen('deviceSetup');
 
   // If connection drops after being connected, force user back to setup connection screen.
+  // Only do this from the dashboard; other screens (onboarding/lobby) may not require an active BLE link.
   useEffect(() => {
     if (isConnected) {
       wasConnectedRef.current = true;
