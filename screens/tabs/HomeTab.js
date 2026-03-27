@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, Alert, ImageBackground } from 'react-native';
+import React, { useMemo } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ImageBackground } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Trees, User, MessageCircle, MapPin, Compass, AlertTriangle, Radio, Check, Users } from 'lucide-react-native';
+import { Trees, User, MessageCircle, MapPin, Compass, Radio, Users } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
@@ -36,8 +36,8 @@ const ServiceItem = ({ icon: Icon, label, onPress, colors }) => (
 
 const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
-  const { isConnected, connectedDevice, myLocation, memberLocations, statusMessage, sendSOS, sendOK, loraSignalStrength } = useBluetoothDevice();
-  const { lobbyCode, lobbyName, isHost, isInLobby } = useLobby();
+  const { isConnected, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength } = useBluetoothDevice();
+  const { lobbyCode, lobbyName, isHost } = useLobby();
   
   // Get signal quality from RSSI (LoRa typical ranges: -30 to -120 dBm)
   const getSignalQuality = (rssi) => {
@@ -68,36 +68,6 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
     if (meters < 1000) return `${meters.toFixed(0)} m`;
     return `${(meters / 1000).toFixed(1)} km`;
   };
-  const [showSOSConfirm, setShowSOSConfirm] = useState(false);
-  const [showOKConfirm, setShowOKConfirm] = useState(false);
-
-  const handleSOSPress = () => {
-    if (!isConnected) {
-      Alert.alert('Not Connected', 'Please connect to your SOS device first via the Location tab.');
-      return;
-    }
-    setShowSOSConfirm(true);
-  };
-
-  const handleConfirmSOS = async () => {
-    setShowSOSConfirm(false);
-    await sendSOS();
-    Alert.alert('SOS Sent', 'Your SOS signal has been broadcasted to all group members.');
-  };
-
-  const handleOKPress = () => {
-    if (!isConnected) {
-      Alert.alert('Not Connected', 'Please connect to your SOS device first via the Location tab.');
-      return;
-    }
-    setShowOKConfirm(true);
-  };
-
-  const handleConfirmOK = async () => {
-    setShowOKConfirm(false);
-    await sendOK();
-    Alert.alert('OK Sent', 'Your OK status has been broadcasted to all group members.');
-  };
   
   return (
     <ImageBackground 
@@ -106,7 +76,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
       imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
     >
       <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
-      <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={[styles.scrollContent, { backgroundColor: 'transparent', paddingBottom: 180 }]}>
+      <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={[styles.scrollContent, { backgroundColor: 'transparent', paddingBottom: 120 }]}>
         <View style={styles.headerRow}>
           <View>
             <Text style={[styles.welcomeText, { color: colors.textDark }]}>Hello!</Text>
@@ -206,120 +176,11 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
         </View>
 
       </ScrollView>
-
-      {/* Bottom SOS / OK Buttons (fixed) */}
-      <View style={localStyles.bottomContainer} pointerEvents="box-none">
-        <TouchableOpacity 
-          style={[localStyles.sosButton, { backgroundColor: isConnected ? colors.accent : colors.gray }]}
-          onPress={handleSOSPress}
-          activeOpacity={0.8}
-        >
-          <AlertTriangle size={28} color="#fff" />
-          <Text style={localStyles.sosButtonText}>SOS</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={[localStyles.okButton, { backgroundColor: isConnected ? colors.primary : colors.gray }]}
-          onPress={handleOKPress}
-          activeOpacity={0.8}
-        >
-          <Check size={28} color="#fff" />
-          <Text style={localStyles.okButtonText}>I'm OK</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* SOS Confirmation Modal */}
-      <Modal visible={showSOSConfirm} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: '#FFF0F0', borderWidth: 2, borderColor: colors.accent }]}>
-            <AlertTriangle size={48} color={colors.accent} style={{ alignSelf: 'center', marginBottom: 16 }} />
-            <Text style={[styles.modalTitle, { color: colors.accent, textAlign: 'center' }]}>Send SOS?</Text>
-            <Text style={[styles.modalText, { color: colors.textDark, textAlign: 'center' }]}>
-              This will broadcast an emergency signal to all group members via LoRa radio.
-            </Text>
-            <View style={{ flexDirection: 'row', marginTop: 20 }}>
-              <TouchableOpacity 
-                style={[styles.modalButton, { backgroundColor: colors.inputBg, marginRight: 10, flex: 1 }]}
-                onPress={() => setShowSOSConfirm(false)}
-              >
-                <Text style={{ color: colors.textDark, fontWeight: '600' }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.modalButton, { backgroundColor: colors.accent, flex: 1 }]}
-                onPress={handleConfirmSOS}
-              >
-                <Text style={{ color: 'white', fontWeight: '600' }}>SEND SOS</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* OK Confirmation Modal */}
-      <Modal visible={showOKConfirm} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.modalBg }]}>
-            <Check size={48} color={colors.primary} style={{ alignSelf: 'center', marginBottom: 16 }} />
-            <Text style={[styles.modalTitle, { color: colors.primary, textAlign: 'center' }]}>Send "I'm OK"?</Text>
-            <Text style={[styles.modalText, { color: colors.textDark, textAlign: 'center' }]}>
-              This will let all group members know you are safe.
-            </Text>
-            <View style={{ flexDirection: 'row', marginTop: 20 }}>
-              <TouchableOpacity 
-                style={[styles.modalButton, { backgroundColor: colors.inputBg, marginRight: 10, flex: 1 }]}
-                onPress={() => setShowOKConfirm(false)}
-              >
-                <Text style={{ color: colors.textDark, fontWeight: '600' }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.modalButton, { backgroundColor: colors.primary, flex: 1 }]}
-                onPress={handleConfirmOK}
-              >
-                <Text style={{ color: 'white', fontWeight: '600' }}>SEND OK</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </ImageBackground>
   );
 };
 
 const localStyles = StyleSheet.create({
-  emergencyButtons: {
-    flexDirection: 'row',
-    marginBottom: 16,
-  },
-  sosButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 12,
-    marginRight: 8,
-  },
-  sosButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
-    marginLeft: 8,
-  },
-  okButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 12,
-    marginLeft: 8,
-  },
-  okButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
-    marginLeft: 8,
-  },
   connectedIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -362,15 +223,6 @@ const localStyles = StyleSheet.create({
   rssiText: {
     fontSize: 11,
     fontWeight: '600',
-  },
-  bottomContainer: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    bottom: 120,
-    flexDirection: 'row',
-    alignItems: 'center',
-    zIndex: 10,
   },
 });
 
