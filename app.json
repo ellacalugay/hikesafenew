@@ -4,7 +4,6 @@
     "slug": "HSafeNew",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/hike.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -18,10 +17,6 @@
     },
     "android": {
       "package": "com.hikesafe.app",
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/hike.png",
-        "backgroundColor": "#ffffff"
-      },
       "edgeToEdgeEnabled": true,
       "permissions": [
         "android.permission.BLUETOOTH",

@@ -59,7 +59,7 @@ export const useBluetoothDevice = () => {
 };
 
 export const BluetoothProvider = ({ children }) => {
-  const { isInLobby, registerMemberSync, setMemberOffline, setMyDeviceId } = useLobby();
+  const { isInLobby, registerMemberSync, setMemberOffline, setMyDeviceId, registerBleCommandSender, syncLobbyToDevice, lobbyCode } = useLobby();
 
   // Connection state
   const [isEnabled, setIsEnabled] = useState(false);
@@ -90,6 +90,10 @@ export const BluetoothProvider = ({ children }) => {
   const [lastDataReceived, setLastDataReceived] = useState(null);
   const [connectionHealth, setConnectionHealth] = useState('unknown'); // 'good', 'warning', 'lost'
   const [loraSignalStrength, setLoraSignalStrength] = useState(null); // RSSI in dBm from device
+
+  // Track whether the BLE link *actually* dropped (vs. screen navigation/rerender).
+  const wasEverConnectedRef = useRef(false);
+  const lastDisconnectAtRef = useRef(null);
   
   // Activity log for real-time updates
   const [activityLog, setActivityLog] = useState([]);
@@ -1112,6 +1116,7 @@ export const BluetoothProvider = ({ children }) => {
       subscriptionRef.current = subscription;
       setConnectedDevice({ ...device, bleDevice: connectedDev });
       setIsConnected(true);
+      wasEverConnectedRef.current = true;
       setLastDataReceived(Date.now());
       setConnectionHealth('good');
 
@@ -1167,6 +1172,7 @@ export const BluetoothProvider = ({ children }) => {
     
     setConnectedDevice(null);
     setIsConnected(false);
+    lastDisconnectAtRef.current = Date.now();
     stopEmergencySignals();
     setMyLocation({ lat: 0, lng: 0, satellites: 0, valid: false });
     setConnectionHealth('unknown');
@@ -1216,6 +1222,22 @@ export const BluetoothProvider = ({ children }) => {
       return false;
     }
   }, [isConnected, handleConnectionLost]);
+
+  // Expose BLE command sender to LobbyContext so it can sync lobby code to device.
+  useEffect(() => {
+    if (registerBleCommandSender) {
+      registerBleCommandSender(sendCommand);
+    }
+  }, [registerBleCommandSender, sendCommand]);
+
+  // Auto-sync lobby to device whenever lobbyCode changes while connected.
+  useEffect(() => {
+    if (!isConnected) return;
+    if (!lobbyCode) return;
+    if (!syncLobbyToDevice) return;
+    // Fire-and-forget; LobbyContext already handles missing sender.
+    syncLobbyToDevice(sendCommand);
+  }, [isConnected, lobbyCode, syncLobbyToDevice, sendCommand]);
 
   // Convenience methods
   const sendSOS = useCallback(() => sendCommand('SOS'), [sendCommand]);
