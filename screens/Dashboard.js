@@ -39,7 +39,7 @@ const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
 const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
   const { colors } = useTheme();
   const { activeAlert, dismissAlert, sendSOS, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
-  const { lobbyCode, lobbyName, isHost, leaveLobby, isInLobby } = useLobby();
+  const { lobbyCode, lobbyName, isHost, leaveLobby, isInLobby, hostDeviceId, myDeviceId } = useLobby();
   const [activeTab, setActiveTab] = useState('home');
   const [chatName, setChatName] = useState('');
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -69,7 +69,11 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
       // Small delay to ensure device is ready for commands
       const syncTimer = setTimeout(async () => {
         console.log('Auto-syncing lobby code to device:', lobbyCode);
-        await sendCommand(`LOBBY:${lobbyCode}`);
+        const synced = await sendCommand(`LOBBY:${lobbyCode}`);
+        if (synced) {
+          // Broadcast local lobby-sync timestamp so all phones can track join order.
+          await sendCommand(`MSG:0,__JOINED_TS__:${Date.now()}`);
+        }
       }, 1000);
       return () => clearTimeout(syncTimer);
     }
@@ -77,7 +81,6 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
 
   const handleDismissSOSAlert = () => {
     setShowSOSAlertModal(false);
-    dismissAlert();
   };
 
   const handleRespondOK = async () => {
@@ -134,6 +137,12 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
     setShowLobbyModal(true);
   };
 
+  const adminDisplay = hostDeviceId === null || hostDeviceId === undefined
+    ? 'Electing...'
+    : myDeviceId === hostDeviceId
+      ? `You (Device ${hostDeviceId})`
+      : `Device ${hostDeviceId}`;
+
   const renderContent = () => {
     switch (activeTab) {
       case 'home': return <HomeTab onChangeTab={setActiveTab} onLobbyPress={handleLobbyPress} />;
@@ -154,7 +163,7 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
       case 'settings': return <SettingsScreen onBack={() => setActiveTab('profile')} />;
       case 'help': return <HelpScreen onBack={() => setActiveTab('profile')} />;
       case 'reportProblem': return <ReportProblemScreen onBack={() => setActiveTab('profile')} />;
-      case 'members': return <MembersTab />;
+      case 'members': return isHost ? <MembersTab /> : <HomeTab onChangeTab={setActiveTab} onLobbyPress={handleLobbyPress} />;
       default: return <HomeTab />;
     }
   };
@@ -312,6 +321,10 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
                         <Text style={{ color: colors.gray, fontSize: 12, fontWeight: '600' }}>ROLE</Text>
                         <Text style={{ color: colors.primary, fontWeight: '600' }}>{isHost ? 'Host' : 'Member'}</Text>
                       </View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
+                        <Text style={{ color: colors.gray, fontSize: 12, fontWeight: '600' }}>CURRENT ADMIN</Text>
+                        <Text style={{ color: colors.primary, fontWeight: '600' }}>{adminDisplay}</Text>
+                      </View>
                     </View>
 
                     <View style={{ flexDirection: 'row', marginBottom: 12 }}>
@@ -388,15 +401,17 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
                     </View>
 
                     {/* View Members Button */}
-                    <TouchableOpacity
-                      style={[styles.modalButton, { backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.primary, marginTop: 10 }]}
-                      onPress={() => {
-                        setShowLobbyModal(false);
-                        setActiveTab('members');
-                      }}
-                    >
-                      <Text style={{ color: colors.primary, fontWeight: '600' }}>View Members</Text>
-                    </TouchableOpacity>
+                    {isHost && (
+                      <TouchableOpacity
+                        style={[styles.modalButton, { backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.primary, marginTop: 10 }]}
+                        onPress={() => {
+                          setShowLobbyModal(false);
+                          setActiveTab('members');
+                        }}
+                      >
+                        <Text style={{ color: colors.primary, fontWeight: '600' }}>View Members</Text>
+                      </TouchableOpacity>
+                    )}
                   </ScrollView>
                 ) : (
                   <>
