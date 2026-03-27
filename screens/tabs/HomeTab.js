@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ImageBackground } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Trees, User, MessageCircle, MapPin, Compass, Radio, Users } from 'lucide-react-native';
+import { Trees, User, MessageCircle, MapPin, Compass, Radio, Users, AlertTriangle } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
@@ -38,6 +38,8 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
   const { isConnected, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isHost, myNickname } = useLobby();
+  const { isConnected, isDeviceReachable, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert } = useBluetoothDevice();
+  const { lobbyCode, lobbyName, isHost } = useLobby();
   
   // Get signal quality from RSSI (LoRa typical ranges: -30 to -120 dBm)
   const getSignalQuality = (rssi) => {
@@ -89,6 +91,11 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
                 <Text style={[localStyles.connectedText, { color: colors.primary }]}>
                   {connectedDevice?.name?.replace('SOS-', '') || 'Device'}
                 </Text>
+                {connectedDevicesCount > 1 && (
+                  <Text style={[localStyles.deviceCountBadge, { color: colors.primary }]}>
+                    +{connectedDevicesCount - 1}
+                  </Text>
+                )}
               </View>
             )}
             <Trees size={30} color={colors.primary} />
@@ -104,6 +111,27 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
               {statusMessage.replace(/_/g, ' ')}
             </Text>
           </View>
+        )}
+
+        {/* Persistent Emergency Banner */}
+        {activeAlert && (activeAlert.type === 'SOS' || activeAlert.type === 'MORSE') && (
+          <TouchableOpacity
+            style={localStyles.emergencyBanner}
+            activeOpacity={0.85}
+            onPress={() => onChangeTab('location')}
+          >
+            <View style={localStyles.emergencyIconWrap}>
+              <AlertTriangle size={18} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={localStyles.emergencyTitle}>
+                {activeAlert.type === 'MORSE' ? 'MORSE EMERGENCY ACTIVE' : 'SOS EMERGENCY ACTIVE'}
+              </Text>
+              <Text style={localStyles.emergencySubtitle}>
+                {activeAlert.deviceId ? `Device ${activeAlert.deviceId}` : 'Connected device'} needs attention. Tap to view location.
+              </Text>
+            </View>
+          </TouchableOpacity>
         )}
 
         {/* GPS Status Preview */}
@@ -195,6 +223,15 @@ const localStyles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 4,
   },
+  deviceCountBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    marginLeft: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 6,
+    backgroundColor: 'rgba(107, 142, 35, 0.2)',
+  },
   statusBanner: {
     padding: 12,
     borderRadius: 8,
@@ -204,6 +241,34 @@ const localStyles = StyleSheet.create({
   statusText: {
     fontWeight: '600',
     fontSize: 14,
+  },
+  emergencyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#C62828',
+    borderRadius: 10,
+    marginBottom: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  emergencyIconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    marginRight: 10,
+  },
+  emergencyTitle: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  emergencySubtitle: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 12,
+    marginTop: 2,
   },
   gpsPreview: {
     padding: 12,

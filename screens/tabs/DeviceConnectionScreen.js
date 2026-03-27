@@ -26,6 +26,7 @@ const DeviceConnectionScreen = ({ onBack }) => {
     connectedDevice,
     availableDevices,
     myLocation,
+    connectedDevicesCount,
     requestEnable,
     scanForDevices,
     connectToDevice,
@@ -161,9 +162,16 @@ const DeviceConnectionScreen = ({ onBack }) => {
         <View style={[styles.connectedCard, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
           <View style={styles.connectedHeader}>
             <Radio size={20} color={colors.primary} />
-            <Text style={[styles.connectedTitle, { color: colors.primary, flex: 1 }]} numberOfLines={1}>
-              Connected to {getDeviceDisplayName()}
-            </Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.connectedTitle, { color: colors.primary }]} numberOfLines={1}>
+                Connected to {getDeviceDisplayName()}
+              </Text>
+              {connectedDevicesCount > 1 && (
+                <Text style={[styles.multiDeviceText, { color: colors.primary }]}>
+                  {connectedDevicesCount} phones connected
+                </Text>
+              )}
+            </View>
             <TouchableOpacity onPress={handleEditNickname} style={{ padding: 4 }}>
               <Edit2 size={18} color={colors.primary} />
             </TouchableOpacity>
@@ -372,6 +380,12 @@ const styles = StyleSheet.create({
   connectedTitle: {
     fontSize: 16,
     fontWeight: '600',
+    marginLeft: 8,
+  },
+  multiDeviceText: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginTop: 2,
     marginLeft: 8,
   },
   gpsInfo: {
