@@ -59,7 +59,19 @@ export const useBluetoothDevice = () => {
 };
 
 export const BluetoothProvider = ({ children }) => {
-  const { isInLobby, registerMemberSync, setMemberOffline, setMyDeviceId, registerBleCommandSender, syncLobbyToDevice, lobbyCode } = useLobby();
+  const {
+    isInLobby,
+    registerMemberSync,
+    setMemberOffline,
+    setMyDeviceId,
+    registerBleCommandSender,
+    syncLobbyToDevice,
+    lobbyCode,
+    myNickname,
+    setMemberNickname,
+    myEmergencyContact,
+    setEmergencyContactForDevice,
+  } = useLobby();
 
   // Connection state
   const [isEnabled, setIsEnabled] = useState(false);
@@ -953,6 +965,39 @@ export const BluetoothProvider = ({ children }) => {
         }
         setTimeout(() => setStatusMessage(''), 3000);
       }
+
+      // Nickname sync from device: NICK:[DEVICE_ID],[NICKNAME]
+      else if (trimmed.startsWith('NICK:')) {
+        const payload = trimmed.substring(5);
+        const firstComma = payload.indexOf(',');
+        if (firstComma > 0) {
+          const deviceId = parseInt(payload.substring(0, firstComma), 10);
+          const nickname = payload.substring(firstComma + 1).trim();
+          if (!Number.isNaN(deviceId) && nickname.length > 0 && setMemberNickname) {
+            setMemberNickname(deviceId, nickname);
+            setStatusMessage(`Name synced: ${nickname}`);
+            setTimeout(() => setStatusMessage(''), 2000);
+          }
+        }
+      }
+
+      // Emergency contact sync from device: EC:[DEVICE_ID],[NAME],[PHONE]
+      else if (trimmed.startsWith('EC:')) {
+        const payload = trimmed.substring(3).trim();
+        const firstComma = payload.indexOf(',');
+        const lastComma = payload.lastIndexOf(',');
+
+        // Expected: "<deviceId>,<name>,<phone>".
+        // Use first+last comma so we can tolerate commas inside the name.
+        if (firstComma > 0 && lastComma > firstComma) {
+          const deviceId = parseInt(payload.substring(0, firstComma).trim(), 10);
+          const name = payload.substring(firstComma + 1, lastComma).trim();
+          const phone = payload.substring(lastComma + 1).trim();
+          if (!Number.isNaN(deviceId) && setEmergencyContactForDevice) {
+            setEmergencyContactForDevice(deviceId, { name, phone });
+          }
+        }
+      }
       
       // MORSE input feedback
       else if (trimmed === 'MORSE_DOT') {
@@ -1054,7 +1099,24 @@ export const BluetoothProvider = ({ children }) => {
         setTimeout(() => setStatusMessage(''), 2000);
       }
     });
-  }, [addActivity, connectedDevice, isInLobby, parseDeviceId, pushEmergencyNotification, registerMemberSync, setMemberOffline, setMyDeviceId, shouldThrottleEmergency, startEmergencySignals, stopEmergencySignals, triggerVibration]);
+  }, [addActivity, connectedDevice, isInLobby, parseDeviceId, pushEmergencyNotification, registerMemberSync, setEmergencyContactForDevice, setMemberNickname, setMemberOffline, setMyDeviceId, shouldThrottleEmergency, startEmergencySignals, stopEmergencySignals, triggerVibration]);
+
+  const sendMyNicknameToDevice = useCallback(async () => {
+    if (!isConnected) return false;
+    const nick = (myNickname || '').trim();
+    if (!nick) return false;
+    // Firmware-side suggestion: accept `NICK:<name>` and broadcast it via LoRa.
+    return sendCommand(`NICK:${nick}`);
+  }, [isConnected, myNickname, sendCommand]);
+
+  const sendMyEmergencyContactToDevice = useCallback(async () => {
+    if (!isConnected) return false;
+    const name = (myEmergencyContact?.name || '').trim();
+    const phone = (myEmergencyContact?.phone || '').trim();
+    if (!name || !phone) return false;
+    // Firmware-side suggestion: accept `EC:<name>,<phone>` and broadcast it via LoRa.
+    return sendCommand(`EC:${name},${phone}`);
+  }, [isConnected, myEmergencyContact, sendCommand]);
 
   // Connect to a BLE device - direct connection, no pairing needed!
   const connectToDevice = useCallback(async (device) => {
@@ -1238,6 +1300,14 @@ export const BluetoothProvider = ({ children }) => {
     // Fire-and-forget; LobbyContext already handles missing sender.
     syncLobbyToDevice(sendCommand);
   }, [isConnected, lobbyCode, syncLobbyToDevice, sendCommand]);
+
+  // Auto-send our nickname after connection and when entering a lobby.
+  useEffect(() => {
+    if (!isConnected) return;
+    if (!isInLobby) return;
+    sendMyNicknameToDevice();
+    sendMyEmergencyContactToDevice();
+  }, [isConnected, isInLobby, sendMyNicknameToDevice, sendMyEmergencyContactToDevice]);
 
   // Convenience methods
   const sendSOS = useCallback(() => sendCommand('SOS'), [sendCommand]);

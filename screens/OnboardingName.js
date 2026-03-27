@@ -1,11 +1,16 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, KeyboardAvoidingView, ScrollView, Platform, ImageBackground, Animated } from 'react-native';
 import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
 import { useTheme } from '../context/ThemeContext';
+import { useLobby } from '../context/LobbyContext';
 
 const OnboardingName = ({ next }) => {
   const { colors } = useTheme();
+  const { setMyNickname } = useLobby();
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [nickname, setNickname] = useState('');
   const titleOpacity = useRef(new Animated.Value(0)).current;
   const titleTranslateY = useRef(new Animated.Value(-20)).current;
   const formOpacity = useRef(new Animated.Value(0)).current;
@@ -54,6 +59,18 @@ const OnboardingName = ({ next }) => {
     ]).start();
   }, []);
   
+  const handleNext = async () => {
+    const chosen = (nickname || `${firstName} ${lastName}`.trim() || firstName || '').trim();
+    if (chosen && setMyNickname) {
+      try {
+        await setMyNickname(chosen);
+      } catch (e) {
+        // Non-blocking; proceed even if storage fails
+      }
+    }
+    next && next();
+  };
+
   return (
     <ImageBackground
       source={require('../assets/int bg 1.png')}
@@ -76,14 +93,14 @@ const OnboardingName = ({ next }) => {
             </Text>
           
             <View style={[styles.formSection, { marginTop: 16 }]}>
-              <InputField label="First Name" placeholder="e.g. John" />
-              <InputField label="Last Name" placeholder="e.g. Doe" />
-              <InputField label="Nickname" placeholder="e.g. JD" />
+              <InputField label="First Name" placeholder="e.g. John" value={firstName} onChangeText={setFirstName} />
+              <InputField label="Last Name" placeholder="e.g. Doe" value={lastName} onChangeText={setLastName} />
+              <InputField label="Nickname" placeholder="e.g. JD" value={nickname} onChangeText={setNickname} />
             </View>
 
             <View style={[styles.footer, { marginTop: 20 }]}>
-              <MainButton title="NEXT" onPress={next} style={{ marginBottom: 8 }} />
-              <TouchableOpacity style={styles.skipButton} onPress={next}>
+              <MainButton title="NEXT" onPress={handleNext} style={{ marginBottom: 8 }} />
+              <TouchableOpacity style={styles.skipButton} onPress={handleNext}>
                 <Text style={[styles.skipText, { color: colors.gray }]}>SKIP</Text>
               </TouchableOpacity>
             </View>

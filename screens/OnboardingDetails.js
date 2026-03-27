@@ -4,9 +4,11 @@ import { ChevronRight } from 'lucide-react-native';
 import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
 import { useTheme } from '../context/ThemeContext';
+import { useLobby } from '../context/LobbyContext';
 
 const OnboardingDetails = ({ next, onShowReminder }) => {
   const { colors } = useTheme();
+  const { setMyEmergencyContact } = useLobby();
   const titleOpacity = useRef(new Animated.Value(0)).current;
   const titleTranslateY = useRef(new Animated.Value(-20)).current;
   const formOpacity = useRef(new Animated.Value(0)).current;
@@ -87,6 +89,11 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
 
     setContactPhoneError('');
     setContactNameError('');
+
+    // Persist locally so we can sync to device later.
+    if (setMyEmergencyContact) {
+      setMyEmergencyContact({ name: contactName.trim(), phone: contactPhone.trim() });
+    }
     onShowReminder();
   };
 

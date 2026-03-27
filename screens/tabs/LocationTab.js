@@ -121,7 +121,7 @@ const RadarView = ({ myLocation, members, colors, onMemberPress }) => {
               ]}
               onPress={() => onMemberPress(member)}
             >
-              <Text style={localStyles.memberDotText}>{member.deviceId}</Text>
+              <Text style={localStyles.memberDotText}>{member.name}</Text>
             </TouchableOpacity>
           );
         })}
@@ -337,7 +337,7 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
                 ]}
                 onPress={() => onMemberPress(member)}
               >
-                <Text style={localStyles.memberMapLabel}>{member.deviceId}</Text>
+                <Text style={localStyles.memberMapLabel}>{member.name}</Text>
               </TouchableOpacity>
             );
           })}
@@ -473,7 +473,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
     clearBreadcrumbs,
     getTrailDistance,
   } = useBluetoothDevice();
-  const { lobbyCode, lobbyName, isInLobby, isHost } = useLobby();
+  const { lobbyCode, lobbyName, isInLobby, isHost, getMemberNickname, myNickname } = useLobby();
   // Note: Map view disabled - requires Google Maps API key configuration
   // Use 'radar' (works offline) or 'list' view
   const [viewMode, setViewMode] = useState('radar'); // 'radar', 'list' (map disabled)
@@ -481,7 +481,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
   // Combine member locations with distance calculation
   const membersWithDistance = memberLocations.map(member => ({
     ...member,
-    name: `Device ${member.deviceId}`,
+    name: getMemberNickname ? getMemberNickname(member.deviceId) : `Device ${member.deviceId}`,
     distance: myLocation.valid && member.lat && member.lng
       ? calculateDistance(myLocation.lat, myLocation.lng, member.lat, member.lng)
       : null,

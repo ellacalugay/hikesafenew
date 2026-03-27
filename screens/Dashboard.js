@@ -39,7 +39,7 @@ const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
 const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
   const { colors } = useTheme();
   const { activeAlert, dismissAlert, sendSOS, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
-  const { lobbyCode, lobbyName, isHost, leaveLobby, isInLobby, hostDeviceId, myDeviceId } = useLobby();
+  const { lobbyCode, lobbyName, isHost, leaveLobby, isInLobby, hostDeviceId, myDeviceId, getEmergencyContactForDevice, getMemberNickname } = useLobby();
   const [activeTab, setActiveTab] = useState('home');
   const [chatName, setChatName] = useState('');
   const [showLogoutModal, setShowLogoutModal] = useState(false);
@@ -463,6 +463,24 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
                 : `Device ${activeAlert?.deviceId} needs help!`
               }
             </Text>
+
+            {activeAlert?.type !== 'OFFLINE' && activeAlert?.deviceId ? (() => {
+              const deviceId = activeAlert.deviceId;
+              const contact = getEmergencyContactForDevice ? getEmergencyContactForDevice(deviceId) : null;
+              const displayName = getMemberNickname ? getMemberNickname(deviceId) : `Device ${deviceId}`;
+              if (!contact || (!contact.name && !contact.phone)) {
+                return (
+                  <Text style={[styles.modalText, { color: colors.gray, textAlign: 'center', fontSize: 13, marginTop: 2 }]}>Emergency contact for {displayName} not shared yet.</Text>
+                );
+              }
+              return (
+                <View style={{ backgroundColor: colors.inputBg, padding: 12, borderRadius: 12, marginTop: 8 }}>
+                  <Text style={{ color: colors.gray, fontSize: 11, fontWeight: '600', letterSpacing: 1, marginBottom: 4 }}>EMERGENCY CONTACT</Text>
+                  <Text style={{ color: colors.textDark, fontSize: 14, fontWeight: '700' }}>{contact.name || 'Unknown'}</Text>
+                  <Text style={{ color: colors.textDark, fontSize: 14, fontWeight: '600' }}>{contact.phone || ''}</Text>
+                </View>
+              );
+            })() : null}
             
             {activeAlert?.lat && activeAlert?.lng && (
               <View style={{ backgroundColor: colors.inputBg, padding: 14, borderRadius: 12, marginTop: 8 }}>
