@@ -4,6 +4,7 @@ import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
 import { useTheme } from '../context/ThemeContext';
 import { useLobby } from '../context/LobbyContext';
+import { useUser } from '../context/UserContext';
 
 const OnboardingName = ({ next }) => {
   const { colors } = useTheme();
@@ -11,6 +12,7 @@ const OnboardingName = ({ next }) => {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [nickname, setNickname] = useState('');
+  const { setFirstName: setCtxFirstName, setLastName: setCtxLastName } = useUser();
   const titleOpacity = useRef(new Animated.Value(0)).current;
   const titleTranslateY = useRef(new Animated.Value(-20)).current;
   const formOpacity = useRef(new Animated.Value(0)).current;
@@ -61,6 +63,16 @@ const OnboardingName = ({ next }) => {
   
   const handleNext = async () => {
     const chosen = (nickname || `${firstName} ${lastName}`.trim() || firstName || '').trim();
+
+    // Persist to UserContext (main-branch onboarding expectations)
+    try {
+      await setCtxFirstName(firstName);
+      await setCtxLastName(lastName);
+    } catch (e) {
+      // Non-blocking
+    }
+
+    // Persist to LobbyContext for BLE/LoRa nickname sync
     if (chosen && setMyNickname) {
       try {
         await setMyNickname(chosen);

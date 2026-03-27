@@ -6,6 +6,7 @@ import { styles } from './styles/styles';
 import { ThemeProvider } from './context/ThemeContext';
 import { BluetoothProvider } from './context/BluetoothContext';
 import { LobbyProvider } from './context/LobbyContext';
+import { UserProvider } from './context/UserContext';
 import { useBluetoothDevice } from './context/BluetoothContext';
 import DeviceSetupScreen from './screens/DeviceSetupScreen';
 import OnboardingName from './screens/OnboardingName';
@@ -284,11 +285,13 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <LobbyProvider>
-          <BluetoothProvider>
-            <AppContent />
-          </BluetoothProvider>
-        </LobbyProvider>
+        <UserProvider>
+          <LobbyProvider>
+            <BluetoothProvider>
+              <AppContent />
+            </BluetoothProvider>
+          </LobbyProvider>
+        </UserProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );
