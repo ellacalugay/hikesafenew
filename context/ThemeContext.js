@@ -3,6 +3,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const ThemeContext = createContext();
 
+const DARK_MODE_KEY = '@hikesafe_theme_dark_mode';
+const LEGACY_DARK_MODE_KEY = 'darkMode';
+
 export const LIGHT_COLORS = {
   primary: '#4d7c0f',
   primaryLight: '#65a30d',
@@ -47,9 +50,21 @@ export const ThemeProvider = ({ children }) => {
 
   const loadThemePreference = async () => {
     try {
-      const savedTheme = await AsyncStorage.getItem('darkMode');
-      if (savedTheme !== null) {
-        setIsDarkMode(savedTheme === 'true');
+      const [savedTheme, legacySavedTheme] = await Promise.all([
+        AsyncStorage.getItem(DARK_MODE_KEY),
+        AsyncStorage.getItem(LEGACY_DARK_MODE_KEY),
+      ]);
+
+      const effective = savedTheme ?? legacySavedTheme;
+      if (effective !== null) {
+        const nextIsDark = effective === 'true';
+        setIsDarkMode(nextIsDark);
+      }
+
+      // One-time migration from legacy key -> namespaced key
+      if (savedTheme === null && legacySavedTheme !== null) {
+        await AsyncStorage.setItem(DARK_MODE_KEY, legacySavedTheme);
+        await AsyncStorage.removeItem(LEGACY_DARK_MODE_KEY);
       }
     } catch (e) {
       console.log('Error loading theme preference');
@@ -60,7 +75,7 @@ export const ThemeProvider = ({ children }) => {
   const toggleDarkMode = async (value) => {
     setIsDarkMode(value);
     try {
-      await AsyncStorage.setItem('darkMode', value.toString());
+      await AsyncStorage.setItem(DARK_MODE_KEY, value.toString());
     } catch (e) {
       console.log('Error saving theme preference');
     }

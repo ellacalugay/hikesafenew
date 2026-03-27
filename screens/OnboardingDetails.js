@@ -75,9 +75,6 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
     contactName: ctxContactName,
     contactPhone: ctxContactPhone,
     medicalCondition: ctxMedicalCondition,
-    setContactName: setCtxContactName,
-    setContactPhone: setCtxContactPhone,
-    setMedicalCondition: setCtxMedicalCondition,
   } = useUser();
 
   const validatePhone = (phone) => {
