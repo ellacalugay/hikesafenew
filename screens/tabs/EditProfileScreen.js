@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ImageBackground } from 'react-native';
 import { ArrowLeft, User, Radio } from 'lucide-react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
@@ -86,8 +86,14 @@ const EditProfileScreen = ({ onBack }) => {
   };
 
   return (
+    <ImageBackground 
+      source={require('../../assets/dashboard_bg.png')} 
+      style={[styles.tabContainer, { backgroundColor: colors.background }]}
+      imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
+    > 
+
     <KeyboardAvoidingView 
-      style={[styles.tabContainer, { backgroundColor: colors.background }]} 
+      style={[styles.tabContainer, { backgroundColor: 'transparent' }]} 
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
@@ -102,7 +108,7 @@ const EditProfileScreen = ({ onBack }) => {
       </View>
 
       <ScrollView 
-        style={{ flex: 1, padding: 20 }}
+        style={{ flex: 1, padding: 20, backgroundColor: 'transparent' }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={true}
         contentContainerStyle={{ paddingBottom: 50 }}
@@ -183,6 +189,7 @@ const EditProfileScreen = ({ onBack }) => {
         />
       </ScrollView>
     </KeyboardAvoidingView>
+    </ImageBackground>
   );
 };
 
