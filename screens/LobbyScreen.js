@@ -71,14 +71,6 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     }
   };
 
-  // Sync lobby code to device when connected
-  useEffect(() => {
-    if (isConnected && lobbyCode) {
-      // syncLobbyToDevice() can use the registered BLE sender if available
-      syncLobbyToDevice(sendCommand);
-    }
-  }, [isConnected, lobbyCode]);
-
   const handleCreateLobby = async () => {
     if (!lobbyName.trim()) {
       Alert.alert('Error', 'Please enter a lobby name');
@@ -100,11 +92,14 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     try {
       const code = await createLobby(lobbyName.trim(), parseInt(maxMember) || 10);
       
-      // Send lobby code to device (skip if not connected - TEMPORARILY BYPASSED FOR UI TESTING)
+      // Try syncing lobby code to device, but do not hard-fail lobby creation on temporary BLE drops.
       if (isConnected) {
-        const success = await sendCommand(`LOBBY:${code}`);
+        const success = await syncLobbyToDevice(sendCommand, code);
         if (!success) {
-          throw new Error('Failed to sync lobby code to device');
+          Alert.alert(
+            'Lobby Created',
+            'Lobby was created, but device sync is pending. Keep Bluetooth connected and it will retry automatically.'
+          );
         }
       }
       
@@ -166,9 +161,17 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       // TEMPORARILY BYPASSED FOR UI TESTING
       // Send lobby code to device first (skip if not connected)
       if (isConnected) {
-        const success = await sendCommand(`LOBBY:${parseInt(joinCode, 10)}`);
+        const parsedCode = parseInt(joinCode, 10);
+        const success = await syncLobbyToDevice(sendCommand, parsedCode);
         if (!success) {
-          throw new Error('Failed to sync lobby code to device');
+          // Allow entering lobby even if BLE link briefly drops; sync can resume on reconnect.
+          setValidationState('confirmed');
+          completeJoin(false);
+          Alert.alert(
+            'Joined Lobby',
+            'Joined lobby, but device sync is pending. Reconnect Bluetooth to sync lobby code.'
+          );
+          return;
         }
         
         // Wait for device confirmation via statusMessage effect
