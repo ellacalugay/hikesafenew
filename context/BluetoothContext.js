@@ -527,6 +527,9 @@ export const BluetoothProvider = ({ children }) => {
   const healthCheckRef = useRef(null);
   const mockIntervalRef = useRef(null);
   const disconnectSubscriptionRef = useRef(null);
+  const commandQueueRef = useRef(Promise.resolve());
+
+  const delay = useCallback((ms) => new Promise((resolve) => setTimeout(resolve, ms)), []);
 
   const parseDeviceId = useCallback((deviceLike) => {
     const source = `${deviceLike?.name || ''} ${deviceLike?.id || ''}`;
@@ -579,11 +582,6 @@ export const BluetoothProvider = ({ children }) => {
             setConnectionHealth('warning');
           } else {
             setConnectionHealth('lost');
-            // Auto-disconnect after 15 seconds of no data (device likely off)
-            if (timeSinceData > 15000) {
-              console.log('Connection timeout - device may be powered off');
-              handleConnectionLost();
-            }
           }
         }
       }, 2000);
@@ -623,6 +621,7 @@ export const BluetoothProvider = ({ children }) => {
     
     setConnectedDevice(null);
     setIsConnected(false);
+    commandQueueRef.current = Promise.resolve();
     await stopEmergencySignals();
     setMyLocation({ lat: 0, lng: 0, satellites: 0, valid: false });
     
@@ -1169,6 +1168,25 @@ export const BluetoothProvider = ({ children }) => {
       return false;
     }
 
+    const hasPermissions = await requestPermissions();
+    if (!hasPermissions) {
+      Alert.alert('Permissions Required', 'Bluetooth permissions are required to connect.');
+      return false;
+    }
+
+    if (deviceRef.current?.id === device.id && isConnected) {
+      return true;
+    }
+
+    if (deviceRef.current && deviceRef.current?.id !== device.id) {
+      try {
+        await deviceRef.current.cancelConnection();
+      } catch (cleanupError) {
+        console.log('Previous connection cleanup skipped:', cleanupError?.message || cleanupError);
+      }
+      deviceRef.current = null;
+    }
+
     // Stop scanning if still running
     bleManagerRef.current.stopDeviceScan();
     setIsConnecting(true);
@@ -1178,6 +1196,15 @@ export const BluetoothProvider = ({ children }) => {
       const connectedDev = await bleManagerRef.current.connectToDevice(device.id, {
         timeout: 10000,
       });
+
+      // Improve write reliability on Android by negotiating a larger MTU when possible.
+      if (Platform.OS === 'android' && typeof connectedDev.requestMTU === 'function') {
+        try {
+          await connectedDev.requestMTU(185);
+        } catch (mtuError) {
+          console.log('MTU request skipped:', mtuError?.message || mtuError);
+        }
+      }
       
       // Discover services and characteristics
       await connectedDev.discoverAllServicesAndCharacteristics();
@@ -1243,7 +1270,7 @@ export const BluetoothProvider = ({ children }) => {
     } finally {
       setIsConnecting(false);
     }
-  }, [isInLobby, parseBluetoothData, handleConnectionLost, parseDeviceId, playConnectionSound, registerMemberSync, setMyDeviceId]);
+  }, [isConnected, isInLobby, parseBluetoothData, handleConnectionLost, parseDeviceId, playConnectionSound, registerMemberSync, requestPermissions, setMyDeviceId]);
 
   // Disconnect from device
   const disconnect = useCallback(async () => {
@@ -1273,6 +1300,7 @@ export const BluetoothProvider = ({ children }) => {
     
     setConnectedDevice(null);
     setIsConnected(false);
+    commandQueueRef.current = Promise.resolve();
     lastDisconnectAtRef.current = Date.now();
     stopEmergencySignals();
     setMyLocation({ lat: 0, lng: 0, satellites: 0, valid: false });
@@ -1301,28 +1329,99 @@ export const BluetoothProvider = ({ children }) => {
       setTimeout(() => setStatusMessage(''), 2000);
       return true;
     }
-    
-    try {
-      // Encode to base64 for BLE transmission
+
+    const queuedWrite = async () => {
       const encoded = Buffer.from(cmdWithNewline, 'utf-8').toString('base64');
-      
-      // Write to RX characteristic (app → device)
-      await deviceRef.current.writeCharacteristicWithResponseForService(
-        NUS_SERVICE_UUID,
-        NUS_RX_CHAR_UUID,
-        encoded
-      );
-      return true;
-    } catch (error) {
-      console.error('Send error:', error);
-      if (error.message?.includes('disconnected') || error.message?.includes('cancel')) {
-        handleConnectionLost();
-      } else {
-        Alert.alert('Send Failed', 'Could not send command to device.');
+      const maxAttempts = 3;
+
+      const writeWithResponse = async () => {
+        await deviceRef.current.writeCharacteristicWithResponseForService(
+          NUS_SERVICE_UUID,
+          NUS_RX_CHAR_UUID,
+          encoded
+        );
+      };
+
+      const writeWithoutResponse = async () => {
+        await deviceRef.current.writeCharacteristicWithoutResponseForService(
+          NUS_SERVICE_UUID,
+          NUS_RX_CHAR_UUID,
+          encoded
+        );
+      };
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (!deviceRef.current || !isConnected) {
+          return false;
+        }
+
+        try {
+          // Keep BLE writes serialized to avoid operation-rejected/timeouts from parallel requests.
+          await writeWithResponse();
+          return true;
+        } catch (error) {
+          const message = (error?.message || '').toLowerCase();
+          const isDisconnectedError = message.includes('disconnected') || message.includes('cancel');
+          const isTransientError =
+            message.includes('timed out') ||
+            message.includes('timeout') ||
+            message.includes('rejected') ||
+            message.includes('busy') ||
+            message.includes('in progress') ||
+            message.includes('already in progress');
+          const supportsWriteWithoutResponse =
+            deviceRef.current && typeof deviceRef.current.writeCharacteristicWithoutResponseForService === 'function';
+
+          if (isDisconnectedError) {
+            console.error('Send error:', error);
+            handleConnectionLost();
+            return false;
+          }
+
+          // Some firmware exposes RX as write-without-response only.
+          if (supportsWriteWithoutResponse && (message.includes('rejected') || message.includes('timed out') || message.includes('timeout'))) {
+            try {
+              await delay(80 * attempt);
+              await writeWithoutResponse();
+              return true;
+            } catch (fallbackError) {
+              const fallbackMessage = (fallbackError?.message || '').toLowerCase();
+              if (fallbackMessage.includes('disconnected') || fallbackMessage.includes('cancel')) {
+                console.error('Send error:', fallbackError);
+                handleConnectionLost();
+                return false;
+              }
+            }
+          }
+
+          if (isTransientError && attempt < maxAttempts) {
+            console.log(`BLE write retry (${attempt}/${maxAttempts}) for command:`, command);
+            await delay(120 * attempt);
+            continue;
+          }
+
+          console.error('Send error:', error);
+          if (!isTransientError) {
+            Alert.alert('Send Failed', 'Could not send command to device.');
+          }
+          return false;
+        }
       }
+
       return false;
-    }
-  }, [isConnected, handleConnectionLost]);
+    };
+
+    // Chain onto the previous write so all BLE writes happen sequentially.
+    const runWrite = commandQueueRef.current
+      .catch(() => undefined)
+      .then(queuedWrite);
+
+    commandQueueRef.current = runWrite
+      .then(() => undefined)
+      .catch(() => undefined);
+
+    return runWrite;
+  }, [isConnected, handleConnectionLost, delay]);
 
   // Expose BLE command sender to LobbyContext so it can sync lobby code to device.
   useEffect(() => {
