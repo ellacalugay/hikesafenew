@@ -89,10 +89,12 @@ const EditProfileScreen = ({ onBack }) => {
     if (contactName.trim()) await setCtxContactName(contactName.trim());
     if (contactPhone.trim()) await setCtxContactPhone(contactPhone.trim());
     if (medicalCondition.trim()) await setCtxMedicalCondition(medicalCondition.trim());
-    if (profilePicture) await setCtxProfilePicture(profilePicture);
-    
+    if (profilePicture && typeof setCtxProfilePicture === 'function') {
+      await setCtxProfilePicture(profilePicture);
+    }
+
     Alert.alert('Saved', 'Your profile has been updated.');
-    onBack();
+    if (typeof onBack === 'function') onBack();
   };
 
   const handlePickImage = async () => {
