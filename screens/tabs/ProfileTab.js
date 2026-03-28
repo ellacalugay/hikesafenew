@@ -6,6 +6,7 @@ import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
 import { useLobby } from '../../context/LobbyContext';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useUser } from '../../context/UserContext';
 
 const MenuOption = ({ icon: Icon, label, onPress, colors }) => (
   <TouchableOpacity style={[styles.menuOption, { backgroundColor: colors.cardBg, borderColor: colors.borderColor, paddingVertical: 20, paddingHorizontal: 30 }]} onPress={onPress}>
@@ -17,6 +18,7 @@ const MenuOption = ({ icon: Icon, label, onPress, colors }) => (
 const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProblem }) => {
   const { colors } = useTheme();
   const {myNickname} = useLobby();
+  const {profilePicture} = useUser();
   
   return (
     <ImageBackground 
@@ -54,27 +56,35 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
             <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.6)', marginBottom: 2 }}>
               "DESIGN HERE"
             </Text>
-            <Text style={{ fontSize: 20, color: 'rgba(0, 0, 0, 0.85)', fontWeight: '600', marginTop: 20 }}>Hello!</Text>
+            <Text style={{ fontSize: 23, color: 'rgba(20, 39, 4, 0.77)', fontWeight: '600', marginTop: 20 }}>Hello!</Text>
             <Text style={{ fontSize: 30, color: '#000000', fontWeight: '700', lineHeight: 30 }}>
               {myNickname}
             </Text>
             <Text style={{ fontSize: 9, color: 'rgba(255,255,255,0.5)', marginTop: 6 }}>
-              {/* MEMBER ID: {memberId} */}
+
             </Text>
           </View>
 
           <View style={{
-            width: 100,
-            height: 100,
-            borderRadius: 50,
+            width: 108,
+            height: 108,
+            borderRadius: 60,
             borderWidth: 2.5,
             borderColor: 'rgba(255,255,255,0.5)',
             overflow: 'hidden',
             marginTop: -25,
           }}>
+            {profilePicture ? (
+              <Image
+                source={{ uri: profilePicture }}
+                style={{ width: '100%', height: '100%' }}
+                resizeMode="cover"
+              />
+            ) : (
             <View style={{ flex: 1, backgroundColor: '#81c784', alignItems: 'center', justifyContent: 'center' }}>
               <User size={36} color="rgba(255,255,255,0.7)" />
             </View>
+            )}
           </View>
         </LinearGradient>
 
