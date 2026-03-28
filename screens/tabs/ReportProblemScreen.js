@@ -173,7 +173,7 @@ const ReportProblemScreen = ({ onBack }) => {
           numberOfLines={6}
         />
 
-        <Text style={{ color: colors.gray, fontSize: 12, marginTop: 10 }}>
+        <Text style={{ color: colors.textDark, fontSize: 12, marginTop: 10, fontWeight: '575' }}>
           Your feedback helps us improve HikeSafe for everyone.
         </Text>
 

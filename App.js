@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Modal, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Modal, Animated, BackHandler } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ScreenContainer } from './components/shared';
 import { styles } from './styles/styles';
@@ -18,7 +18,8 @@ import Dashboard from './screens/Dashboard';
 function AppContent() {
   const { disconnect } = useBluetoothDevice();
   const { firstName, lastName, isLoading: userLoading } = useUser();
-  const [screen, setScreen] = useState('deviceSetup');
+  const [screenStack, setScreenStack] = useState(['deviceSetup']);
+  const screen = screenStack[screenStack.length - 1];
   const [resumeAfterReconnect, setResumeAfterReconnect] = useState(false);
   const [showReminder, setShowReminder] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
@@ -26,26 +27,42 @@ function AppContent() {
   const [lobbyData, setLobbyData] = useState({ lobbyName: '', groupId: '', maxMember: '' });
   const screenFadeAnim = useRef(new Animated.Value(0)).current;
 
+  const [activeTab, setActiveTab] = useState('home');
+  const [tabHistory, setTabHistory] = useState(['home']);
+
+  const navigateTo = (newScreen) => {
+    setScreenStack(prev => [...prev, newScreen]);
+  };
+
+  const navigateBack = () => {
+    setScreenStack(prev => prev.length > 1 ? prev.slice(0, -1) : prev);
+  };
+
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    setTabHistory(prev => [...prev, tab]);
+  };
+
   const handleDeviceSetupComplete = () => {
     if (resumeAfterReconnect) {
       setResumeAfterReconnect(false);
-      setScreen('dashboard');
+      navigateTo('dashboard');
       return;
     }
     // If user profile already exists, skip onboarding and go to lobby
     if (!userLoading && (firstName || lastName)) {
-      setScreen('lobby');
+      navigateTo('lobby'); 
       return;
     }
-    setScreen('onboarding1');
+    navigateTo('onboarding1');
   };
-  const handleNextOnboarding = () => setScreen('onboarding2');
+  const handleNextOnboarding = () => navigateTo('onboarding2');
   
   const handleShowReminder = () => setShowReminder(true);
   
   const handleAcceptTerms = () => {
     setShowReminder(false);
-    setScreen('lobby');
+    navigateTo('lobby');
   };
 
   const handleCreateLobbySuccess = (data) => {
@@ -55,20 +72,56 @@ function AppContent() {
   
   const handleEnterDashboard = () => {
     setShowSuccess(false);
-    setScreen('dashboard');
+    setActiveTab('home');
+    setTabHistory(['home']);
+    navigateTo('dashboard');
   };
 
   const handleLogout = async () => {
     // Explicit logout is the only flow that should tear down BLE session.
     await disconnect();
     setResumeAfterReconnect(false);
-    setScreen('deviceSetup');
+    setActiveTab('home');
+    setTabHistory(['home']);
+    setScreenStack(['deviceSetup']);
   };
 
   const handleRequireDeviceSetup = () => {
     setResumeAfterReconnect(true);
-    setScreen('deviceSetup');
+    navigateTo('deviceSetup');
   };
+
+  // Define screen history for back navigation
+  useEffect(() => {
+    const backAction = () => {
+      // Close any open modal first
+      if (showTerms) { setShowTerms(false); return true; }
+      if (showReminder) { setShowReminder(false); return true; }
+      if (showSuccess) { setShowSuccess(false); return true; }
+
+      if (screen === 'dashboard') {
+        if (tabHistory.length > 1) {
+          // Pop current tab, go back to previous tab
+          const newHistory = tabHistory.slice(0, -1);
+          setTabHistory(newHistory);
+          setActiveTab(newHistory[newHistory.length - 1]);
+          return true;
+        }
+      }
+
+      // If there are previous screens in the stack, go back to the last one
+      if (screenStack.length > 1) {
+        navigateBack();
+        return true; // handled
+      }
+
+      // Let the system handle back (may close app)
+      return false;
+    };
+
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => backHandler.remove();
+  }, [screenStack, showTerms, showReminder, showSuccess]);
 
   // Screen transition animation
   useEffect(() => {
@@ -97,6 +150,8 @@ function AppContent() {
           <Dashboard
             onLogout={handleLogout}
             onRequireDeviceSetup={handleRequireDeviceSetup}
+            activeTab={activeTab}
+            onTabChange={handleTabChange}
           />
         )}
       </Animated.View>

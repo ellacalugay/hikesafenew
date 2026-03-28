@@ -82,8 +82,7 @@ const HelpScreen = ({ onBack }) => {
           <ArrowLeft size={24} color={colors.textDark} style={{ marginTop: 13 }} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 22, marginLeft: -160, marginTop: -10, paddingBottom: 10 }]}>HELP</Text>
-      </View>
-  
+      
         <Image 
           source={require('../../assets/hike_logo.png')} 
           style={{ 
@@ -95,7 +94,9 @@ const HelpScreen = ({ onBack }) => {
             resizeMode: 'contain' 
           }} 
         />
-      <ScrollView style={{ flex: 1, padding: 20 }}>
+      </View>
+  
+      <ScrollView style={{ flex: 1, padding: 20 }} contentContainerStyle={{ paddingBottom: 50 }} showsVerticalScrollIndicator={false}>
         <Text style={[styles.sectionHeader, { marginTop: 0, color: colors.textDark }]}>Frequently Asked Questions</Text>
         
         {faqs.map((faq, index) => (

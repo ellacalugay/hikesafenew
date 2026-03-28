@@ -89,7 +89,7 @@ const SettingsScreen = ({ onBack }) => {
             resizeMode: 'contain' 
           }} 
           />
-        <ScrollView style={{ flex: 1, padding: 20 }}>
+        <ScrollView style={{ flex: 1, padding: 20 }} contentContainerStyle={{ paddingBottom: 50 }} showsVerticalScrollIndicator={false}>
         <Text style={[styles.sectionHeader, { marginTop: 0, color: colors.textDark }]}>Notifications</Text>
         <SettingRow 
           icon={Bell} 

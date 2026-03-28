@@ -157,8 +157,9 @@ const EditProfileScreen = ({ onBack }) => {
       <ScrollView 
         style={{ flex: 1, padding: 2, backgroundColor: 'transparent' }}
         keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={true}
+        showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 50 }}
+        
 >
         <View style={{ alignItems: 'center', marginBottom: 20 }}>
           <View style={{ alignItems: 'center', marginBottom: 20 }}>
