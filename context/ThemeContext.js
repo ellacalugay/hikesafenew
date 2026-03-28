@@ -21,6 +21,7 @@ export const LIGHT_COLORS = {
   borderColor: '#e5e7eb',
   modalBg: 'white',
   surfaceBg: 'white',
+  profileBg: 'white',
 };
 
 export const DARK_COLORS = {
@@ -38,6 +39,7 @@ export const DARK_COLORS = {
   borderColor: '#404040',
   modalBg: '#2d2d2d',
   surfaceBg: '#252525',
+  profileBg: 'rgb(66, 61, 61)',
 };
 
 export const ThemeProvider = ({ children }) => {

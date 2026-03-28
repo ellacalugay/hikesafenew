@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Switch, Modal, Animated } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Switch, Modal, Animated, ImageBackground } from 'react-native';
 import { ArrowLeft, Bell, Moon, MapPin, Shield, ChevronRight, X } from 'lucide-react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
@@ -53,8 +53,21 @@ const SettingsScreen = ({ onBack }) => {
   };
 
   return (
+    <ImageBackground 
+      source={require('../../assets/dashboard_bg.png')} 
+      style={[styles.tabContainer, { backgroundColor: colors.background }]}
+      imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
+    > 
+    {isDarkMode && (
+      <View style={{
+        position: 'absolute',
+        top: 0, left: 0, right: 0, bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.55)', 
+        zIndex: 0,
+      }} />
+    )}
     <Animated.View style={[{ flex: 1, opacity: themeTransitionAnim }]}>
-      <View style={[styles.tabContainer, { backgroundColor: colors.background }]}>
+      <View style={[styles.tabContainer, { backgroundColor: 'transparent' }]}>
         <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
           <TouchableOpacity 
             onPress={onBack} 
@@ -179,6 +192,7 @@ const SettingsScreen = ({ onBack }) => {
       </Modal>
       </View>
     </Animated.View>
+    </ImageBackground>
   );
 };
 

@@ -12,7 +12,7 @@ import { useBluetoothDevice } from '../../context/BluetoothContext';
 import { useUser } from '../../context/UserContext';
 
 const EditProfileScreen = ({ onBack }) => {
-  const { colors } = useTheme();
+  const { colors, isDarkMode, toggleDarkMode } = useTheme();
   const { myNickname, setMyNickname, deviceNickname, setDeviceNickname } = useLobby();
   const { connectedDevice, isConnected } = useBluetoothDevice();
   const {
@@ -118,7 +118,15 @@ const EditProfileScreen = ({ onBack }) => {
       source={require('../../assets/dashboard_bg.png')} 
       style={[styles.tabContainer, { backgroundColor: colors.background }]}
       imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
-    > 
+    >
+    {isDarkMode && (
+      <View style={{
+        position: 'absolute',
+        top: 0, left: 0, right: 0, bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.55)', // adjust opacity to taste
+        zIndex: 0,
+      }} />
+    )} 
 
     <KeyboardAvoidingView 
       style={[styles.tabContainer, { backgroundColor: 'transparent' }]} 
@@ -200,7 +208,7 @@ const EditProfileScreen = ({ onBack }) => {
 
         {/* ── All fields inside one white rounded card ── */}
         <View style={{
-          backgroundColor: '#FFFFFF',
+          backgroundColor: colors.profileBg,
           borderRadius: 16,
           paddingHorizontal: 20,
           paddingTop: 20,
