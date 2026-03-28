@@ -50,15 +50,6 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
   const [showLobbyModal, setShowLobbyModal] = useState(false);
   const [showSOSAlertModal, setShowSOSAlertModal] = useState(false);
   const joinAnnounceKeyRef = useRef(null);
-  const tabHistoryRef = useRef([]);
-
-  const setActiveTabWithHistory = (tab) => {
-    if (tab === activeTab) return;
-    // push current tab to history so we can go back to it
-    tabHistoryRef.current.push(activeTab);
-    setActiveTab(tab);
-  };
-
   useEffect(() => {
     const onBack = () => {
       // close modals first
@@ -67,16 +58,16 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
       if (showLobbyModal) { setShowLobbyModal(false); return true; }
       if (showSOSAlertModal) { setShowSOSAlertModal(false); return true; }
 
-      // if there's tab history, go back to previous tab
-      if (tabHistoryRef.current.length > 0) {
-        const prev = tabHistoryRef.current.pop();
-        setActiveTab(prev);
+      // If currently in a profile sub-screen, go back to profile
+      const profileSubs = ['editProfile', 'settings', 'help', 'reportProblem'];
+      if (profileSubs.includes(activeTab)) {
+        setActiveTab('profile');
         return true;
       }
 
-      // if not on default tab, go home
+      // Otherwise always go to home tab when back is pressed (if not already there)
       if (activeTab !== 'home') {
-        setActiveTabWithHistory('home');
+        setActiveTab('home');
         return true;
       }
 
@@ -155,7 +146,7 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
 
   const handleOpenChat = (name) => {
     setChatName(name);
-    setActiveTabWithHistory('chat');
+    setActiveTab('chat');
   };
 
   const handleLogoutPress = () => {
@@ -196,12 +187,12 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
       case 'message': return <MessageTab onOpenChat={handleOpenChat} />;
       case 'compass': return <CompassTab />;
       case 'profile': return (
-        <ProfileTab 
+          <ProfileTab 
           onLogout={handleLogoutPress} 
-          onEditProfile={() => setActiveTabWithHistory('editProfile')}
-          onSettings={() => setActiveTabWithHistory('settings')}
-          onHelp={() => setActiveTabWithHistory('help')}
-          onReportProblem={() => setActiveTabWithHistory('reportProblem')}
+          onEditProfile={() => setActiveTab('editProfile')}
+          onSettings={() => setActiveTab('settings')}
+          onHelp={() => setActiveTab('help')}
+          onReportProblem={() => setActiveTab('reportProblem')}
         />
       );
       case 'editProfile': return <EditProfileScreen onBack={() => setActiveTab('profile')} />;
@@ -224,14 +215,14 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
       
       {showBottomNav && (
         <View style={[styles.bottomNav, { backgroundColor: colors.surfaceBg, borderTopColor: colors.borderColor }]}>
-          <TabIcon icon={Home} label="Home" active={activeTab === 'home'} onPress={() => setActiveTabWithHistory('home')} colors={colors} />
-          <TabIcon icon={MapPin} label="Loc" active={activeTab === 'location'} onPress={() => setActiveTabWithHistory('location')} colors={colors} />
-          <TabIcon icon={MessageCircle} label="Chat" active={activeTab === 'message'} onPress={() => setActiveTabWithHistory('message')} colors={colors} />
+          <TabIcon icon={Home} label="Home" active={activeTab === 'home'} onPress={() => setActiveTab('home')} colors={colors} />
+          <TabIcon icon={MapPin} label="Loc" active={activeTab === 'location'} onPress={() => setActiveTab('location')} colors={colors} />
+          <TabIcon icon={MessageCircle} label="Chat" active={activeTab === 'message'} onPress={() => setActiveTab('message')} colors={colors} />
           {isHost && (
-            <TabIcon icon={Users} label="Members" active={activeTab === 'members'} onPress={() => setActiveTabWithHistory('members')} colors={colors} />
+            <TabIcon icon={Users} label="Members" active={activeTab === 'members'} onPress={() => setActiveTab('members')} colors={colors} />
           )}
-          <TabIcon icon={Compass} label="Comp" active={activeTab === 'compass'} onPress={() => setActiveTabWithHistory('compass')} colors={colors} />
-          <TabIcon icon={User} label="Prof" active={activeTab === 'profile'} onPress={() => setActiveTabWithHistory('profile')} colors={colors} />
+          <TabIcon icon={Compass} label="Comp" active={activeTab === 'compass'} onPress={() => setActiveTab('compass')} colors={colors} />
+          <TabIcon icon={User} label="Prof" active={activeTab === 'profile'} onPress={() => setActiveTab('profile')} colors={colors} />
         </View>
       )}
 
@@ -457,7 +448,7 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
                         style={[styles.modalButton, { backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.primary, marginTop: 10 }]}
                         onPress={() => {
                           setShowLobbyModal(false);
-                          setActiveTabWithHistory('members');
+                          setActiveTab('members');
                         }}
                       >
                         <Text style={{ color: colors.primary, fontWeight: '600' }}>View Members</Text>
@@ -553,7 +544,7 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
                 style={[styles.modalButton, { backgroundColor: colors.primary, flex: 1 }]}
                 onPress={() => {
                   handleDismissSOSAlert();
-                  setActiveTabWithHistory('location');
+                  setActiveTab('location');
                 }}
               >
                 <Text style={{ color: 'white', fontWeight: '600' }}>View Location</Text>
