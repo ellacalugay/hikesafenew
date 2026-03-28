@@ -104,15 +104,15 @@ const EditProfileScreen = ({ onBack }) => {
         >
           <ArrowLeft size={24} color={colors.textDark} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.textDark }]}>EDIT PROFILE</Text>
+        <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 22, marginLeft: -100, marginTop: -20 }]}>EDIT PROFILE</Text>
       </View>
 
       <ScrollView 
-        style={{ flex: 1, padding: 20, backgroundColor: 'transparent' }}
+        style={{ flex: 1, padding: 2, backgroundColor: 'transparent' }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={true}
         contentContainerStyle={{ paddingBottom: 50 }}
-      >
+>
         <View style={{ alignItems: 'center', marginBottom: 20 }}>
           <View style={[styles.avatarLarge, { backgroundColor: colors.primary }]}>
             <User size={40} color="white" />
@@ -122,71 +122,42 @@ const EditProfileScreen = ({ onBack }) => {
           </TouchableOpacity>
         </View>
 
-        <Text style={[styles.sectionHeader, { marginTop: 0, color: colors.textDark }]}>Personal Information</Text>
-        
-        <InputField 
-          label="First Name" 
-          placeholder="Enter first name"
-          value={firstName}
-          onChangeText={setFirstName}
-        />
-        <InputField 
-          label="Last Name" 
-          placeholder="Enter last name"
-          value={lastName}
-          onChangeText={setLastName}
-        />
-        <InputField 
-          label="Nickname" 
-          placeholder="Your display name in the app"
-          value={nickname}
-          onChangeText={setNickname}
-        />
+        {/* ── All fields inside one white rounded card ── */}
+        <View style={{
+          backgroundColor: '#FFFFFF',
+          borderRadius: 16,
+          paddingHorizontal: 20,
+          paddingTop: 20,
+          paddingBottom: 20,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.10,
+          shadowRadius: 8,
+          elevation: 4,
+          marginBottom: 24,
+        }}>
+          <Text style={[styles.sectionHeader, { marginTop: 0, color: colors.textDark }]}>Personal Information</Text>
+          <InputField label="First Name" placeholder="Enter first name" value={firstName} onChangeText={setFirstName} />
+          <InputField label="Last Name" placeholder="Enter last name" value={lastName} onChangeText={setLastName} />
+          <InputField label="Nickname" placeholder="Your display name in the app" value={nickname} onChangeText={setNickname} />
 
-        <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Device Settings</Text>
-        
-        <InputField 
-          label="Device Nickname" 
-          placeholder={connectedDevice?.name || "Your HikeSafe device name"}
-          value={deviceName}
-          onChangeText={setDeviceName}
-        />
-        <Text style={{ color: colors.gray, fontSize: 12, marginTop: -8, marginBottom: 16, paddingHorizontal: 4 }}>
-          {isConnected 
-            ? `Connected to: ${connectedDevice?.name || 'HikeSafe Device'}`
-            : 'Connect a device to customize its name'}
-        </Text>
+          <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Device Settings</Text>
+          <InputField label="Device Nickname" placeholder={connectedDevice?.name || "Your HikeSafe device name"} value={deviceName} onChangeText={setDeviceName} />
+          <Text style={{ color: colors.gray, fontSize: 12, marginTop: -8, marginBottom: 16, paddingHorizontal: 4 }}>
+            {isConnected ? `Connected to: ${connectedDevice?.name || 'HikeSafe Device'}` : 'Connect a device to customize its name'}
+          </Text>
 
-        <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Emergency Contact</Text>
-        
-        <InputField 
-          label="Contact Name" 
-          placeholder="Emergency contact name"
-          value={contactName}
-          onChangeText={setContactName}
-        />
-        <InputField 
-          label="Contact Phone" 
-          placeholder="Emergency contact phone"
-          value={contactPhone}
-          onChangeText={setContactPhone}
-          keyboardType="phone-pad"
-        />
+          <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Emergency Contact</Text>
+          <InputField label="Contact Name" placeholder="Emergency contact name" value={contactName} onChangeText={setContactName} />
+          <InputField label="Contact Phone" placeholder="Emergency contact phone" value={contactPhone} onChangeText={setContactPhone} keyboardType="phone-pad" />
 
-        <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Medical Information</Text>
-        
-        <InputField 
-          label="Medical Condition" 
-          placeholder="Any allergies or conditions?"
-          value={medicalCondition}
-          onChangeText={setMedicalCondition}
-        />
-
-        <MainButton 
-          title="SAVE CHANGES" 
-          onPress={handleSave} 
-          style={{ marginTop: 20, marginBottom: 150 }} 
-        />
+          <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Medical Information</Text>
+          <InputField label="Medical Condition" placeholder="Any allergies or conditions?" value={medicalCondition} onChangeText={setMedicalCondition} />
+         
+          <View style={{ marginHorizontal: 50, marginTop: 20 }}>
+            <MainButton title="SAVE CHANGES" onPress={handleSave} />
+          </View>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
     </ImageBackground>
