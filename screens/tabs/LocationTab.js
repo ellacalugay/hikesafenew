@@ -633,7 +633,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
         </View>
 
         {/* Trail Tracking Controls */}
-        <View style={[localStyles.trailControls, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
+        <View style={[localStyles.trailControls, { backgroundColor: 'transparent', borderColor: 'transparent' }]}>
           <View style={localStyles.trailHeader}>
             <Route size={18} color={colors.primary} />
             <Text style={[localStyles.trailTitle, { color: colors.textDark }]}>Trail Breadcrumbs</Text>
@@ -1162,9 +1162,6 @@ const localStyles = StyleSheet.create({
   },
   // Trail Tracking Styles
   trailControls: {
-    borderRadius: 12,
-    borderWidth: 1,
-    padding: 12,
     marginBottom: 16,
   },
   trailHeader: {
