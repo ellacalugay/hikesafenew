@@ -16,7 +16,7 @@ import LobbyScreen from './screens/LobbyScreen';
 import Dashboard from './screens/Dashboard';
 
 function AppContent() {
-  const { isConnected } = useBluetoothDevice();
+  const { disconnect } = useBluetoothDevice();
   const { firstName, lastName, isLoading: userLoading } = useUser();
   const [screen, setScreen] = useState('deviceSetup');
   const [resumeAfterReconnect, setResumeAfterReconnect] = useState(false);
@@ -24,8 +24,6 @@ function AppContent() {
   const [showTerms, setShowTerms] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [lobbyData, setLobbyData] = useState({ lobbyName: '', groupId: '', maxMember: '' });
-  const wasConnectedRef = useRef(false);
-  const disconnectTimerRef = useRef(null);
   const screenFadeAnim = useRef(new Animated.Value(0)).current;
 
   const handleDeviceSetupComplete = () => {
@@ -60,39 +58,12 @@ function AppContent() {
     setScreen('dashboard');
   };
 
-  const handleLogout = () => setScreen('deviceSetup');
-
-  // If connection drops after being connected, force user back to setup connection screen.
-  // Only do this from the dashboard; other screens (onboarding/lobby) may not require an active BLE link.
-  useEffect(() => {
-    if (isConnected) {
-      wasConnectedRef.current = true;
-      if (disconnectTimerRef.current) {
-        clearTimeout(disconnectTimerRef.current);
-        disconnectTimerRef.current = null;
-      }
-      return;
-    }
-
-    if (wasConnectedRef.current && screen === 'dashboard') {
-      // Debounce disconnect handling; BLE can briefly flicker during operations.
-      if (disconnectTimerRef.current) return;
-      disconnectTimerRef.current = setTimeout(() => {
-        disconnectTimerRef.current = null;
-        setResumeAfterReconnect(true);
-        setScreen('deviceSetup');
-      }, 1500);
-    }
-  }, [isConnected, screen]);
-
-  useEffect(() => {
-    return () => {
-      if (disconnectTimerRef.current) {
-        clearTimeout(disconnectTimerRef.current);
-        disconnectTimerRef.current = null;
-      }
-    };
-  }, []);
+  const handleLogout = async () => {
+    // Explicit logout is the only flow that should tear down BLE session.
+    await disconnect();
+    setResumeAfterReconnect(false);
+    setScreen('deviceSetup');
+  };
 
   const handleRequireDeviceSetup = () => {
     setResumeAfterReconnect(true);

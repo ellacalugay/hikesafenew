@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, ImageBackground } from 'react-native';
 import { Home, MapPin, MessageCircle, Compass, User, Check, CheckSquare, Square, AlertTriangle, X, Users, Radio } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -49,6 +49,7 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [showLobbyModal, setShowLobbyModal] = useState(false);
   const [showSOSAlertModal, setShowSOSAlertModal] = useState(false);
+  const joinAnnounceKeyRef = useRef(null);
 
   // Handle incoming SOS/MORSE/OFFLINE alerts
   useEffect(() => {
@@ -63,19 +64,27 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
     }
   }, [activeAlert]);
 
-  // Auto-sync lobby code when device connects
+  // Broadcast join timestamp once per connected-lobby session.
+  // Lobby code sync is already handled in BluetoothContext.
   useEffect(() => {
     if (isConnected && isInLobby && lobbyCode) {
+      const announceKey = `${lobbyCode}`;
+      if (joinAnnounceKeyRef.current === announceKey) {
+        return;
+      }
+
       // Small delay to ensure device is ready for commands
       const syncTimer = setTimeout(async () => {
-        console.log('Auto-syncing lobby code to device:', lobbyCode);
-        const synced = await sendCommand(`LOBBY:${lobbyCode}`);
-        if (synced) {
-          // Broadcast local lobby-sync timestamp so all phones can track join order.
-          await sendCommand(`MSG:0,__JOINED_TS__:${Date.now()}`);
+        const sent = await sendCommand(`MSG:0,__JOINED_TS__:${Date.now()}`);
+        if (sent) {
+          joinAnnounceKeyRef.current = announceKey;
         }
       }, 1000);
       return () => clearTimeout(syncTimer);
+    }
+
+    if (!isConnected || !isInLobby) {
+      joinAnnounceKeyRef.current = null;
     }
   }, [isConnected, isInLobby, lobbyCode, sendCommand]);
 
