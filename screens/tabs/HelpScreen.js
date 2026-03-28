@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, ImageBackground } from 'react-native';
+import { Image } from 'react-native';
 import { ArrowLeft, ChevronDown, ChevronUp, MessageCircle, Mail, Phone } from 'lucide-react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
@@ -33,7 +34,7 @@ const FAQItem = ({ question, answer, colors }) => {
 };
 
 const HelpScreen = ({ onBack }) => {
-  const { colors } = useTheme();
+  const { colors, isDarkMode } = useTheme();
   
   const faqs = [
     {
@@ -59,17 +60,41 @@ const HelpScreen = ({ onBack }) => {
   ];
 
   return (
-    <View style={[styles.tabContainer, { backgroundColor: colors.background }]}>
+    <ImageBackground 
+      source={require('../../assets/dashboard_bg.png')} 
+      style={[styles.tabContainer, { backgroundColor: colors.background }]}
+      imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
+    > 
+    {isDarkMode && (
+      <View style={{
+        position: 'absolute',
+        top: 0, left: 0, right: 0, bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.55)', 
+        zIndex: 0,
+      }} />
+    )}
+    <View style={[styles.tabContainer, { backgroundColor: 'transparent' }]}>
       <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
         <TouchableOpacity 
           onPress={onBack} 
           style={{ position: 'absolute', left: 20, top: 15, padding: 5 }}
         >
-          <ArrowLeft size={24} color={colors.textDark} />
+          <ArrowLeft size={24} color={colors.textDark} style={{ marginTop: 13 }} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.textDark }]}>HELP</Text>
+        <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 22, marginLeft: -160, marginTop: -10, paddingBottom: 10 }]}>HELP</Text>
       </View>
-
+  
+        <Image 
+          source={require('../../assets/hike_logo.png')} 
+          style={{ 
+            position: 'absolute', 
+            right: 30, 
+            top: 17,
+            width: 50, 
+            height: 50, 
+            resizeMode: 'contain' 
+          }} 
+        />
       <ScrollView style={{ flex: 1, padding: 20 }}>
         <Text style={[styles.sectionHeader, { marginTop: 0, color: colors.textDark }]}>Frequently Asked Questions</Text>
         
@@ -101,6 +126,7 @@ const HelpScreen = ({ onBack }) => {
         </View>
       </ScrollView>
     </View>
+    </ImageBackground>
   );
 };
 

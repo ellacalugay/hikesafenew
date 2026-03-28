@@ -140,7 +140,7 @@ const EditProfileScreen = ({ onBack }) => {
         >
           <ArrowLeft size={24} color={colors.textDark} style={{ marginTop: 13 }} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 22, marginLeft: -100, marginTop: -10, paddingBottom: 10 }]}>EDIT PROFILE</Text>
+        <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 22, marginLeft: -90, marginTop: -10, paddingBottom: 10 }]}>EDIT PROFILE</Text>
         <Image 
           source={require('../../assets/hike_logo.png')} 
           style={{ 
