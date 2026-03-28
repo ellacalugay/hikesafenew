@@ -22,6 +22,7 @@ export const LIGHT_COLORS = {
   modalBg: 'white',
   surfaceBg: 'white',
   profileBg: 'white',
+  greetBn:['#2e7d32', '#4caf50', '#7db241', '#a5de0a'],
 };
 
 export const DARK_COLORS = {
@@ -40,6 +41,7 @@ export const DARK_COLORS = {
   modalBg: '#2d2d2d',
   surfaceBg: '#252525',
   profileBg: 'rgb(66, 61, 61)',
+  greetBn: ['#1a431c', '#2d5e2e', '#4b6a27', '#56720b'],
 };
 
 export const ThemeProvider = ({ children }) => {

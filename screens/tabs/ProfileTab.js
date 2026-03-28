@@ -36,7 +36,7 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
       />
       <ScrollView style={[styles.tabContainer, { backgroundColor: 'transparent' }]}> 
         <LinearGradient
-          colors={['#2e7d32', '#4caf50', '#7db241', '#a5de0a']}
+          colors={colors.greetBn}
           start={{ x: 0, y: 0.5 }}
           end={{ x: 1, y: 0.5 }}
           style={{

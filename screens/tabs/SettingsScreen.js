@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Switch, Modal, Animated, ImageBackground } from 'react-native';
+import { Image } from 'react-native';
 import { ArrowLeft, Bell, Moon, MapPin, Shield, ChevronRight, X } from 'lucide-react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
@@ -73,11 +74,21 @@ const SettingsScreen = ({ onBack }) => {
             onPress={onBack} 
             style={{ position: 'absolute', left: 20, top: 15, padding: 5 }}
           >
-            <ArrowLeft size={24} color={colors.textDark} />
+            <ArrowLeft size={24} color={colors.textDark} style={{ marginTop: 13 }}  />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.textDark }]}>SETTINGS</Text>
+          <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 22, marginLeft: -100, marginTop: -10, paddingBottom: 10 }]}>SETTINGS</Text>
         </View>
-
+        <Image 
+          source={require('../../assets/hike_logo.png')} 
+          style={{ 
+            position: 'absolute', 
+            right: 30, 
+            top: 17,
+            width: 50, 
+            height: 50, 
+            resizeMode: 'contain' 
+          }} 
+          />
         <ScrollView style={{ flex: 1, padding: 20 }}>
         <Text style={[styles.sectionHeader, { marginTop: 0, color: colors.textDark }]}>Notifications</Text>
         <SettingRow 
