@@ -16,7 +16,7 @@ export const LIGHT_COLORS = {
   gray: '#9ca3af',
   cardBg: 'white',
   overlay: 'rgba(255,255,255,0)',
-  headerBg: '#f7fee7',
+  headerBg: '#9dc5a9',
   inputBg: '#f3f4f6',
   borderColor: '#e5e7eb',
   modalBg: 'white',

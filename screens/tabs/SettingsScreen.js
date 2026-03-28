@@ -69,26 +69,26 @@ const SettingsScreen = ({ onBack }) => {
     )}
     <Animated.View style={[{ flex: 1, opacity: themeTransitionAnim }]}>
       <View style={[styles.tabContainer, { backgroundColor: 'transparent' }]}>
-        <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
+        <View style={[styles.headerBar, { backgroundColor: colors.headerBg, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, shadowRadius: 4, elevation: 5, zIndex: 1, }]}>
           <TouchableOpacity 
             onPress={onBack} 
             style={{ position: 'absolute', left: 20, top: 15, padding: 5 }}
           >
             <ArrowLeft size={24} color={colors.textDark} style={{ marginTop: 13 }}  />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 22, marginLeft: -115, marginTop: -10, paddingBottom: 10 }]}>SETTINGS</Text>
-        </View>
-        <Image 
-          source={require('../../assets/hike_logo.png')} 
-          style={{ 
-            position: 'absolute', 
-            right: 30, 
-            top: 17,
-            width: 50, 
-            height: 50, 
-            resizeMode: 'contain' 
-          }} 
-          />
+          <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 22, marginLeft: -115, marginTop: -10, paddingBottom: 10 }]}>SETTINGS</Text>    
+          <Image 
+            source={require('../../assets/hike_logo.png')} 
+            style={{ 
+              position: 'absolute', 
+              right: 30, 
+              top: 17,
+              width: 50, 
+              height: 50, 
+              resizeMode: 'contain' 
+            }} 
+            />
+          </View>
         <ScrollView style={{ flex: 1, padding: 20 }} contentContainerStyle={{ paddingBottom: 50 }} showsVerticalScrollIndicator={false}>
         <Text style={[styles.sectionHeader, { marginTop: 0, color: colors.textDark }]}>Notifications</Text>
         <SettingRow 

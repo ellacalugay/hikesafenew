@@ -133,7 +133,7 @@ const EditProfileScreen = ({ onBack }) => {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
-      <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
+      <View style={[styles.headerBar, { backgroundColor: colors.headerBg, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, shadowRadius: 4, elevation: 5, zIndex: 1}]}>
         <TouchableOpacity 
           onPress={onBack} 
           style={{ position: 'absolute', left: 20, top: 15, padding: 5 }}
