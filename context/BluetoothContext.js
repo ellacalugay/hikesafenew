@@ -3,7 +3,7 @@ import { Alert, Platform, PermissionsAndroid, Vibration } from 'react-native';
 import { Buffer } from 'buffer';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Audio } from 'expo-av';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import * as Notifications from 'expo-notifications';
 import { useLobby } from './LobbyContext';
 
@@ -59,7 +59,19 @@ export const useBluetoothDevice = () => {
 };
 
 export const BluetoothProvider = ({ children }) => {
-  const { isInLobby, registerMemberSync, setMemberOffline, setMyDeviceId, registerBleCommandSender, syncLobbyToDevice, lobbyCode } = useLobby();
+  const {
+    isInLobby,
+    registerMemberSync,
+    setMemberOffline,
+    setMyDeviceId,
+    registerBleCommandSender,
+    syncLobbyToDevice,
+    lobbyCode,
+    myNickname,
+    setMemberNickname,
+    myEmergencyContact,
+    setEmergencyContactForDevice,
+  } = useLobby();
 
   // Connection state
   const [isEnabled, setIsEnabled] = useState(false);
@@ -94,6 +106,9 @@ export const BluetoothProvider = ({ children }) => {
   // Track whether the BLE link *actually* dropped (vs. screen navigation/rerender).
   const wasEverConnectedRef = useRef(false);
   const lastDisconnectAtRef = useRef(null);
+
+  // Serialize BLE writes to avoid overlapping GATT operations (common cause of flakiness).
+  const writeQueueRef = useRef(Promise.resolve());
   
   // Activity log for real-time updates
   const [activityLog, setActivityLog] = useState([]);
@@ -109,6 +124,23 @@ export const BluetoothProvider = ({ children }) => {
   const emergencyAlarmActiveRef = useRef(false);
   const emergencySoundRef = useRef(null);
   const emergencyThrottleRef = useRef(new Map());
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const audioModeConfiguredRef = useRef(false);
+
+  const ensureAudioModeConfigured = useCallback(async () => {
+    if (audioModeConfiguredRef.current) return;
+    try {
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        interruptionMode: 'mixWithOthers',
+      });
+    } catch (error) {
+      // If audio mode config fails, playback may still work depending on platform.
+      console.log('Audio mode config failed:', error?.message || error);
+    } finally {
+      audioModeConfiguredRef.current = true;
+    }
+  }, []);
   
   // Trigger vibration pattern
   const triggerVibration = useCallback((patternName) => {
@@ -143,31 +175,35 @@ export const BluetoothProvider = ({ children }) => {
 
   const startEmergencySiren = useCallback(async () => {
     try {
+      await ensureAudioModeConfigured();
+
       if (emergencySoundRef.current) {
-        await emergencySoundRef.current.playAsync();
+        emergencySoundRef.current.play();
         return;
       }
 
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==' },
-        {
-          shouldPlay: true,
-          isLooping: true,
-          volume: 1.0,
-          progressUpdateIntervalMillis: 250,
-        }
-      );
-      emergencySoundRef.current = sound;
+      const player = createAudioPlayer('data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==');
+      player.loop = true;
+      player.volume = 1.0;
+      player.play();
+      emergencySoundRef.current = player;
     } catch (error) {
       console.log('Emergency siren unavailable:', error?.message || error);
     }
-  }, []);
+  }, [ensureAudioModeConfigured]);
 
   const stopEmergencySiren = useCallback(async () => {
     if (!emergencySoundRef.current) return;
     try {
-      await emergencySoundRef.current.stopAsync();
-      await emergencySoundRef.current.unloadAsync();
+      const player = emergencySoundRef.current;
+      player.pause();
+
+      // Free native resources; API name differs across versions.
+      if (typeof player.remove === 'function') {
+        player.remove();
+      } else if (typeof player.release === 'function') {
+        player.release();
+      }
     } catch (error) {
       console.log('Failed to stop emergency siren:', error?.message || error);
     } finally {
@@ -187,6 +223,9 @@ export const BluetoothProvider = ({ children }) => {
 
   const pushEmergencyNotification = useCallback(async (title, body, eventKey) => {
     try {
+      if (!notificationsEnabled) {
+        return;
+      }
       if (shouldThrottleEmergency(`notif-${eventKey}`, 15000)) {
         return;
       }
@@ -205,7 +244,7 @@ export const BluetoothProvider = ({ children }) => {
     } catch (error) {
       console.log('Emergency notification failed:', error?.message || error);
     }
-  }, [shouldThrottleEmergency]);
+  }, [notificationsEnabled, shouldThrottleEmergency]);
 
   useEffect(() => {
     Notifications.setNotificationHandler({
@@ -218,7 +257,9 @@ export const BluetoothProvider = ({ children }) => {
 
     const setupNotifications = async () => {
       try {
-        await Notifications.requestPermissionsAsync();
+        const perm = await Notifications.requestPermissionsAsync();
+        const granted = perm?.granted === true || perm?.status === 'granted';
+        setNotificationsEnabled(granted);
 
         if (Platform.OS === 'android') {
           await Notifications.setNotificationChannelAsync('emergency-alerts', {
@@ -231,6 +272,7 @@ export const BluetoothProvider = ({ children }) => {
         }
       } catch (error) {
         console.log('Notification setup failed:', error?.message || error);
+        setNotificationsEnabled(false);
       }
     };
 
@@ -240,16 +282,28 @@ export const BluetoothProvider = ({ children }) => {
   // Play connection success sound
   const playConnectionSound = useCallback(async () => {
     try {
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==' },
-        { shouldPlay: true }
-      );
-      await sound.playAsync();
-      sound.unloadAsync();
+      await ensureAudioModeConfigured();
+      const player = createAudioPlayer('data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==');
+      player.volume = 1.0;
+      player.play();
+
+      // One-shot cleanup (data URI is very short; this just prevents leaks).
+      setTimeout(() => {
+        try {
+          player.pause();
+          if (typeof player.remove === 'function') {
+            player.remove();
+          } else if (typeof player.release === 'function') {
+            player.release();
+          }
+        } catch {
+          // ignore
+        }
+      }, 3000);
     } catch (error) {
       console.log('Connection sound disabled or unavailable');
     }
-  }, []);
+  }, [ensureAudioModeConfigured]);
 
   // Log activity
   const addActivity = useCallback((type, details) => {
@@ -572,8 +626,12 @@ export const BluetoothProvider = ({ children }) => {
     
     setConnectedDevice(null);
     setIsConnected(false);
+    setConnectedDevicesCount(0);
+    setIsDeviceReachable(false);
     await stopEmergencySignals();
     setMyLocation({ lat: 0, lng: 0, satellites: 0, valid: false });
+    setLastDataReceived(null);
+    setLoraSignalStrength(null);
     
     setTimeout(() => setStatusMessage(''), 3000);
   }, [stopEmergencySignals]);
@@ -736,6 +794,7 @@ export const BluetoothProvider = ({ children }) => {
             const connCount = parseInt(parts[4], 10);
             if (!isNaN(connCount) && connCount >= 0) {
               setConnectedDevicesCount(connCount);
+              setIsDeviceReachable(connCount > 0);
             }
           }
         }
@@ -953,6 +1012,39 @@ export const BluetoothProvider = ({ children }) => {
         }
         setTimeout(() => setStatusMessage(''), 3000);
       }
+
+      // Nickname sync from device: NICK:[DEVICE_ID],[NICKNAME]
+      else if (trimmed.startsWith('NICK:')) {
+        const payload = trimmed.substring(5);
+        const firstComma = payload.indexOf(',');
+        if (firstComma > 0) {
+          const deviceId = parseInt(payload.substring(0, firstComma), 10);
+          const nickname = payload.substring(firstComma + 1).trim();
+          if (!Number.isNaN(deviceId) && nickname.length > 0 && setMemberNickname) {
+            setMemberNickname(deviceId, nickname);
+            setStatusMessage(`Name synced: ${nickname}`);
+            setTimeout(() => setStatusMessage(''), 2000);
+          }
+        }
+      }
+
+      // Emergency contact sync from device: EC:[DEVICE_ID],[NAME],[PHONE]
+      else if (trimmed.startsWith('EC:')) {
+        const payload = trimmed.substring(3).trim();
+        const firstComma = payload.indexOf(',');
+        const lastComma = payload.lastIndexOf(',');
+
+        // Expected: "<deviceId>,<name>,<phone>".
+        // Use first+last comma so we can tolerate commas inside the name.
+        if (firstComma > 0 && lastComma > firstComma) {
+          const deviceId = parseInt(payload.substring(0, firstComma).trim(), 10);
+          const name = payload.substring(firstComma + 1, lastComma).trim();
+          const phone = payload.substring(lastComma + 1).trim();
+          if (!Number.isNaN(deviceId) && setEmergencyContactForDevice) {
+            setEmergencyContactForDevice(deviceId, { name, phone });
+          }
+        }
+      }
       
       // MORSE input feedback
       else if (trimmed === 'MORSE_DOT') {
@@ -1054,7 +1146,24 @@ export const BluetoothProvider = ({ children }) => {
         setTimeout(() => setStatusMessage(''), 2000);
       }
     });
-  }, [addActivity, connectedDevice, isInLobby, parseDeviceId, pushEmergencyNotification, registerMemberSync, setMemberOffline, setMyDeviceId, shouldThrottleEmergency, startEmergencySignals, stopEmergencySignals, triggerVibration]);
+  }, [addActivity, connectedDevice, isInLobby, parseDeviceId, pushEmergencyNotification, registerMemberSync, setEmergencyContactForDevice, setMemberNickname, setMemberOffline, setMyDeviceId, shouldThrottleEmergency, startEmergencySignals, stopEmergencySignals, triggerVibration]);
+
+  const sendMyNicknameToDevice = useCallback(async () => {
+    if (!isConnected) return false;
+    const nick = (myNickname || '').trim();
+    if (!nick) return false;
+    // Firmware-side suggestion: accept `NICK:<name>` and broadcast it via LoRa.
+    return sendCommand(`NICK:${nick}`);
+  }, [isConnected, myNickname, sendCommand]);
+
+  const sendMyEmergencyContactToDevice = useCallback(async () => {
+    if (!isConnected) return false;
+    const name = (myEmergencyContact?.name || '').trim();
+    const phone = (myEmergencyContact?.phone || '').trim();
+    if (!name || !phone) return false;
+    // Firmware-side suggestion: accept `EC:<name>,<phone>` and broadcast it via LoRa.
+    return sendCommand(`EC:${name},${phone}`);
+  }, [isConnected, myEmergencyContact, sendCommand]);
 
   // Connect to a BLE device - direct connection, no pairing needed!
   const connectToDevice = useCallback(async (device) => {
@@ -1172,6 +1281,8 @@ export const BluetoothProvider = ({ children }) => {
     
     setConnectedDevice(null);
     setIsConnected(false);
+    setConnectedDevicesCount(0);
+    setIsDeviceReachable(false);
     lastDisconnectAtRef.current = Date.now();
     stopEmergencySignals();
     setMyLocation({ lat: 0, lng: 0, satellites: 0, valid: false });
@@ -1201,24 +1312,52 @@ export const BluetoothProvider = ({ children }) => {
       return true;
     }
     
-    try {
+    const queuedWrite = async () => {
+      const dev = deviceRef.current;
+      if (!dev) {
+        throw new Error('BLE device is not connected');
+      }
+
+      // Defensive: avoid writing if the OS already dropped the connection.
+      try {
+        const stillConnected = await dev.isConnected();
+        if (!stillConnected) {
+          throw new Error('BLE device is not connected');
+        }
+      } catch (e) {
+        throw new Error('BLE device is not connected');
+      }
+
       // Encode to base64 for BLE transmission
       const encoded = Buffer.from(cmdWithNewline, 'utf-8').toString('base64');
-      
+
       // Write to RX characteristic (app → device)
-      await deviceRef.current.writeCharacteristicWithResponseForService(
+      await dev.writeCharacteristicWithResponseForService(
         NUS_SERVICE_UUID,
         NUS_RX_CHAR_UUID,
         encoded
       );
+
       return true;
+    };
+
+    // Ensure a previous write failure doesn't poison the whole queue.
+    writeQueueRef.current = writeQueueRef.current
+      .catch(() => undefined)
+      .then(queuedWrite);
+
+    try {
+      return await writeQueueRef.current;
     } catch (error) {
       console.error('Send error:', error);
-      if (error.message?.includes('disconnected') || error.message?.includes('cancel')) {
+
+      const message = (error?.message || '').toLowerCase();
+      if (message.includes('disconnected') || message.includes('not connected') || message.includes('cancel')) {
         handleConnectionLost();
-      } else {
-        Alert.alert('Send Failed', 'Could not send command to device.');
+        return false;
       }
+
+      Alert.alert('Send Failed', 'Could not send command to device.');
       return false;
     }
   }, [isConnected, handleConnectionLost]);
@@ -1238,6 +1377,14 @@ export const BluetoothProvider = ({ children }) => {
     // Fire-and-forget; LobbyContext already handles missing sender.
     syncLobbyToDevice(sendCommand);
   }, [isConnected, lobbyCode, syncLobbyToDevice, sendCommand]);
+
+  // Auto-send our nickname after connection and when entering a lobby.
+  useEffect(() => {
+    if (!isConnected) return;
+    if (!isInLobby) return;
+    sendMyNicknameToDevice();
+    sendMyEmergencyContactToDevice();
+  }, [isConnected, isInLobby, sendMyNicknameToDevice, sendMyEmergencyContactToDevice]);
 
   // Convenience methods
   const sendSOS = useCallback(() => sendCommand('SOS'), [sendCommand]);

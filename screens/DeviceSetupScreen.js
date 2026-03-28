@@ -105,6 +105,22 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
     );
   };
 
+  const displayedDevices = React.useMemo(() => {
+    const list = Array.isArray(availableDevices) ? [...availableDevices] : [];
+    if (isConnected && connectedDevice?.id) {
+      const alreadyListed = list.some(d => d?.id === connectedDevice.id);
+      if (!alreadyListed) {
+        list.unshift({
+          id: connectedDevice.id,
+          name: connectedDevice.name || 'Connected Device',
+          address: connectedDevice.id,
+          rssi: null,
+        });
+      }
+    }
+    return list;
+  }, [availableDevices, isConnected, connectedDevice]);
+
   return (
     <ImageBackground
       source={require('../assets/int bg 1.png')}
@@ -182,7 +198,7 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
             </View>
           ) : (
             <FlatList
-              data={availableDevices}
+              data={displayedDevices}
               renderItem={renderDevice}
               keyExtractor={(item) => item.id || item.address}
               contentContainerStyle={localStyles.listContent}

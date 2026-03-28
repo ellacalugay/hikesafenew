@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const UserContext = createContext(null);
@@ -12,11 +12,11 @@ const MEDICAL_CONDITION_KEY = '@hikesafe_medical_condition';
 const PROFILE_PICTURE_KEY = '@hikesafe_profile_picture';
 
 export const useUser = () => {
-  const context = useContext(UserContext);
-  if (!context) {
+  const ctx = useContext(UserContext);
+  if (!ctx) {
     throw new Error('useUser must be used within a UserProvider');
   }
-  return context;
+  return ctx;
 };
 
 export const UserProvider = ({ children }) => {
@@ -53,51 +53,57 @@ export const UserProvider = ({ children }) => {
         setIsLoading(false);
       }
     };
+
     load();
   }, []);
 
   const setFirstName = useCallback(async (value) => {
-    setFirstNameState(value);
+    const next = (value || '').toString();
+    setFirstNameState(next);
     try {
-      await AsyncStorage.setItem(FIRST_NAME_KEY, value);
+      await AsyncStorage.setItem(FIRST_NAME_KEY, next);
     } catch (e) {
-      console.error('Failed to save first name:', e);
+      console.error('Failed to persist first name:', e);
     }
   }, []);
 
   const setLastName = useCallback(async (value) => {
-    setLastNameState(value);
+    const next = (value || '').toString();
+    setLastNameState(next);
     try {
-      await AsyncStorage.setItem(LAST_NAME_KEY, value);
+      await AsyncStorage.setItem(LAST_NAME_KEY, next);
     } catch (e) {
-      console.error('Failed to save last name:', e);
+      console.error('Failed to persist last name:', e);
     }
   }, []);
 
   const setContactName = useCallback(async (value) => {
-    setContactNameState(value);
+    const next = (value || '').toString();
+    setContactNameState(next);
     try {
-      await AsyncStorage.setItem(CONTACT_NAME_KEY, value);
+      await AsyncStorage.setItem(CONTACT_NAME_KEY, next);
     } catch (e) {
-      console.error('Failed to save contact name:', e);
+      console.error('Failed to persist contact name:', e);
     }
   }, []);
 
   const setContactPhone = useCallback(async (value) => {
-    setContactPhoneState(value);
+    const next = (value || '').toString();
+    setContactPhoneState(next);
     try {
-      await AsyncStorage.setItem(CONTACT_PHONE_KEY, value);
+      await AsyncStorage.setItem(CONTACT_PHONE_KEY, next);
     } catch (e) {
-      console.error('Failed to save contact phone:', e);
+      console.error('Failed to persist contact phone:', e);
     }
   }, []);
 
   const setMedicalCondition = useCallback(async (value) => {
-    setMedicalConditionState(value);
+    const next = (value || '').toString();
+    setMedicalConditionState(next);
     try {
-      await AsyncStorage.setItem(MEDICAL_CONDITION_KEY, value);
+      await AsyncStorage.setItem(MEDICAL_CONDITION_KEY, next);
     } catch (e) {
-      console.error('Failed to save medical condition:', e);
+      console.error('Failed to persist medical condition:', e);
     }
     }, []);
 
@@ -158,5 +164,3 @@ export const UserProvider = ({ children }) => {
     </UserContext.Provider>
   );
 };
-
-export default UserContext;

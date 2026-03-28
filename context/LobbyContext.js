@@ -13,6 +13,8 @@ const MY_NICKNAME_KEY = '@hikesafe_my_nickname';
 const DEVICE_NICKNAME_KEY = '@hikesafe_device_nickname';
 const HOST_DEVICE_ID_KEY = '@hikesafe_host_device_id';
 const MY_DEVICE_ID_KEY = '@hikesafe_my_device_id';
+const EMERGENCY_CONTACTS_KEY = '@hikesafe_emergency_contacts';
+const MY_EMERGENCY_CONTACT_KEY = '@hikesafe_my_emergency_contact';
 
 // Generate a random 4-digit lobby code
 const generateLobbyCode = () => {
@@ -44,6 +46,11 @@ export const LobbyProvider = ({ children }) => {
   // BLE command callback - will be set by BluetoothContext integration
   const [sendLobbyCommand, setSendLobbyCommand] = useState(null);
 
+  // Emergency contacts
+  // emergencyContacts: { [deviceId]: { name: string, phone: string } }
+  const [emergencyContacts, setEmergencyContacts] = useState({});
+  const [myEmergencyContact, setMyEmergencyContactState] = useState({ name: '', phone: '' });
+
   // Load persisted lobby data on mount
   useEffect(() => {
     loadPersistedLobby();
@@ -51,7 +58,7 @@ export const LobbyProvider = ({ children }) => {
 
   const loadPersistedLobby = async () => {
     try {
-      const [savedCode, savedName, savedRole, savedMax, savedNicknames, savedMyNickname, savedDeviceNick, savedHostDeviceId, savedMyDeviceId] = await Promise.all([
+      const [savedCode, savedName, savedRole, savedMax, savedNicknames, savedMyNickname, savedDeviceNick, savedHostDeviceId, savedMyDeviceId, savedEmergencyContacts, savedMyEmergencyContact] = await Promise.all([
         AsyncStorage.getItem(LOBBY_CODE_KEY),
         AsyncStorage.getItem(LOBBY_NAME_KEY),
         AsyncStorage.getItem(LOBBY_ROLE_KEY),
@@ -61,6 +68,8 @@ export const LobbyProvider = ({ children }) => {
         AsyncStorage.getItem(DEVICE_NICKNAME_KEY),
         AsyncStorage.getItem(HOST_DEVICE_ID_KEY),
         AsyncStorage.getItem(MY_DEVICE_ID_KEY),
+        AsyncStorage.getItem(EMERGENCY_CONTACTS_KEY),
+        AsyncStorage.getItem(MY_EMERGENCY_CONTACT_KEY),
       ]);
 
       if (savedCode) {
@@ -99,12 +108,76 @@ export const LobbyProvider = ({ children }) => {
       if (savedDeviceNick) {
         setDeviceNicknameState(savedDeviceNick);
       }
+
+      if (savedEmergencyContacts) {
+        try {
+          setEmergencyContacts(JSON.parse(savedEmergencyContacts));
+        } catch (e) {
+          setEmergencyContacts({});
+        }
+      }
+
+      if (savedMyEmergencyContact) {
+        try {
+          const parsed = JSON.parse(savedMyEmergencyContact);
+          if (parsed && typeof parsed === 'object') {
+            setMyEmergencyContactState({
+              name: (parsed.name || '').toString(),
+              phone: (parsed.phone || '').toString(),
+            });
+          }
+        } catch (e) {
+          setMyEmergencyContactState({ name: '', phone: '' });
+        }
+      }
     } catch (error) {
       console.error('Failed to load lobby data:', error);
     } finally {
       setIsLoading(false);
     }
   };
+
+  const persistEmergencyContacts = useCallback(async (next) => {
+    try {
+      await AsyncStorage.setItem(EMERGENCY_CONTACTS_KEY, JSON.stringify(next || {}));
+    } catch (error) {
+      console.error('Failed to persist emergency contacts:', error);
+    }
+  }, []);
+
+  const setMyEmergencyContact = useCallback(async (contact) => {
+    const next = {
+      name: (contact?.name || '').toString(),
+      phone: (contact?.phone || '').toString(),
+    };
+    setMyEmergencyContactState(next);
+    try {
+      await AsyncStorage.setItem(MY_EMERGENCY_CONTACT_KEY, JSON.stringify(next));
+    } catch (error) {
+      console.error('Failed to persist my emergency contact:', error);
+    }
+  }, []);
+
+  const setEmergencyContactForDevice = useCallback(async (deviceId, contact) => {
+    if (deviceId === null || deviceId === undefined || Number.isNaN(deviceId)) return;
+    const nextContact = {
+      name: (contact?.name || '').toString(),
+      phone: (contact?.phone || '').toString(),
+    };
+
+    setEmergencyContacts(prev => {
+      const next = { ...(prev || {}) };
+      next[deviceId] = nextContact;
+      // Persist best-effort
+      persistEmergencyContacts(next);
+      return next;
+    });
+  }, [persistEmergencyContacts]);
+
+  const getEmergencyContactForDevice = useCallback((deviceId) => {
+    if (deviceId === null || deviceId === undefined) return null;
+    return emergencyContacts?.[deviceId] || null;
+  }, [emergencyContacts]);
 
   const persistLobbyData = async (code, name, role, max) => {
     try {
@@ -485,6 +558,8 @@ export const LobbyProvider = ({ children }) => {
     memberNicknames,
     myNickname,
     deviceNickname,
+    emergencyContacts,
+    myEmergencyContact,
     hostDeviceId,
     myDeviceId,
     
@@ -506,6 +581,9 @@ export const LobbyProvider = ({ children }) => {
     getMemberNickname,
     setMyNickname,
     setDeviceNickname,
+    setMyEmergencyContact,
+    setEmergencyContactForDevice,
+    getEmergencyContactForDevice,
     clearNicknames,
     
     // Helpers
