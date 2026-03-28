@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef  } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput, Alert, KeyboardAvoidingView, Platform, ImageBackground } from 'react-native';
-import { Image } from 'react-native';
+import { Image, Linking, AppState } from 'react-native';
 import { ArrowLeft, AlertTriangle, Bug, MessageSquare, Zap } from 'lucide-react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
@@ -30,6 +30,29 @@ const ReportProblemScreen = ({ onBack }) => {
   const { colors, isDarkMode } = useTheme();
   const [problemType, setProblemType] = useState('');
   const [description, setDescription] = useState('');
+  const appState = useRef(AppState.currentState);
+  const didOpenMail = useRef(false);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      // User returned to the app from background
+      if (
+        appState.current.match(/inactive|background/) &&
+        nextAppState === 'active' &&
+        didOpenMail.current
+      ) {
+        didOpenMail.current = false; // reset flag
+        Alert.alert(
+          'Report Submitted',
+          'Thank you for your feedback! Our team will review your report shortly.',
+          [{ text: 'OK', onPress: onBack }]
+        );
+      }
+      appState.current = nextAppState;
+    });
+
+    return () => subscription.remove();
+  }, [onBack]);
 
   const problemTypes = [
     { id: 'bug', icon: Bug, label: 'Bug / Error' },
@@ -38,7 +61,7 @@ const ReportProblemScreen = ({ onBack }) => {
     { id: 'safety', icon: AlertTriangle, label: 'Safety Concern' },
   ];
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!problemType) {
       Alert.alert('Select Problem Type', 'Please select the type of problem you want to report.');
       return;
@@ -48,11 +71,25 @@ const ReportProblemScreen = ({ onBack }) => {
       return;
     }
     
-    Alert.alert(
-      'Report Submitted',
-      'Thank you for your feedback! Our team will review your report shortly.',
-      [{ text: 'OK', onPress: onBack }]
-    );
+    const selectedType = problemTypes.find((type) => type.id === problemType);
+    const subject = encodeURIComponent(`[HikeSafe Report] ${selectedType?.label}`);
+    const body = encodeURIComponent(description);
+    const email = 'hikesafe.team@gmail.com';
+
+    const mailtoUrl = `mailto:${email}?subject=${subject}&body=${body}`;
+
+    try {
+      const canOpen = await Linking.canOpenURL(mailtoUrl);
+    if (canOpen) {
+      didOpenMail.current = true; // add this
+      await Linking.openURL(mailtoUrl);
+    } else {
+      Alert.alert('Error', 'No email app found on this device.');
+    }
+    } catch (e) {
+      console.error('Failed to open mail client:', e);
+      Alert.alert('Error', 'Unable to open email client.');
+    }
   };
 
   return (
