@@ -106,6 +106,9 @@ export const BluetoothProvider = ({ children }) => {
   // Track whether the BLE link *actually* dropped (vs. screen navigation/rerender).
   const wasEverConnectedRef = useRef(false);
   const lastDisconnectAtRef = useRef(null);
+
+  // Serialize BLE writes to avoid overlapping GATT operations (common cause of flakiness).
+  const writeQueueRef = useRef(Promise.resolve());
   
   // Activity log for real-time updates
   const [activityLog, setActivityLog] = useState([]);
@@ -623,8 +626,12 @@ export const BluetoothProvider = ({ children }) => {
     
     setConnectedDevice(null);
     setIsConnected(false);
+    setConnectedDevicesCount(0);
+    setIsDeviceReachable(false);
     await stopEmergencySignals();
     setMyLocation({ lat: 0, lng: 0, satellites: 0, valid: false });
+    setLastDataReceived(null);
+    setLoraSignalStrength(null);
     
     setTimeout(() => setStatusMessage(''), 3000);
   }, [stopEmergencySignals]);
@@ -787,6 +794,7 @@ export const BluetoothProvider = ({ children }) => {
             const connCount = parseInt(parts[4], 10);
             if (!isNaN(connCount) && connCount >= 0) {
               setConnectedDevicesCount(connCount);
+              setIsDeviceReachable(connCount > 0);
             }
           }
         }
@@ -1273,6 +1281,8 @@ export const BluetoothProvider = ({ children }) => {
     
     setConnectedDevice(null);
     setIsConnected(false);
+    setConnectedDevicesCount(0);
+    setIsDeviceReachable(false);
     lastDisconnectAtRef.current = Date.now();
     stopEmergencySignals();
     setMyLocation({ lat: 0, lng: 0, satellites: 0, valid: false });
@@ -1302,24 +1312,52 @@ export const BluetoothProvider = ({ children }) => {
       return true;
     }
     
-    try {
+    const queuedWrite = async () => {
+      const dev = deviceRef.current;
+      if (!dev) {
+        throw new Error('BLE device is not connected');
+      }
+
+      // Defensive: avoid writing if the OS already dropped the connection.
+      try {
+        const stillConnected = await dev.isConnected();
+        if (!stillConnected) {
+          throw new Error('BLE device is not connected');
+        }
+      } catch (e) {
+        throw new Error('BLE device is not connected');
+      }
+
       // Encode to base64 for BLE transmission
       const encoded = Buffer.from(cmdWithNewline, 'utf-8').toString('base64');
-      
+
       // Write to RX characteristic (app → device)
-      await deviceRef.current.writeCharacteristicWithResponseForService(
+      await dev.writeCharacteristicWithResponseForService(
         NUS_SERVICE_UUID,
         NUS_RX_CHAR_UUID,
         encoded
       );
+
       return true;
+    };
+
+    // Ensure a previous write failure doesn't poison the whole queue.
+    writeQueueRef.current = writeQueueRef.current
+      .catch(() => undefined)
+      .then(queuedWrite);
+
+    try {
+      return await writeQueueRef.current;
     } catch (error) {
       console.error('Send error:', error);
-      if (error.message?.includes('disconnected') || error.message?.includes('cancel')) {
+
+      const message = (error?.message || '').toLowerCase();
+      if (message.includes('disconnected') || message.includes('not connected') || message.includes('cancel')) {
         handleConnectionLost();
-      } else {
-        Alert.alert('Send Failed', 'Could not send command to device.');
+        return false;
       }
+
+      Alert.alert('Send Failed', 'Could not send command to device.');
       return false;
     }
   }, [isConnected, handleConnectionLost]);
