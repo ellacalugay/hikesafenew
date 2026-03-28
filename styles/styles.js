@@ -745,7 +745,7 @@ export const styles = StyleSheet.create({
     gap: 10,
   },
   locationServicesLabel: {
-    fontSize: 16,
+    fontSize: 22,
     fontWeight: 'bold',
     color: COLORS.textDark,
   },
