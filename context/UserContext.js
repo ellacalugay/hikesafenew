@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+/* import 'react-native-get-random-values';
+import { v4 as uuidv4 } from 'uuid'; */
 
 const UserContext = createContext(null);
 
@@ -9,6 +11,8 @@ const LAST_NAME_KEY = '@hikesafe_last_name';
 const CONTACT_NAME_KEY = '@hikesafe_contact_name';
 const CONTACT_PHONE_KEY = '@hikesafe_contact_phone';
 const MEDICAL_CONDITION_KEY = '@hikesafe_medical_condition';
+const PROFILE_PICTURE_KEY = '@hikesafe_profile_picture';
+//const MEMBER_ID_KEY = '@hikesafe_member_id';
 
 export const useUser = () => {
   const context = useContext(UserContext);
@@ -24,17 +28,21 @@ export const UserProvider = ({ children }) => {
   const [contactName, setContactNameState] = useState('');
   const [contactPhone, setContactPhoneState] = useState('');
   const [medicalCondition, setMedicalConditionState] = useState('');
+  const [profilePicture, setProfilePictureState] = useState(null); 
+//  const [memberId, setMemberIdState] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [f, l, cName, cPhone, med] = await Promise.all([
+        const [f, l, cName, cPhone, med, pic, mid] = await Promise.all([
           AsyncStorage.getItem(FIRST_NAME_KEY),
           AsyncStorage.getItem(LAST_NAME_KEY),
           AsyncStorage.getItem(CONTACT_NAME_KEY),
           AsyncStorage.getItem(CONTACT_PHONE_KEY),
           AsyncStorage.getItem(MEDICAL_CONDITION_KEY),
+          AsyncStorage.getItem(PROFILE_PICTURE_KEY),
+//          AsyncStorage.getItem(MEMBER_ID_KEY),
         ]);
 
         if (f) setFirstNameState(f);
@@ -42,6 +50,15 @@ export const UserProvider = ({ children }) => {
         if (cName) setContactNameState(cName);
         if (cPhone) setContactPhoneState(cPhone);
         if (med) setMedicalConditionState(med);
+        if (pic) setProfilePictureState(pic);
+        
+/*         if (mid) {
+          setMemberIdState(mid);
+        } else {
+          const newId = uuidv4();
+          setMemberIdState(newId);
+          await AsyncStorage.setItem(MEMBER_ID_KEY, newId);
+        } */
       } catch (error) {
         console.error('Failed to load user data:', error);
       } finally {
@@ -94,7 +111,20 @@ export const UserProvider = ({ children }) => {
     } catch (e) {
       console.error('Failed to save medical condition:', e);
     }
-  }, []);
+    }, []);
+
+  const setProfilePicture = useCallback(async (uri) => {
+    setProfilePictureState(uri);
+    try {
+      if (uri) {
+        await AsyncStorage.setItem(PROFILE_PICTURE_KEY, uri);
+      } else {
+        await AsyncStorage.removeItem(PROFILE_PICTURE_KEY);
+      }
+    } catch (e) { console.error('Failed to save profile picture:', e); 
+
+    }
+    }, []);
 
   const clearUser = useCallback(async () => {
     setFirstNameState('');
@@ -102,6 +132,7 @@ export const UserProvider = ({ children }) => {
     setContactNameState('');
     setContactPhoneState('');
     setMedicalConditionState('');
+    setProfilePictureState(null);
     try {
       await Promise.all([
         AsyncStorage.removeItem(FIRST_NAME_KEY),
@@ -109,6 +140,7 @@ export const UserProvider = ({ children }) => {
         AsyncStorage.removeItem(CONTACT_NAME_KEY),
         AsyncStorage.removeItem(CONTACT_PHONE_KEY),
         AsyncStorage.removeItem(MEDICAL_CONDITION_KEY),
+        AsyncStorage.removeItem(PROFILE_PICTURE_KEY),
       ]);
     } catch (e) {
       console.error('Failed to clear user data:', e);
@@ -121,12 +153,14 @@ export const UserProvider = ({ children }) => {
     contactName,
     contactPhone,
     medicalCondition,
+    profilePicture,
     isLoading,
     setFirstName,
     setLastName,
     setContactName,
     setContactPhone,
     setMedicalCondition,
+    setProfilePicture,
     clearUser,
   };
 

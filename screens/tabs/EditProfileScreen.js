@@ -21,14 +21,15 @@ const EditProfileScreen = ({ onBack }) => {
     contactName: ctxContactName,
     contactPhone: ctxContactPhone,
     medicalCondition: ctxMedicalCondition,
+    profilePicture: ctxProfilePicture, 
     setFirstName: setCtxFirstName,
     setLastName: setCtxLastName,
     setContactName: setCtxContactName,
     setContactPhone: setCtxContactPhone,
     setMedicalCondition: setCtxMedicalCondition,
+    setProfilePicture: setCtxProfilePicture,
   } = useUser();
-  const [profileImage, setProfileImage] = useState(null);
-
+  
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [nickname, setNickname] = useState('');
@@ -36,6 +37,7 @@ const EditProfileScreen = ({ onBack }) => {
   const [contactName, setContactName] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [medicalCondition, setMedicalCondition] = useState('');
+  const [profilePicture, setProfilePicture] = useState(null);
 
   // Load saved nickname on mount
   useEffect(() => {
@@ -65,7 +67,11 @@ const EditProfileScreen = ({ onBack }) => {
       setMedicalCondition(ctxMedicalCondition);
     }
 
-  }, [ctxFirstName, ctxLastName, ctxContactName, ctxContactPhone, ctxMedicalCondition]);
+    if (ctxProfilePicture) {
+      setProfilePicture(ctxProfilePicture);
+    }
+
+  }, [ctxFirstName, ctxLastName, ctxContactName, ctxContactPhone, ctxMedicalCondition, ctxProfilePicture]);
 
   const handleSave = async () => {
     // Save nickname to LobbyContext
@@ -83,6 +89,7 @@ const EditProfileScreen = ({ onBack }) => {
     if (contactName.trim()) await setCtxContactName(contactName.trim());
     if (contactPhone.trim()) await setCtxContactPhone(contactPhone.trim());
     if (medicalCondition.trim()) await setCtxMedicalCondition(medicalCondition.trim());
+    if (profilePicture) await setCtxProfilePicture(profilePicture);
     
     Alert.alert('Saved', 'Your profile has been updated.');
     onBack();
@@ -101,7 +108,7 @@ const EditProfileScreen = ({ onBack }) => {
     quality: 0.8,
   });
   if (!result.canceled) {
-    setProfileImage(result.assets[0].uri);
+    setProfilePicture(result.assets[0].uri);
   }
 };
   return (
@@ -144,9 +151,9 @@ const EditProfileScreen = ({ onBack }) => {
                   borderColor: 'black',
                   overflow: 'hidden',
                 }}>
-                  {profileImage ? (
+                  {profilePicture ? (
                     <Image 
-                      source={{ uri: profileImage }} 
+                      source={{ uri: profilePicture }} 
                       style={{ width: 100, height: 100 }}
                     />
                   ) : (
