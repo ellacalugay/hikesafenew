@@ -36,17 +36,7 @@ const ServiceItem = ({ icon: Icon, label, onPress, colors }) => (
 
 const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
-  const {
-    isConnected,
-    isDeviceReachable,
-    connectedDevice,
-    myLocation,
-    memberLocations,
-    statusMessage,
-    loraSignalStrength,
-    connectedDevicesCount,
-    activeAlert,
-  } = useBluetoothDevice();
+  const { isConnected, isDeviceReachable, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isHost, myNickname } = useLobby();
   
   // Get signal quality from RSSI (LoRa typical ranges: -30 to -120 dBm)

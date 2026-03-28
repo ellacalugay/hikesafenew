@@ -3,11 +3,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const UserContext = createContext(null);
 
-const FIRST_NAME_KEY = '@hikesafe_user_first_name';
-const LAST_NAME_KEY = '@hikesafe_user_last_name';
-const CONTACT_NAME_KEY = '@hikesafe_user_contact_name';
-const CONTACT_PHONE_KEY = '@hikesafe_user_contact_phone';
-const MEDICAL_CONDITION_KEY = '@hikesafe_user_medical_condition';
+// Storage keys
+const FIRST_NAME_KEY = '@hikesafe_first_name';
+const LAST_NAME_KEY = '@hikesafe_last_name';
+const CONTACT_NAME_KEY = '@hikesafe_contact_name';
+const CONTACT_PHONE_KEY = '@hikesafe_contact_phone';
+const MEDICAL_CONDITION_KEY = '@hikesafe_medical_condition';
+const PROFILE_PICTURE_KEY = '@hikesafe_profile_picture';
 
 export const useUser = () => {
   const ctx = useContext(UserContext);
@@ -18,31 +20,35 @@ export const useUser = () => {
 };
 
 export const UserProvider = ({ children }) => {
-  const [isLoading, setIsLoading] = useState(true);
-
   const [firstName, setFirstNameState] = useState('');
   const [lastName, setLastNameState] = useState('');
   const [contactName, setContactNameState] = useState('');
   const [contactPhone, setContactPhoneState] = useState('');
   const [medicalCondition, setMedicalConditionState] = useState('');
+  const [profilePicture, setProfilePictureState] = useState(null); 
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [fn, ln, cn, cp, mc] = await Promise.all([
+        const [f, l, cName, cPhone, med, pic, mid] = await Promise.all([
           AsyncStorage.getItem(FIRST_NAME_KEY),
           AsyncStorage.getItem(LAST_NAME_KEY),
           AsyncStorage.getItem(CONTACT_NAME_KEY),
           AsyncStorage.getItem(CONTACT_PHONE_KEY),
           AsyncStorage.getItem(MEDICAL_CONDITION_KEY),
+          AsyncStorage.getItem(PROFILE_PICTURE_KEY),
         ]);
-        if (fn) setFirstNameState(fn);
-        if (ln) setLastNameState(ln);
-        if (cn) setContactNameState(cn);
-        if (cp) setContactPhoneState(cp);
-        if (mc) setMedicalConditionState(mc);
-      } catch (e) {
-        console.error('Failed to load user profile:', e);
+
+        if (f) setFirstNameState(f);
+        if (l) setLastNameState(l);
+        if (cName) setContactNameState(cName);
+        if (cPhone) setContactPhoneState(cPhone);
+        if (med) setMedicalConditionState(med);
+        if (pic) setProfilePictureState(pic);
+
+      } catch (error) {
+        console.error('Failed to load user data:', error);
       } finally {
         setIsLoading(false);
       }
@@ -99,7 +105,58 @@ export const UserProvider = ({ children }) => {
     } catch (e) {
       console.error('Failed to persist medical condition:', e);
     }
+    }, []);
+
+  const setProfilePicture = useCallback(async (uri) => {
+    setProfilePictureState(uri);
+    try {
+      if (uri) {
+        await AsyncStorage.setItem(PROFILE_PICTURE_KEY, uri);
+      } else {
+        await AsyncStorage.removeItem(PROFILE_PICTURE_KEY);
+      }
+    } catch (e) { console.error('Failed to save profile picture:', e); 
+
+    }
+    }, []);
+
+  const clearUser = useCallback(async () => {
+    setFirstNameState('');
+    setLastNameState('');
+    setContactNameState('');
+    setContactPhoneState('');
+    setMedicalConditionState('');
+    setProfilePictureState(null);
+    try {
+      await Promise.all([
+        AsyncStorage.removeItem(FIRST_NAME_KEY),
+        AsyncStorage.removeItem(LAST_NAME_KEY),
+        AsyncStorage.removeItem(CONTACT_NAME_KEY),
+        AsyncStorage.removeItem(CONTACT_PHONE_KEY),
+        AsyncStorage.removeItem(MEDICAL_CONDITION_KEY),
+        AsyncStorage.removeItem(PROFILE_PICTURE_KEY),
+      ]);
+    } catch (e) {
+      console.error('Failed to clear user data:', e);
+    }
   }, []);
+
+  const value = {
+    firstName,
+    lastName,
+    contactName,
+    contactPhone,
+    medicalCondition,
+    profilePicture,
+    isLoading,
+    setFirstName,
+    setLastName,
+    setContactName,
+    setContactPhone,
+    setMedicalCondition,
+    setProfilePicture,
+    clearUser,
+  };
 
   return (
     <UserContext.Provider

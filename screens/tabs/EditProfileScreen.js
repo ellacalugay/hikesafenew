@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert } from 'react-native';
-import { ArrowLeft, User, Radio } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { Image } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ImageBackground } from 'react-native';
+import { ArrowLeft, User, Radio, Camera } from 'lucide-react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
 import { InputField, MainButton } from '../../components/shared';
@@ -19,13 +21,15 @@ const EditProfileScreen = ({ onBack }) => {
     contactName: ctxContactName,
     contactPhone: ctxContactPhone,
     medicalCondition: ctxMedicalCondition,
+    profilePicture: ctxProfilePicture, 
     setFirstName: setCtxFirstName,
     setLastName: setCtxLastName,
     setContactName: setCtxContactName,
     setContactPhone: setCtxContactPhone,
     setMedicalCondition: setCtxMedicalCondition,
+    setProfilePicture: setCtxProfilePicture,
   } = useUser();
-
+  
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [nickname, setNickname] = useState('');
@@ -33,6 +37,7 @@ const EditProfileScreen = ({ onBack }) => {
   const [contactName, setContactName] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [medicalCondition, setMedicalCondition] = useState('');
+  const [profilePicture, setProfilePicture] = useState(null);
 
   // Load saved nickname on mount
   useEffect(() => {
@@ -62,7 +67,11 @@ const EditProfileScreen = ({ onBack }) => {
       setMedicalCondition(ctxMedicalCondition);
     }
 
-  }, [ctxFirstName, ctxLastName, ctxContactName, ctxContactPhone, ctxMedicalCondition]);
+    if (ctxProfilePicture) {
+      setProfilePicture(ctxProfilePicture);
+    }
+
+  }, [ctxFirstName, ctxLastName, ctxContactName, ctxContactPhone, ctxMedicalCondition, ctxProfilePicture]);
 
   const handleSave = async () => {
     // Save nickname to LobbyContext
@@ -80,14 +89,37 @@ const EditProfileScreen = ({ onBack }) => {
     if (contactName.trim()) await setCtxContactName(contactName.trim());
     if (contactPhone.trim()) await setCtxContactPhone(contactPhone.trim());
     if (medicalCondition.trim()) await setCtxMedicalCondition(medicalCondition.trim());
+    if (profilePicture) await setCtxProfilePicture(profilePicture);
     
     Alert.alert('Saved', 'Your profile has been updated.');
     onBack();
   };
 
+  const handlePickImage = async () => {
+  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!permission.granted) {
+    Alert.alert('Permission required', 'Please allow access to your photo library.');
+    return;
+  }
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    allowsEditing: true,
+    aspect: [1, 1],
+    quality: 0.8,
+  });
+  if (!result.canceled) {
+    setProfilePicture(result.assets[0].uri);
+  }
+};
   return (
+    <ImageBackground 
+      source={require('../../assets/dashboard_bg.png')} 
+      style={[styles.tabContainer, { backgroundColor: colors.background }]}
+      imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
+    > 
+
     <KeyboardAvoidingView 
-      style={[styles.tabContainer, { backgroundColor: colors.background }]} 
+      style={[styles.tabContainer, { backgroundColor: 'transparent' }]} 
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
@@ -98,91 +130,100 @@ const EditProfileScreen = ({ onBack }) => {
         >
           <ArrowLeft size={24} color={colors.textDark} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.textDark }]}>EDIT PROFILE</Text>
+        <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 22, marginLeft: -100, marginTop: -20 }]}>EDIT PROFILE</Text>
       </View>
 
       <ScrollView 
-        style={{ flex: 1, padding: 20 }}
+        style={{ flex: 1, padding: 2, backgroundColor: 'transparent' }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={true}
         contentContainerStyle={{ paddingBottom: 50 }}
-      >
+>
         <View style={{ alignItems: 'center', marginBottom: 20 }}>
-          <View style={[styles.avatarLarge, { backgroundColor: colors.primary }]}>
-            <User size={40} color="white" />
+          <View style={{ alignItems: 'center', marginBottom: 20 }}>
+            <TouchableOpacity onPress={handlePickImage}>
+              <View style={{ width: 100, height: 100 }}>
+                <View style={{
+                  width: 100,
+                  height: 100,
+                  borderRadius: 50,
+                  borderWidth: 2,
+                  borderColor: 'black',
+                  overflow: 'hidden',
+                }}>
+                  {profilePicture ? (
+                    <Image 
+                      source={{ uri: profilePicture }} 
+                      style={{ width: 100, height: 100 }}
+                    />
+                  ) : (
+                    <Image 
+                      source={require('../../assets/add_profile.jpg')} 
+                      style={{ width: 210, height: 210, position: 'absolute', top: -57, left: -57 }} 
+                    />
+                  )}
+                  </View>
+                    <View style={{
+                      position: 'absolute',
+                      bottom: 0,
+                      right: 0,
+                      backgroundColor: '#4CAF50',
+                      borderRadius: 12,
+                      width: 24,
+                      height: 24,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                    <Camera size={14} color="white" />
+                  </View>
+                </View>
+            </TouchableOpacity>
+            <TouchableOpacity style={{ marginTop: 1}} onPress={handlePickImage}>
+              <Text style={{ color: colors.primary, fontWeight: '700' }}>PROFILE PHOTO</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity style={{ marginTop: 10 }}>
-            <Text style={{ color: colors.primary, fontWeight: '600' }}>Change Photo</Text>
-          </TouchableOpacity>
         </View>
-
-        <Text style={[styles.sectionHeader, { marginTop: 0, color: colors.textDark }]}>Personal Information</Text>
         
-        <InputField 
-          label="First Name" 
-          placeholder="Enter first name"
-          value={firstName}
-          onChangeText={setFirstName}
-        />
-        <InputField 
-          label="Last Name" 
-          placeholder="Enter last name"
-          value={lastName}
-          onChangeText={setLastName}
-        />
-        <InputField 
-          label="Nickname" 
-          placeholder="Your display name in the app"
-          value={nickname}
-          onChangeText={setNickname}
-        />
 
-        <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Device Settings</Text>
-        
-        <InputField 
-          label="Device Nickname" 
-          placeholder={connectedDevice?.name || "Your HikeSafe device name"}
-          value={deviceName}
-          onChangeText={setDeviceName}
-        />
-        <Text style={{ color: colors.gray, fontSize: 12, marginTop: -8, marginBottom: 16, paddingHorizontal: 4 }}>
-          {isConnected 
-            ? `Connected to: ${connectedDevice?.name || 'HikeSafe Device'}`
-            : 'Connect a device to customize its name'}
-        </Text>
+        {/* ── All fields inside one white rounded card ── */}
+        <View style={{
+          backgroundColor: '#FFFFFF',
+          borderRadius: 16,
+          paddingHorizontal: 20,
+          paddingTop: 20,
+          paddingBottom: 20,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.10,
+          shadowRadius: 8,
+          elevation: 4,
+          marginBottom: 24,
+        }}>
+          <Text style={[styles.sectionHeader, { marginTop: 0, color: colors.textDark }]}>Personal Information</Text>
+          <InputField label="First Name" placeholder="Enter first name" value={firstName} onChangeText={setFirstName} />
+          <InputField label="Last Name" placeholder="Enter last name" value={lastName} onChangeText={setLastName} />
+          <InputField label="Nickname" placeholder="Your display name in the app" value={nickname} onChangeText={setNickname} />
 
-        <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Emergency Contact</Text>
-        
-        <InputField 
-          label="Contact Name" 
-          placeholder="Emergency contact name"
-          value={contactName}
-          onChangeText={setContactName}
-        />
-        <InputField 
-          label="Contact Phone" 
-          placeholder="Emergency contact phone"
-          value={contactPhone}
-          onChangeText={setContactPhone}
-          keyboardType="phone-pad"
-        />
+          <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Device Settings</Text>
+          <InputField label="Device Nickname" placeholder={connectedDevice?.name || "Your HikeSafe device name"} value={deviceName} onChangeText={setDeviceName} />
+          <Text style={{ color: colors.gray, fontSize: 12, marginTop: -8, marginBottom: 16, paddingHorizontal: 4 }}>
+            {isConnected ? `Connected to: ${connectedDevice?.name || 'HikeSafe Device'}` : 'Connect a device to customize its name'}
+          </Text>
 
-        <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Medical Information</Text>
-        
-        <InputField 
-          label="Medical Condition" 
-          placeholder="Any allergies or conditions?"
-          value={medicalCondition}
-          onChangeText={setMedicalCondition}
-        />
+          <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Emergency Contact</Text>
+          <InputField label="Contact Name" placeholder="Emergency contact name" value={contactName} onChangeText={setContactName} />
+          <InputField label="Contact Phone" placeholder="Emergency contact phone" value={contactPhone} onChangeText={setContactPhone} keyboardType="phone-pad" />
 
-        <MainButton 
-          title="SAVE CHANGES" 
-          onPress={handleSave} 
-          style={{ marginTop: 20, marginBottom: 150 }} 
-        />
+          <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Medical Information</Text>
+          <InputField label="Medical Condition" placeholder="Any allergies or conditions?" value={medicalCondition} onChangeText={setMedicalCondition} />
+         
+          <View style={{ marginHorizontal: 50, marginTop: 20 }}>
+            <MainButton title="SAVE CHANGES" onPress={handleSave} />
+          </View>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
+    </ImageBackground>
   );
 };
 
