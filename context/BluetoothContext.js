@@ -3,7 +3,7 @@ import { Alert, Platform, PermissionsAndroid, Vibration } from 'react-native';
 import { Buffer } from 'buffer';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Audio } from 'expo-av';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import * as Notifications from 'expo-notifications';
 import { useLobby } from './LobbyContext';
 
@@ -122,6 +122,22 @@ export const BluetoothProvider = ({ children }) => {
   const emergencySoundRef = useRef(null);
   const emergencyThrottleRef = useRef(new Map());
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const audioModeConfiguredRef = useRef(false);
+
+  const ensureAudioModeConfigured = useCallback(async () => {
+    if (audioModeConfiguredRef.current) return;
+    try {
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        interruptionMode: 'mixWithOthers',
+      });
+    } catch (error) {
+      // If audio mode config fails, playback may still work depending on platform.
+      console.log('Audio mode config failed:', error?.message || error);
+    } finally {
+      audioModeConfiguredRef.current = true;
+    }
+  }, []);
   
   // Trigger vibration pattern
   const triggerVibration = useCallback((patternName) => {
@@ -156,31 +172,35 @@ export const BluetoothProvider = ({ children }) => {
 
   const startEmergencySiren = useCallback(async () => {
     try {
+      await ensureAudioModeConfigured();
+
       if (emergencySoundRef.current) {
-        await emergencySoundRef.current.playAsync();
+        emergencySoundRef.current.play();
         return;
       }
 
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==' },
-        {
-          shouldPlay: true,
-          isLooping: true,
-          volume: 1.0,
-          progressUpdateIntervalMillis: 250,
-        }
-      );
-      emergencySoundRef.current = sound;
+      const player = createAudioPlayer('data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==');
+      player.loop = true;
+      player.volume = 1.0;
+      player.play();
+      emergencySoundRef.current = player;
     } catch (error) {
       console.log('Emergency siren unavailable:', error?.message || error);
     }
-  }, []);
+  }, [ensureAudioModeConfigured]);
 
   const stopEmergencySiren = useCallback(async () => {
     if (!emergencySoundRef.current) return;
     try {
-      await emergencySoundRef.current.stopAsync();
-      await emergencySoundRef.current.unloadAsync();
+      const player = emergencySoundRef.current;
+      player.pause();
+
+      // Free native resources; API name differs across versions.
+      if (typeof player.remove === 'function') {
+        player.remove();
+      } else if (typeof player.release === 'function') {
+        player.release();
+      }
     } catch (error) {
       console.log('Failed to stop emergency siren:', error?.message || error);
     } finally {
@@ -259,16 +279,28 @@ export const BluetoothProvider = ({ children }) => {
   // Play connection success sound
   const playConnectionSound = useCallback(async () => {
     try {
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==' },
-        { shouldPlay: true }
-      );
-      await sound.playAsync();
-      sound.unloadAsync();
+      await ensureAudioModeConfigured();
+      const player = createAudioPlayer('data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==');
+      player.volume = 1.0;
+      player.play();
+
+      // One-shot cleanup (data URI is very short; this just prevents leaks).
+      setTimeout(() => {
+        try {
+          player.pause();
+          if (typeof player.remove === 'function') {
+            player.remove();
+          } else if (typeof player.release === 'function') {
+            player.release();
+          }
+        } catch {
+          // ignore
+        }
+      }, 3000);
     } catch (error) {
       console.log('Connection sound disabled or unavailable');
     }
-  }, []);
+  }, [ensureAudioModeConfigured]);
 
   // Log activity
   const addActivity = useCallback((type, details) => {
