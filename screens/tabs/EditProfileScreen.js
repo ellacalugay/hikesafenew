@@ -133,6 +133,17 @@ const EditProfileScreen = ({ onBack }) => {
           <ArrowLeft size={24} color={colors.textDark} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 22, marginLeft: -100, marginTop: -20 }]}>EDIT PROFILE</Text>
+        <Image 
+          source={require('../../assets/hike_logo.png')} 
+          style={{ 
+            position: 'absolute', 
+            right: 30, 
+            top: 7,
+            width: 50, 
+            height: 50, 
+            resizeMode: 'contain' 
+          }} 
+          />
       </View>
 
       <ScrollView 
