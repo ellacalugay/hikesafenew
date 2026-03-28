@@ -56,8 +56,8 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
             <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.6)', marginBottom: 2 }}>
               "DESIGN HERE"
             </Text>
-            <Text style={{ fontSize: 23, color: 'rgba(20, 39, 4, 0.77)', fontWeight: '600', marginTop: 20 }}>Hello!</Text>
-            <Text style={{ fontSize: 30, color: '#000000', fontWeight: '700', lineHeight: 30 }}>
+            <Text style={{ fontSize: 23, color: colors.textDark, fontWeight: '600', marginTop: 20 }}>Hello!</Text>
+            <Text style={{ fontSize: 30, color: colors.textDark, fontWeight: '700', lineHeight: 30 }}>
               {myNickname}
             </Text>
             <Text style={{ fontSize: 9, color: 'rgba(255,255,255,0.5)', marginTop: 6 }}>

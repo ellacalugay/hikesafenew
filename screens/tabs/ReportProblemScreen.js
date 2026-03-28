@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, Alert, KeyboardAvoidingView, Platform, ImageBackground } from 'react-native';
+import { Image } from 'react-native';
 import { ArrowLeft, AlertTriangle, Bug, MessageSquare, Zap } from 'lucide-react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
@@ -55,8 +56,23 @@ const ReportProblemScreen = ({ onBack }) => {
   };
 
   return (
-    <KeyboardAvoidingView 
+
+    <ImageBackground 
+      source={require('../../assets/dashboard_bg.png')} 
       style={[styles.tabContainer, { backgroundColor: colors.background }]}
+      imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
+    >
+    {isDarkMode && (
+      <View style={{
+        position: 'absolute',
+        top: 0, left: 0, right: 0, bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.55)', 
+        zIndex: 0,
+      }} />
+    )} 
+
+    <KeyboardAvoidingView 
+      style={[styles.tabContainer, { backgroundColor: 'transparent' }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
@@ -64,9 +80,20 @@ const ReportProblemScreen = ({ onBack }) => {
           onPress={onBack} 
           style={{ position: 'absolute', left: 20, top: 15, padding: 5 }}
         >
-          <ArrowLeft size={24} color={colors.textDark} />
+          <ArrowLeft size={24} color={colors.textDark} style={{ marginTop: 13 }} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.textDark }]}>REPORT A PROBLEM</Text>
+        <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 20, marginLeft: -35, marginTop: -8, paddingBottom: 10 }]}>REPORT A PROBLEM</Text>
+        <Image 
+          source={require('../../assets/hike_logo.png')} 
+          style={{ 
+            position: 'absolute', 
+            right: 30, 
+            top: 17,
+            width: 50, 
+            height: 50, 
+            resizeMode: 'contain' 
+          }} 
+          />        
       </View>
 
       <ScrollView 
@@ -120,6 +147,7 @@ const ReportProblemScreen = ({ onBack }) => {
         />
       </ScrollView>
     </KeyboardAvoidingView>
+    </ImageBackground>
   );
 };
 
