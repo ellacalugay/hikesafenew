@@ -17,8 +17,18 @@ const MenuOption = ({ icon: Icon, label, onPress, colors }) => (
 
 const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProblem }) => {
   const { colors } = useTheme();
-  const {myNickname} = useLobby();
-  const {profilePicture} = useUser();
+  const { myNickname, clearRememberData, leaveLobby } = useLobby();
+  const {profilePicture, memberId} = useUser();
+  
+  const handleLogout = async () => {
+    try {
+      await clearRememberData();
+      await leaveLobby();
+    } catch (e) {
+      console.error('Logout cleanup failed', e);
+    }
+    if (onLogout) onLogout();
+  };
   
   return (
     <ImageBackground 
@@ -53,15 +63,16 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
           }}
         >
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.6)', marginBottom: 2 }}>
+            <Text style={{ fontSize: 11.5, color: 'rgba(255, 255, 255, 0.84)', marginBottom: 2 }}>
               "DESIGN HERE"
             </Text>
             <Text style={{ fontSize: 23, color: colors.textDark, fontWeight: '600', marginTop: 20 }}>Hello!</Text>
             <Text style={{ fontSize: 30, color: colors.textDark, fontWeight: '700', lineHeight: 30 }}>
               {myNickname}
             </Text>
-            <Text style={{ fontSize: 9, color: 'rgba(255,255,255,0.5)', marginTop: 6 }}>
-
+            <Text style={{ fontSize: 9.5, color: 'rgb(255, 255, 255, 0.84)', marginTop: 9 }}>
+              <Text style={{ fontWeight: 'bold' }}>{'MEMBER ID: '}</Text> 
+               {memberId }
             </Text>
           </View>
 
@@ -88,12 +99,12 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
           </View>
         </LinearGradient>
 
-        <View style={[styles.menuList, { gap: 5 }, {padding: 10}]}>
+        <View style={[styles.menuList, { gap: 5 }, {padding: 4}]}>
           <MenuOption icon={User} label="Edit Profile" onPress={onEditProfile} colors={colors} />
           <MenuOption icon={Settings} label="Settings" onPress={onSettings} colors={colors} />
           <MenuOption icon={HelpCircle} label="Help" onPress={onHelp} colors={colors} />
           <MenuOption icon={AlertOctagon} label="Report a Problem" onPress={onReportProblem} colors={colors} />
-          <MenuOption icon={LogOut} label="Logout" onPress={onLogout} colors={colors} />
+          <MenuOption icon={LogOut} label="Logout" onPress={handleLogout} colors={colors} />
         </View>
       </ScrollView>
       </View>

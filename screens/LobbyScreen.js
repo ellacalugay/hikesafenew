@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Image, ImageBackground, Alert, ActivityIndicator, StyleSheet } from 'react-native';
+// remember persistence moved to LobbyContext
 import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
 import { useTheme } from '../context/ThemeContext';
@@ -8,7 +9,7 @@ import { useBluetoothDevice } from '../context/BluetoothContext';
 
 const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const { colors } = useTheme();
-  const { createLobby, joinLobby, syncLobbyToDevice, lobbyCode, isInLobby } = useLobby();
+  const { createLobby, joinLobby, syncLobbyToDevice, lobbyCode, isInLobby, rememberEnabled, rememberedUsername, rememberedJoinCode, setRememberEnabled, saveRememberData, clearRememberData } = useLobby();
   const { sendCommand, isConnected, statusMessage, memberLocations } = useBluetoothDevice();
   
   // For tracking lobby validation
@@ -23,7 +24,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   }, [validationState]);
   
   const [mode, setMode] = useState('join');
-  const [remember, setRemember] = useState(false);
+  // remember flag is managed in LobbyContext
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Create mode fields
@@ -33,6 +34,21 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   // Join mode fields
   const [username, setUsername] = useState('');
   const [joinCode, setJoinCode] = useState('');
+
+  // initialize local fields from remembered data
+  useEffect(() => {
+    if (rememberEnabled) {
+      if (rememberedUsername) setUsername(rememberedUsername);
+      if (rememberedJoinCode) setJoinCode(rememberedJoinCode);
+    }
+  }, [rememberEnabled, rememberedUsername, rememberedJoinCode]);
+
+  // Persist when username/joinCode change and remember is enabled
+  useEffect(() => {
+    if (rememberEnabled) {
+      saveRememberData(username, joinCode).catch(e => console.error(e));
+    }
+  }, [username, joinCode, rememberEnabled, saveRememberData]);
 
   // Cleanup timeouts on unmount
   useEffect(() => {
@@ -308,10 +324,18 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
           
           <View style={styles.row}>
             <TouchableOpacity
-              onPress={() => setRemember(!remember)}
-              style={[styles.checkbox, remember ? styles.checkboxChecked : null]}
+              onPress={async () => {
+                const next = !rememberEnabled;
+                await setRememberEnabled(next);
+                if (next) {
+                  await saveRememberData(username, joinCode);
+                } else {
+                  await clearRememberData();
+                }
+              }}
+              style={[styles.checkbox, rememberEnabled ? styles.checkboxChecked : null]}
             >
-              {remember && <Text style={styles.checkboxTick}>✓</Text>}
+              {rememberEnabled && <Text style={styles.checkboxTick}>✓</Text>}
             </TouchableOpacity>
             <Text style={[styles.labelSmall, { color: 'white', fontWeight: '600', marginLeft: 8 }]}>Remember me</Text>
           </View>
