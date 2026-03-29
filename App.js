@@ -107,21 +107,23 @@ function AppContent() {
           setActiveTab(newHistory[newHistory.length - 1]);
           return true;
         }
+        // On home tab (root) — go back to lobby
+        navigateBack();
+        return true;
       }
 
       // If there are previous screens in the stack, go back to the last one
       if (screenStack.length > 1) {
         navigateBack();
-        return true; // handled
+        return true;
       }
 
-      // Let the system handle back (may close app)
       return false;
     };
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => backHandler.remove();
-  }, [screenStack, showTerms, showReminder, showSuccess]);
+  }, [screenStack, screen, tabHistory, showTerms, showReminder, showSuccess]);
 
   // Screen transition animation
   useEffect(() => {

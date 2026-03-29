@@ -41,7 +41,7 @@ const ServiceItem = ({ icon: Icon, label, onPress, colors, bgColor, badge }) => 
 
 const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
-  const { isConnected, isDeviceReachable, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert } = useBluetoothDevice();
+  const { isConnected, isDeviceReachable, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, unreadCount } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isHost, myNickname } = useLobby();
   
   // Get signal quality from RSSI (LoRa typical ranges: -30 to -120 dBm)
@@ -73,6 +73,11 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
     if (meters < 1000) return `${meters.toFixed(0)} m`;
     return `${(meters / 1000).toFixed(1)} km`;
   };
+
+  // Dynamic badge counts
+  const memberAlerts = (memberLocations || []).filter(m => m.alertType === 'SOS' || m.alertType === 'MORSE').length;
+  const totalAlerts = (activeAlert ? 1 : 0) + memberAlerts;
+  const unreadMsgs = unreadCount || 0;
   
   return (
     <ImageBackground 
@@ -209,14 +214,12 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
         </TouchableOpacity>
 
         <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Services</Text>
-        <View style={styles.servicesGrid}>
           <View style={styles.servicesGrid}>
             <ServiceItem icon={User}        label="Profile"   onPress={() => onChangeTab('profile')}   colors={colors} bgColor="#E8E8E8" badge={0} />
-            <ServiceItem icon={MessageCircle} label="Message" onPress={() => onChangeTab('message')}   colors={colors} bgColor="#B5D5A0" badge={2} />
-            <ServiceItem icon={MapPin}      label="Location"  onPress={() => onChangeTab('location')}  colors={colors} bgColor="#C5DDB5" badge={1} />
+            <ServiceItem icon={MessageCircle} label="Message" onPress={() => onChangeTab('message')}   colors={colors} bgColor="#B5D5A0" badge={unreadMsgs} />
+            <ServiceItem icon={MapPin}      label="Location"  onPress={() => onChangeTab('location')}  colors={colors} bgColor="#C5DDB5" badge={totalAlerts} />
             <ServiceItem icon={Compass}     label="Compass"   onPress={() => onChangeTab('compass')}   colors={colors} bgColor="#F0C87A" badge={0} />
           </View>
-        </View>
 
       </ScrollView>
     </ImageBackground>
