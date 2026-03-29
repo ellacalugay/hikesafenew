@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, ImageBackground, BackHandler } from 'react-native';
+import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, ImageBackground } from 'react-native';
 import { Home, MapPin, MessageCircle, Compass, User, Check, CheckSquare, Square, AlertTriangle, X, Users, Radio } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS } from '../constants/theme';
@@ -50,34 +50,6 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
   const [showLobbyModal, setShowLobbyModal] = useState(false);
   const [showSOSAlertModal, setShowSOSAlertModal] = useState(false);
   const joinAnnounceKeyRef = useRef(null);
-  useEffect(() => {
-    const onBack = () => {
-      // close modals first
-      if (showLogoutModal) { setShowLogoutModal(false); return true; }
-      if (showLocationModal) { setShowLocationModal(false); return true; }
-      if (showLobbyModal) { setShowLobbyModal(false); return true; }
-      if (showSOSAlertModal) { setShowSOSAlertModal(false); return true; }
-
-      // If currently in a profile sub-screen, go back to profile
-      const profileSubs = ['editProfile', 'settings', 'help', 'reportProblem'];
-      if (profileSubs.includes(activeTab)) {
-        setActiveTab('profile');
-        return true;
-      }
-
-      // Otherwise always go to home tab when back is pressed (if not already there)
-      if (activeTab !== 'home') {
-        setActiveTab('home');
-        return true;
-      }
-
-      // let system handle (may exit app)
-      return false;
-    };
-
-    const backHandler = BackHandler.addEventListener('hardwareBackPress', onBack);
-    return () => backHandler.remove();
-  }, [showLogoutModal, showLocationModal, showLobbyModal, showSOSAlertModal, activeTab]);
 
   // Handle incoming SOS/MORSE/OFFLINE alerts
   useEffect(() => {
@@ -187,7 +159,7 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
       case 'message': return <MessageTab onOpenChat={handleOpenChat} />;
       case 'compass': return <CompassTab />;
       case 'profile': return (
-          <ProfileTab 
+        <ProfileTab 
           onLogout={handleLogoutPress} 
           onEditProfile={() => setActiveTab('editProfile')}
           onSettings={() => setActiveTab('settings')}

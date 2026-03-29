@@ -363,6 +363,8 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 20,
+    columnGap: 12, 
+    rowGap: 16,
   },
   serviceItem: {
     alignItems: 'center',

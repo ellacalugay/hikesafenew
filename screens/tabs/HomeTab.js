@@ -25,12 +25,17 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
   return R * c; // meters
 };
 
-const ServiceItem = ({ icon: Icon, label, onPress, colors }) => (
-  <TouchableOpacity style={[styles.serviceItem, { backgroundColor: 'transparent' }]} onPress={onPress}>
-    <View style={[styles.serviceIconBox, { backgroundColor: 'transparent' }]}>
-      <Icon size={24} color={colors.textDark} />
+const ServiceItem = ({ icon: Icon, label, onPress, colors, bgColor, badge }) => (
+  <TouchableOpacity style={localStyles.serviceItem} onPress={onPress} activeOpacity={0.8}>
+    <View style={[localStyles.serviceIconBox, { backgroundColor: bgColor }]}>
+      <Icon size={26} color="#2d2d2d" strokeWidth={2} />
+      {badge > 0 && (
+        <View style={localStyles.badge}>
+          <Text style={localStyles.badgeText}>{badge}</Text>
+        </View>
+      )}
     </View>
-    <Text style={[styles.serviceText, { color: colors.textDark }]}>{label}</Text>
+    <Text style={[localStyles.serviceText, { color: colors.textDark }]}>{label}</Text>
   </TouchableOpacity>
 );
 
@@ -205,10 +210,12 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
 
         <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Services</Text>
         <View style={styles.servicesGrid}>
-          <ServiceItem icon={User} label="Profile" onPress={() => onChangeTab('profile')} colors={colors} />
-          <ServiceItem icon={MessageCircle} label="Message" onPress={() => onChangeTab('message')} colors={colors} />
-          <ServiceItem icon={MapPin} label="Location" onPress={() => onChangeTab('location')} colors={colors} />
-          <ServiceItem icon={Compass} label="Compass" onPress={() => onChangeTab('compass')} colors={colors} />
+          <View style={styles.servicesGrid}>
+            <ServiceItem icon={User}        label="Profile"   onPress={() => onChangeTab('profile')}   colors={colors} bgColor="#E8E8E8" badge={0} />
+            <ServiceItem icon={MessageCircle} label="Message" onPress={() => onChangeTab('message')}   colors={colors} bgColor="#B5D5A0" badge={2} />
+            <ServiceItem icon={MapPin}      label="Location"  onPress={() => onChangeTab('location')}  colors={colors} bgColor="#C5DDB5" badge={1} />
+            <ServiceItem icon={Compass}     label="Compass"   onPress={() => onChangeTab('compass')}   colors={colors} bgColor="#F0C87A" badge={0} />
+          </View>
         </View>
 
       </ScrollView>
@@ -297,6 +304,49 @@ const localStyles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
   },
+
+  serviceItem: {
+    alignItems: 'center',
+    width: '22%',
+  },
+  serviceIconBox: {
+    width: 64,
+    height: 64,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  serviceText: {
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  badge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#4CAF50',
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+
 });
 
 export default HomeTab;
