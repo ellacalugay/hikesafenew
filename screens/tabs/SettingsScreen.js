@@ -145,9 +145,9 @@ const SettingsScreen = ({ onBack }) => {
               onPress={() => setShowPrivacyModal(false)} 
               style={{ position: 'absolute', left: 20, top: 15, padding: 5 }}
             >
-              <X size={24} color={colors.textDark} />
+              <X size={24} color={colors.textDark} marginTop={10} />
             </TouchableOpacity>
-            <Text style={[styles.headerTitle, { color: colors.textDark }]}>PRIVACY POLICY</Text>
+            <Text style={[styles.headerTitle, { color: colors.textDark, fontSize: 20, paddingBottom: 9, marginTop: -10 }]}>PRIVACY POLICY</Text>
           </View>
           <ScrollView style={{ flex: 1, padding: 20 }}>
             <Text style={{ fontSize: 16, fontWeight: '700', color: colors.textDark, marginBottom: 10 }}>

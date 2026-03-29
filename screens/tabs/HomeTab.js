@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ImageBackground } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ImageBackground, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Trees, User, MessageCircle, MapPin, Compass, Radio, Users, AlertTriangle } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
@@ -96,7 +96,17 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
                 )}
               </View>
             )}
-            <Trees size={30} color={colors.primary} />
+            <Image 
+              source={require('../../assets/hike_logo.png')} 
+              style={{ 
+                position: 'absolute', 
+                right: 3, 
+                top: -27,
+                width: 50, 
+                height: 50, 
+                resizeMode: 'contain' 
+              }} 
+            />            
           </View>
         </View>
 
