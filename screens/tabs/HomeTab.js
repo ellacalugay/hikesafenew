@@ -28,7 +28,7 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
 const ServiceItem = ({ icon: Icon, label, onPress, colors, bgColor, badge }) => (
   <TouchableOpacity style={localStyles.serviceItem} onPress={onPress} activeOpacity={0.8}>
     <View style={[localStyles.serviceIconBox, { backgroundColor: bgColor }]}>
-      <Icon size={26} color="#2d2d2d" strokeWidth={2} />
+      <Icon size={26} color={colors.textDark} strokeWidth={2} />
       {badge > 0 && (
         <View style={localStyles.badge}>
           <Text style={localStyles.badgeText}>{badge}</Text>
@@ -89,7 +89,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
       <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={[styles.scrollContent, { backgroundColor: 'transparent', paddingBottom: 120 }]}>
         <View style={styles.headerRow}>
           <View>
-            <Text style={[styles.welcomeText, { color: colors.textDark }]}>Hello!</Text>
+            <Text style={[styles.welcomeText, { color: colors.textDark }, { fontWeight: 'bold' }]}>Hello!</Text>
             <Text style={[styles.usernameTitle, { color: colors.textDark }]}>{myNickname}</Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -215,10 +215,10 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
 
         <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Services</Text>
           <View style={styles.servicesGrid}>
-            <ServiceItem icon={User}        label="Profile"   onPress={() => onChangeTab('profile')}   colors={colors} bgColor="#E8E8E8" badge={0} />
-            <ServiceItem icon={MessageCircle} label="Message" onPress={() => onChangeTab('message')}   colors={colors} bgColor="#B5D5A0" badge={unreadMsgs} />
-            <ServiceItem icon={MapPin}      label="Location"  onPress={() => onChangeTab('location')}  colors={colors} bgColor="#C5DDB5" badge={totalAlerts} />
-            <ServiceItem icon={Compass}     label="Compass"   onPress={() => onChangeTab('compass')}   colors={colors} bgColor="#F0C87A" badge={0} />
+            <ServiceItem icon={User}        label="Profile"   onPress={() => onChangeTab('profile')}   colors={colors} bgColor= {colors.profileBg} badge={0} />
+            <ServiceItem icon={MessageCircle} label="Message" onPress={() => onChangeTab('message')}   colors={colors} bgColor={colors.messageBg} badge={unreadMsgs} />
+            <ServiceItem icon={MapPin}      label="Location"  onPress={() => onChangeTab('location')}  colors={colors} bgColor={colors.locationBg} badge={totalAlerts} />
+            <ServiceItem icon={Compass}     label="Compass"   onPress={() => onChangeTab('compass')}   colors={colors} bgColor={colors.compassBg} badge={0} />
           </View>
 
       </ScrollView>
