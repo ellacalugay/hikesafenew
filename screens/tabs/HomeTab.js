@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ImageBackground } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ImageBackground, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Trees, User, MessageCircle, MapPin, Compass, Radio, Users, AlertTriangle } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
@@ -25,21 +25,24 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
   return R * c; // meters
 };
 
-const ServiceItem = ({ icon: Icon, label, onPress, colors }) => (
-  <TouchableOpacity style={[styles.serviceItem, { backgroundColor: 'transparent' }]} onPress={onPress}>
-    <View style={[styles.serviceIconBox, { backgroundColor: 'transparent' }]}>
-      <Icon size={24} color={colors.textDark} />
+const ServiceItem = ({ icon: Icon, label, onPress, colors, bgColor, badge }) => (
+  <TouchableOpacity style={localStyles.serviceItem} onPress={onPress} activeOpacity={0.8}>
+    <View style={[localStyles.serviceIconBox, { backgroundColor: bgColor }]}>
+      <Icon size={26} color={colors.textDark} strokeWidth={2} />
+      {badge > 0 && (
+        <View style={localStyles.badge}>
+          <Text style={localStyles.badgeText}>{badge}</Text>
+        </View>
+      )}
     </View>
-    <Text style={[styles.serviceText, { color: colors.textDark }]}>{label}</Text>
+    <Text style={[localStyles.serviceText, { color: colors.textDark }]}>{label}</Text>
   </TouchableOpacity>
 );
 
 const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
-  const { isConnected, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength } = useBluetoothDevice();
+  const { isConnected, isDeviceReachable, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, unreadCount } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isHost, myNickname } = useLobby();
-  const { isConnected, isDeviceReachable, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert } = useBluetoothDevice();
-  const { lobbyCode, lobbyName, isHost } = useLobby();
   
   // Get signal quality from RSSI (LoRa typical ranges: -30 to -120 dBm)
   const getSignalQuality = (rssi) => {
@@ -70,6 +73,11 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
     if (meters < 1000) return `${meters.toFixed(0)} m`;
     return `${(meters / 1000).toFixed(1)} km`;
   };
+
+  // Dynamic badge counts
+  const memberAlerts = (memberLocations || []).filter(m => m.alertType === 'SOS' || m.alertType === 'MORSE').length;
+  const totalAlerts = (activeAlert ? 1 : 0) + memberAlerts;
+  const unreadMsgs = unreadCount || 0;
   
   return (
     <ImageBackground 
@@ -81,7 +89,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
       <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={[styles.scrollContent, { backgroundColor: 'transparent', paddingBottom: 120 }]}>
         <View style={styles.headerRow}>
           <View>
-            <Text style={[styles.welcomeText, { color: colors.textDark }]}>Hello!</Text>
+            <Text style={[styles.welcomeText, { color: colors.textDark }, { fontWeight: 'bold' }]}>Hello!</Text>
             <Text style={[styles.usernameTitle, { color: colors.textDark }]}>{myNickname}</Text>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -98,7 +106,17 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
                 )}
               </View>
             )}
-            <Trees size={30} color={colors.primary} />
+            <Image 
+              source={require('../../assets/hike_logo.png')} 
+              style={{ 
+                position: 'absolute', 
+                right: 3, 
+                top: -27,
+                width: 50, 
+                height: 50, 
+                resizeMode: 'contain' 
+              }} 
+            />            
           </View>
         </View>
 
@@ -196,12 +214,12 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
         </TouchableOpacity>
 
         <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Services</Text>
-        <View style={styles.servicesGrid}>
-          <ServiceItem icon={User} label="Profile" onPress={() => onChangeTab('profile')} colors={colors} />
-          <ServiceItem icon={MessageCircle} label="Message" onPress={() => onChangeTab('message')} colors={colors} />
-          <ServiceItem icon={MapPin} label="Location" onPress={() => onChangeTab('location')} colors={colors} />
-          <ServiceItem icon={Compass} label="Compass" onPress={() => onChangeTab('compass')} colors={colors} />
-        </View>
+          <View style={styles.servicesGrid}>
+            <ServiceItem icon={User}        label="Profile"   onPress={() => onChangeTab('profile')}   colors={colors} bgColor= {colors.profileBg} badge={0} />
+            <ServiceItem icon={MessageCircle} label="Message" onPress={() => onChangeTab('message')}   colors={colors} bgColor={colors.messageBg} badge={unreadMsgs} />
+            <ServiceItem icon={MapPin}      label="Location"  onPress={() => onChangeTab('location')}  colors={colors} bgColor={colors.locationBg} badge={totalAlerts} />
+            <ServiceItem icon={Compass}     label="Compass"   onPress={() => onChangeTab('compass')}   colors={colors} bgColor={colors.compassBg} badge={0} />
+          </View>
 
       </ScrollView>
     </ImageBackground>
@@ -289,6 +307,49 @@ const localStyles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
   },
+
+  serviceItem: {
+    alignItems: 'center',
+    width: '22%',
+  },
+  serviceIconBox: {
+    width: 64,
+    height: 64,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  serviceText: {
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  badge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#4CAF50',
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+
 });
 
 export default HomeTab;

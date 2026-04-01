@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, ImageBackground } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, ImageBackground, BackHandler } from 'react-native';
 import { Home, MapPin, MessageCircle, Compass, User, Check, CheckSquare, Square, AlertTriangle, X, Users, Radio } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS } from '../constants/theme';
@@ -49,6 +49,34 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [showLobbyModal, setShowLobbyModal] = useState(false);
   const [showSOSAlertModal, setShowSOSAlertModal] = useState(false);
+  const joinAnnounceKeyRef = useRef(null);
+
+  // Handle hardware back button inside Dashboard: close modals first,
+  // if on profile sub-screens go back to profile, otherwise go to home.
+  useEffect(() => {
+    const onBack = () => {
+      if (showLogoutModal) { setShowLogoutModal(false); return true; }
+      if (showLocationModal) { setShowLocationModal(false); return true; }
+      if (showLobbyModal) { setShowLobbyModal(false); return true; }
+      if (showSOSAlertModal) { setShowSOSAlertModal(false); return true; }
+
+      const profileSubs = ['editProfile', 'settings', 'help', 'reportProblem'];
+      if (profileSubs.includes(activeTab)) {
+        setActiveTab('profile');
+        return true;
+      }
+
+      if (activeTab !== 'home') {
+        setActiveTab('home');
+        return true;
+      }
+
+      return false; // let system handle (may exit app)
+    };
+
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', onBack);
+    return () => backHandler.remove();
+  }, [showLogoutModal, showLocationModal, showLobbyModal, showSOSAlertModal, activeTab]);
 
   // Handle incoming SOS/MORSE/OFFLINE alerts
   useEffect(() => {
@@ -63,19 +91,27 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
     }
   }, [activeAlert]);
 
-  // Auto-sync lobby code when device connects
+  // Broadcast join timestamp once per connected-lobby session.
+  // Lobby code sync is already handled in BluetoothContext.
   useEffect(() => {
     if (isConnected && isInLobby && lobbyCode) {
+      const announceKey = `${lobbyCode}`;
+      if (joinAnnounceKeyRef.current === announceKey) {
+        return;
+      }
+
       // Small delay to ensure device is ready for commands
       const syncTimer = setTimeout(async () => {
-        console.log('Auto-syncing lobby code to device:', lobbyCode);
-        const synced = await sendCommand(`LOBBY:${lobbyCode}`);
-        if (synced) {
-          // Broadcast local lobby-sync timestamp so all phones can track join order.
-          await sendCommand(`MSG:0,__JOINED_TS__:${Date.now()}`);
+        const sent = await sendCommand(`MSG:0,__JOINED_TS__:${Date.now()}`);
+        if (sent) {
+          joinAnnounceKeyRef.current = announceKey;
         }
       }, 1000);
       return () => clearTimeout(syncTimer);
+    }
+
+    if (!isConnected || !isInLobby) {
+      joinAnnounceKeyRef.current = null;
     }
   }, [isConnected, isInLobby, lobbyCode, sendCommand]);
 

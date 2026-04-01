@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Image, ImageBackground, Alert, ActivityIndicator, StyleSheet } from 'react-native';
+// remember persistence moved to LobbyContext
 import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
 import { useTheme } from '../context/ThemeContext';
@@ -8,7 +9,7 @@ import { useBluetoothDevice } from '../context/BluetoothContext';
 
 const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const { colors } = useTheme();
-  const { createLobby, joinLobby, syncLobbyToDevice, lobbyCode, isInLobby } = useLobby();
+  const { createLobby, joinLobby, syncLobbyToDevice, lobbyCode, isInLobby, rememberEnabled, rememberedUsername, rememberedJoinCode, setRememberEnabled, saveRememberData, clearRememberData } = useLobby();
   const { sendCommand, isConnected, statusMessage, memberLocations } = useBluetoothDevice();
   
   // For tracking lobby validation
@@ -23,7 +24,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   }, [validationState]);
   
   const [mode, setMode] = useState('join');
-  const [remember, setRemember] = useState(false);
+  // remember flag is managed in LobbyContext
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Create mode fields
@@ -33,6 +34,21 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   // Join mode fields
   const [username, setUsername] = useState('');
   const [joinCode, setJoinCode] = useState('');
+
+  // initialize local fields from remembered data
+  useEffect(() => {
+    if (rememberEnabled) {
+      if (rememberedUsername) setUsername(rememberedUsername);
+      if (rememberedJoinCode) setJoinCode(rememberedJoinCode);
+    }
+  }, [rememberEnabled, rememberedUsername, rememberedJoinCode]);
+
+  // Persist when username/joinCode change and remember is enabled
+  useEffect(() => {
+    if (rememberEnabled) {
+      saveRememberData(username, joinCode).catch(e => console.error(e));
+    }
+  }, [username, joinCode, rememberEnabled, saveRememberData]);
 
   // Cleanup timeouts on unmount
   useEffect(() => {
@@ -45,7 +61,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
 
   // Monitor for device confirmation (STATUS:LOBBY_SET)
   useEffect(() => {
-    if (validationState === 'syncing' && statusMessage && statusMessage.includes('Lobby') && statusMessage.includes('synced')) {
+    if (validationState === 'syncing' && statusMessage && statusMessage.includes('Lobby') && statusMessage.includes('synced to device')) {
       // Device confirmed the lobby code was set - enter immediately
       // Note: Other members will appear when their heartbeats arrive (every ~30 seconds)
       setValidationState('confirmed');
@@ -59,7 +75,8 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     const { code, name } = pendingJoinRef.current;
     
     try {
-      await joinLobby(code, name);
+      const numericCode = typeof code === 'string' ? parseInt(code, 10) : code;
+      await joinLobby(numericCode, name);
       setValidationState(null);
       pendingJoinRef.current = null;
       onLogin();
@@ -69,13 +86,6 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       setIsSubmitting(false);
     }
   };
-
-  // Sync lobby code to device when connected
-  useEffect(() => {
-    if (isConnected && lobbyCode) {
-      syncLobbyToDevice(sendCommand);
-    }
-  }, [isConnected, lobbyCode]);
 
   const handleCreateLobby = async () => {
     if (!lobbyName.trim()) {
@@ -98,11 +108,14 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     try {
       const code = await createLobby(lobbyName.trim(), parseInt(maxMember) || 10);
       
-      // Send lobby code to device (skip if not connected - TEMPORARILY BYPASSED FOR UI TESTING)
+      // Try syncing lobby code to device, but do not hard-fail lobby creation on temporary BLE drops.
       if (isConnected) {
-        const success = await sendCommand(`LOBBY:${code}`);
+        const success = await syncLobbyToDevice(sendCommand, code);
         if (!success) {
-          throw new Error('Failed to sync lobby code to device');
+          Alert.alert(
+            'Lobby Created',
+            'Lobby was created, but device sync is pending. Keep Bluetooth connected and it will retry automatically.'
+          );
         }
       }
       
@@ -156,7 +169,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     
     // Store pending join info
     pendingJoinRef.current = {
-      code: joinCode,
+      code: parseInt(joinCode, 10),
       name: username.trim() || 'Hiker'
     };
     
@@ -164,9 +177,17 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       // TEMPORARILY BYPASSED FOR UI TESTING
       // Send lobby code to device first (skip if not connected)
       if (isConnected) {
-        const success = await sendCommand(`LOBBY:${joinCode}`);
+        const parsedCode = parseInt(joinCode, 10);
+        const success = await syncLobbyToDevice(sendCommand, parsedCode);
         if (!success) {
-          throw new Error('Failed to sync lobby code to device');
+          // Allow entering lobby even if BLE link briefly drops; sync can resume on reconnect.
+          setValidationState('confirmed');
+          completeJoin(false);
+          Alert.alert(
+            'Joined Lobby',
+            'Joined lobby, but device sync is pending. Reconnect Bluetooth to sync lobby code.'
+          );
+          return;
         }
         
         // Wait for device confirmation via statusMessage effect
@@ -303,10 +324,18 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
           
           <View style={styles.row}>
             <TouchableOpacity
-              onPress={() => setRemember(!remember)}
-              style={[styles.checkbox, remember ? styles.checkboxChecked : null]}
+              onPress={async () => {
+                const next = !rememberEnabled;
+                await setRememberEnabled(next);
+                if (next) {
+                  await saveRememberData(username, joinCode);
+                } else {
+                  await clearRememberData();
+                }
+              }}
+              style={[styles.checkbox, rememberEnabled ? styles.checkboxChecked : null]}
             >
-              {remember && <Text style={styles.checkboxTick}>✓</Text>}
+              {rememberEnabled && <Text style={styles.checkboxTick}>✓</Text>}
             </TouchableOpacity>
             <Text style={[styles.labelSmall, { color: 'white', fontWeight: '600', marginLeft: 8 }]}>Remember me</Text>
           </View>

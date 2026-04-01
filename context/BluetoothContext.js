@@ -3,7 +3,7 @@ import { Alert, Platform, PermissionsAndroid, Vibration } from 'react-native';
 import { Buffer } from 'buffer';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Audio } from 'expo-av';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import * as Notifications from 'expo-notifications';
 import { useLobby } from './LobbyContext';
 
@@ -106,6 +106,9 @@ export const BluetoothProvider = ({ children }) => {
   // Track whether the BLE link *actually* dropped (vs. screen navigation/rerender).
   const wasEverConnectedRef = useRef(false);
   const lastDisconnectAtRef = useRef(null);
+
+  // Serialize BLE writes to avoid overlapping GATT operations (common cause of flakiness).
+  const writeQueueRef = useRef(Promise.resolve());
   
   // Activity log for real-time updates
   const [activityLog, setActivityLog] = useState([]);
@@ -121,6 +124,23 @@ export const BluetoothProvider = ({ children }) => {
   const emergencyAlarmActiveRef = useRef(false);
   const emergencySoundRef = useRef(null);
   const emergencyThrottleRef = useRef(new Map());
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const audioModeConfiguredRef = useRef(false);
+
+  const ensureAudioModeConfigured = useCallback(async () => {
+    if (audioModeConfiguredRef.current) return;
+    try {
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        interruptionMode: 'mixWithOthers',
+      });
+    } catch (error) {
+      // If audio mode config fails, playback may still work depending on platform.
+      console.log('Audio mode config failed:', error?.message || error);
+    } finally {
+      audioModeConfiguredRef.current = true;
+    }
+  }, []);
   
   // Trigger vibration pattern
   const triggerVibration = useCallback((patternName) => {
@@ -155,31 +175,35 @@ export const BluetoothProvider = ({ children }) => {
 
   const startEmergencySiren = useCallback(async () => {
     try {
+      await ensureAudioModeConfigured();
+
       if (emergencySoundRef.current) {
-        await emergencySoundRef.current.playAsync();
+        emergencySoundRef.current.play();
         return;
       }
 
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==' },
-        {
-          shouldPlay: true,
-          isLooping: true,
-          volume: 1.0,
-          progressUpdateIntervalMillis: 250,
-        }
-      );
-      emergencySoundRef.current = sound;
+      const player = createAudioPlayer('data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==');
+      player.loop = true;
+      player.volume = 1.0;
+      player.play();
+      emergencySoundRef.current = player;
     } catch (error) {
       console.log('Emergency siren unavailable:', error?.message || error);
     }
-  }, []);
+  }, [ensureAudioModeConfigured]);
 
   const stopEmergencySiren = useCallback(async () => {
     if (!emergencySoundRef.current) return;
     try {
-      await emergencySoundRef.current.stopAsync();
-      await emergencySoundRef.current.unloadAsync();
+      const player = emergencySoundRef.current;
+      player.pause();
+
+      // Free native resources; API name differs across versions.
+      if (typeof player.remove === 'function') {
+        player.remove();
+      } else if (typeof player.release === 'function') {
+        player.release();
+      }
     } catch (error) {
       console.log('Failed to stop emergency siren:', error?.message || error);
     } finally {
@@ -199,6 +223,9 @@ export const BluetoothProvider = ({ children }) => {
 
   const pushEmergencyNotification = useCallback(async (title, body, eventKey) => {
     try {
+      if (!notificationsEnabled) {
+        return;
+      }
       if (shouldThrottleEmergency(`notif-${eventKey}`, 15000)) {
         return;
       }
@@ -217,7 +244,7 @@ export const BluetoothProvider = ({ children }) => {
     } catch (error) {
       console.log('Emergency notification failed:', error?.message || error);
     }
-  }, [shouldThrottleEmergency]);
+  }, [notificationsEnabled, shouldThrottleEmergency]);
 
   useEffect(() => {
     Notifications.setNotificationHandler({
@@ -230,7 +257,9 @@ export const BluetoothProvider = ({ children }) => {
 
     const setupNotifications = async () => {
       try {
-        await Notifications.requestPermissionsAsync();
+        const perm = await Notifications.requestPermissionsAsync();
+        const granted = perm?.granted === true || perm?.status === 'granted';
+        setNotificationsEnabled(granted);
 
         if (Platform.OS === 'android') {
           await Notifications.setNotificationChannelAsync('emergency-alerts', {
@@ -243,6 +272,7 @@ export const BluetoothProvider = ({ children }) => {
         }
       } catch (error) {
         console.log('Notification setup failed:', error?.message || error);
+        setNotificationsEnabled(false);
       }
     };
 
@@ -252,16 +282,28 @@ export const BluetoothProvider = ({ children }) => {
   // Play connection success sound
   const playConnectionSound = useCallback(async () => {
     try {
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==' },
-        { shouldPlay: true }
-      );
-      await sound.playAsync();
-      sound.unloadAsync();
+      await ensureAudioModeConfigured();
+      const player = createAudioPlayer('data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==');
+      player.volume = 1.0;
+      player.play();
+
+      // One-shot cleanup (data URI is very short; this just prevents leaks).
+      setTimeout(() => {
+        try {
+          player.pause();
+          if (typeof player.remove === 'function') {
+            player.remove();
+          } else if (typeof player.release === 'function') {
+            player.release();
+          }
+        } catch {
+          // ignore
+        }
+      }, 3000);
     } catch (error) {
       console.log('Connection sound disabled or unavailable');
     }
-  }, []);
+  }, [ensureAudioModeConfigured]);
 
   // Log activity
   const addActivity = useCallback((type, details) => {
@@ -488,6 +530,9 @@ export const BluetoothProvider = ({ children }) => {
   const healthCheckRef = useRef(null);
   const mockIntervalRef = useRef(null);
   const disconnectSubscriptionRef = useRef(null);
+  const commandQueueRef = useRef(Promise.resolve());
+
+  const delay = useCallback((ms) => new Promise((resolve) => setTimeout(resolve, ms)), []);
 
   const parseDeviceId = useCallback((deviceLike) => {
     const source = `${deviceLike?.name || ''} ${deviceLike?.id || ''}`;
@@ -540,11 +585,6 @@ export const BluetoothProvider = ({ children }) => {
             setConnectionHealth('warning');
           } else {
             setConnectionHealth('lost');
-            // Auto-disconnect after 15 seconds of no data (device likely off)
-            if (timeSinceData > 15000) {
-              console.log('Connection timeout - device may be powered off');
-              handleConnectionLost();
-            }
           }
         }
       }, 2000);
@@ -584,8 +624,13 @@ export const BluetoothProvider = ({ children }) => {
     
     setConnectedDevice(null);
     setIsConnected(false);
+    setConnectedDevicesCount(0);
+    setIsDeviceReachable(false);
+    commandQueueRef.current = Promise.resolve();
     await stopEmergencySignals();
     setMyLocation({ lat: 0, lng: 0, satellites: 0, valid: false });
+    setLastDataReceived(null);
+    setLoraSignalStrength(null);
     
     setTimeout(() => setStatusMessage(''), 3000);
   }, [stopEmergencySignals]);
@@ -748,6 +793,7 @@ export const BluetoothProvider = ({ children }) => {
             const connCount = parseInt(parts[4], 10);
             if (!isNaN(connCount) && connCount >= 0) {
               setConnectedDevicesCount(connCount);
+              setIsDeviceReachable(connCount > 0);
             }
           }
         }
@@ -1130,6 +1176,25 @@ export const BluetoothProvider = ({ children }) => {
       return false;
     }
 
+    const hasPermissions = await requestPermissions();
+    if (!hasPermissions) {
+      Alert.alert('Permissions Required', 'Bluetooth permissions are required to connect.');
+      return false;
+    }
+
+    if (deviceRef.current?.id === device.id && isConnected) {
+      return true;
+    }
+
+    if (deviceRef.current && deviceRef.current?.id !== device.id) {
+      try {
+        await deviceRef.current.cancelConnection();
+      } catch (cleanupError) {
+        console.log('Previous connection cleanup skipped:', cleanupError?.message || cleanupError);
+      }
+      deviceRef.current = null;
+    }
+
     // Stop scanning if still running
     bleManagerRef.current.stopDeviceScan();
     setIsConnecting(true);
@@ -1139,6 +1204,15 @@ export const BluetoothProvider = ({ children }) => {
       const connectedDev = await bleManagerRef.current.connectToDevice(device.id, {
         timeout: 10000,
       });
+
+      // Improve write reliability on Android by negotiating a larger MTU when possible.
+      if (Platform.OS === 'android' && typeof connectedDev.requestMTU === 'function') {
+        try {
+          await connectedDev.requestMTU(185);
+        } catch (mtuError) {
+          console.log('MTU request skipped:', mtuError?.message || mtuError);
+        }
+      }
       
       // Discover services and characteristics
       await connectedDev.discoverAllServicesAndCharacteristics();
@@ -1204,7 +1278,7 @@ export const BluetoothProvider = ({ children }) => {
     } finally {
       setIsConnecting(false);
     }
-  }, [isInLobby, parseBluetoothData, handleConnectionLost, parseDeviceId, playConnectionSound, registerMemberSync, setMyDeviceId]);
+  }, [isConnected, isInLobby, parseBluetoothData, handleConnectionLost, parseDeviceId, playConnectionSound, registerMemberSync, requestPermissions, setMyDeviceId]);
 
   // Disconnect from device
   const disconnect = useCallback(async () => {
@@ -1234,6 +1308,9 @@ export const BluetoothProvider = ({ children }) => {
     
     setConnectedDevice(null);
     setIsConnected(false);
+    setConnectedDevicesCount(0);
+    setIsDeviceReachable(false);
+    commandQueueRef.current = Promise.resolve();
     lastDisconnectAtRef.current = Date.now();
     stopEmergencySignals();
     setMyLocation({ lat: 0, lng: 0, satellites: 0, valid: false });
@@ -1263,27 +1340,147 @@ export const BluetoothProvider = ({ children }) => {
       return true;
     }
     
-    try {
+    const queuedWrite = async () => {
+      const dev = deviceRef.current;
+      if (!dev) {
+        throw new Error('BLE device is not connected');
+      }
+
+      // Defensive: avoid writing if the OS already dropped the connection.
+      try {
+        const stillConnected = await dev.isConnected();
+        if (!stillConnected) {
+          throw new Error('BLE device is not connected');
+        }
+      } catch (e) {
+        throw new Error('BLE device is not connected');
+      }
+
       // Encode to base64 for BLE transmission
       const encoded = Buffer.from(cmdWithNewline, 'utf-8').toString('base64');
-      
+
       // Write to RX characteristic (app → device)
-      await deviceRef.current.writeCharacteristicWithResponseForService(
+      await dev.writeCharacteristicWithResponseForService(
         NUS_SERVICE_UUID,
         NUS_RX_CHAR_UUID,
         encoded
       );
+
       return true;
+    };
+
+    // Ensure a previous write failure doesn't poison the whole queue.
+    writeQueueRef.current = writeQueueRef.current
+      .catch(() => undefined)
+      .then(queuedWrite);
+
+    try {
+      return await writeQueueRef.current;
     } catch (error) {
       console.error('Send error:', error);
-      if (error.message?.includes('disconnected') || error.message?.includes('cancel')) {
+
+      const message = (error?.message || '').toLowerCase();
+      if (message.includes('disconnected') || message.includes('not connected') || message.includes('cancel')) {
         handleConnectionLost();
-      } else {
-        Alert.alert('Send Failed', 'Could not send command to device.');
+        return false;
       }
+
+      Alert.alert('Send Failed', 'Could not send command to device.');
+
+    const queuedWrite = async () => {
+      const encoded = Buffer.from(cmdWithNewline, 'utf-8').toString('base64');
+      const maxAttempts = 3;
+
+      const writeWithResponse = async () => {
+        await deviceRef.current.writeCharacteristicWithResponseForService(
+          NUS_SERVICE_UUID,
+          NUS_RX_CHAR_UUID,
+          encoded
+        );
+      };
+
+      const writeWithoutResponse = async () => {
+        await deviceRef.current.writeCharacteristicWithoutResponseForService(
+          NUS_SERVICE_UUID,
+          NUS_RX_CHAR_UUID,
+          encoded
+        );
+      };
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (!deviceRef.current || !isConnected) {
+          return false;
+        }
+
+        try {
+          // Keep BLE writes serialized to avoid operation-rejected/timeouts from parallel requests.
+          await writeWithResponse();
+          return true;
+        } catch (error) {
+          const message = (error?.message || '').toLowerCase();
+          const isDisconnectedError = message.includes('disconnected') || message.includes('cancel');
+          const isTransientError =
+            message.includes('timed out') ||
+            message.includes('timeout') ||
+            message.includes('rejected') ||
+            message.includes('busy') ||
+            message.includes('in progress') ||
+            message.includes('already in progress');
+          const supportsWriteWithoutResponse =
+            deviceRef.current && typeof deviceRef.current.writeCharacteristicWithoutResponseForService === 'function';
+
+          if (isDisconnectedError) {
+            console.error('Send error:', error);
+            handleConnectionLost();
+            return false;
+          }
+
+          // Some firmware exposes RX as write-without-response only.
+          if (supportsWriteWithoutResponse && (message.includes('rejected') || message.includes('timed out') || message.includes('timeout'))) {
+            try {
+              await delay(80 * attempt);
+              await writeWithoutResponse();
+              return true;
+            } catch (fallbackError) {
+              const fallbackMessage = (fallbackError?.message || '').toLowerCase();
+              if (fallbackMessage.includes('disconnected') || fallbackMessage.includes('cancel')) {
+                console.error('Send error:', fallbackError);
+                handleConnectionLost();
+                return false;
+              }
+            }
+          }
+
+          if (isTransientError && attempt < maxAttempts) {
+            console.log(`BLE write retry (${attempt}/${maxAttempts}) for command:`, command);
+            await delay(120 * attempt);
+            continue;
+          }
+
+          console.error('Send error:', error);
+          if (!isTransientError) {
+            Alert.alert('Send Failed', 'Could not send command to device.');
+          }
+          return false;
+        }
+      }
+
       return false;
+    };
+
     }
-  }, [isConnected, handleConnectionLost]);
+
+    // Chain onto the previous write so all BLE writes happen sequentially.
+    const runWrite = commandQueueRef.current
+      .catch(() => undefined)
+      .then(queuedWrite);
+
+    commandQueueRef.current = runWrite
+      .then(() => undefined)
+      .catch(() => undefined);
+
+    return runWrite;
+  }, [isConnected, handleConnectionLost, delay]);
 
   // Expose BLE command sender to LobbyContext so it can sync lobby code to device.
   useEffect(() => {

@@ -151,7 +151,7 @@ const CompassTab = () => {
         </View>
       </View>
 
-      <View style={[styles.locationStatusContainer, { backgroundColor: colors.cardBg }]}>
+      <View style={[styles.locationStatusContainer, { backgroundColor: 'transparent' }]}>
         <Text style={[styles.locationServicesLabel, { color: colors.textDark }]}>Location Services:</Text>
         <View style={styles.toggleRow}>
              <Switch

@@ -8,20 +8,17 @@ import { useUser } from '../context/UserContext';
 
 const OnboardingName = ({ next }) => {
   const { colors } = useTheme();
-  const { setMyNickname } = useLobby();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [nickname, setNickname] = useState('');
   const { setFirstName: setCtxFirstName, setLastName: setCtxLastName } = useUser();
+  const { setMyNickname } = useLobby();
   const titleOpacity = useRef(new Animated.Value(0)).current;
   const titleTranslateY = useRef(new Animated.Value(-20)).current;
   const formOpacity = useRef(new Animated.Value(0)).current;
   const formTranslateY = useRef(new Animated.Value(20)).current;
   const buttonsOpacity = useRef(new Animated.Value(0)).current;
   const buttonsScale = useRef(new Animated.Value(0.9)).current;
-
-  const { myNickname, setMyNickname } = useLobby();
-  const { firstName, setFirstName, lastName, setLastName } = useUser();
   
   useEffect(() => {
     Animated.stagger(150, [

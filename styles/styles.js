@@ -363,6 +363,8 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 20,
+    columnGap: 12, 
+    rowGap: 16,
   },
   serviceItem: {
     alignItems: 'center',
@@ -745,7 +747,7 @@ export const styles = StyleSheet.create({
     gap: 10,
   },
   locationServicesLabel: {
-    fontSize: 16,
+    fontSize: 22,
     fontWeight: 'bold',
     color: COLORS.textDark,
   },

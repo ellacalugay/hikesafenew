@@ -15,6 +15,12 @@ const HOST_DEVICE_ID_KEY = '@hikesafe_host_device_id';
 const MY_DEVICE_ID_KEY = '@hikesafe_my_device_id';
 const EMERGENCY_CONTACTS_KEY = '@hikesafe_emergency_contacts';
 const MY_EMERGENCY_CONTACT_KEY = '@hikesafe_my_emergency_contact';
+const REMEMBER_KEY = '@hikesafe_remember';
+const REMEMBER_USERNAME_KEY = '@hikesafe_remember_username';
+const REMEMBER_JOINCODE_KEY = '@hikesafe_remember_joincode';
+const REMEMBER_EXPIRY_KEY = '@hikesafe_remember_expiry'; 
+
+const REMEMBER_SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 
 // Generate a random 4-digit lobby code
 const generateLobbyCode = () => {
@@ -37,28 +43,64 @@ export const LobbyProvider = ({ children }) => {
   const [isInLobby, setIsInLobby] = useState(false);
   const [lobbyMembers, setLobbyMembers] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [memberNicknames, setMemberNicknames] = useState({}); // { deviceId: nickname }
+  const [memberNicknames, setMemberNicknames] = useState({}); 
   const [myNickname, setMyNicknameState] = useState('');
-  const [deviceNickname, setDeviceNicknameState] = useState(''); // Local nickname for connected device
+  const [deviceNickname, setDeviceNicknameState] = useState(''); 
   const [hostDeviceId, setHostDeviceId] = useState(null);
   const [myDeviceId, setMyDeviceIdState] = useState(null);
-  
-  // BLE command callback - will be set by BluetoothContext integration
   const [sendLobbyCommand, setSendLobbyCommand] = useState(null);
-
-  // Emergency contacts
-  // emergencyContacts: { [deviceId]: { name: string, phone: string } }
   const [emergencyContacts, setEmergencyContacts] = useState({});
   const [myEmergencyContact, setMyEmergencyContactState] = useState({ name: '', phone: '' });
+  const [rememberEnabled, setRememberEnabled] = useState(false);
+  const [rememberedUsername, setRememberedUsername] = useState('');
+  const [rememberedJoinCode, setRememberedJoinCode] = useState('');
 
-  // Load persisted lobby data on mount
   useEffect(() => {
     loadPersistedLobby();
   }, []);
 
+  useEffect(() => {
+    const checkExpiry = async () => {
+      try {
+        const expiry = await AsyncStorage.getItem(REMEMBER_EXPIRY_KEY);
+        if (expiry && Date.now() > parseInt(expiry, 10)) {
+          await clearRememberStorage();
+          setRememberEnabled(false);
+          setRememberedUsername('');
+          setRememberedJoinCode('');
+          console.log('Remember me session expired');
+        }
+      } catch (e) {
+        console.error('Error checking remember me session expiry:', e);
+      }
+    };
+
+    checkExpiry();
+    const interval = setInterval(checkExpiry, 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const clearRememberStorage = async () => {
+    try {
+      await Promise.all([
+        AsyncStorage.removeItem(REMEMBER_KEY),
+        AsyncStorage.removeItem(REMEMBER_USERNAME_KEY),
+        AsyncStorage.removeItem(REMEMBER_JOINCODE_KEY),
+        AsyncStorage.removeItem(REMEMBER_EXPIRY_KEY),
+      ]);
+    } catch (e) {
+      console.error('Failed to clear remember storage:', e);
+    }
+  };
+
   const loadPersistedLobby = async () => {
     try {
-      const [savedCode, savedName, savedRole, savedMax, savedNicknames, savedMyNickname, savedDeviceNick, savedHostDeviceId, savedMyDeviceId, savedEmergencyContacts, savedMyEmergencyContact] = await Promise.all([
+      const [
+        savedCode, savedName, savedRole, savedMax, savedNicknames,
+        savedMyNickname, savedDeviceNick, savedHostDeviceId, savedMyDeviceId,
+        savedEmergencyContacts, savedMyEmergencyContact,
+        savedRemember, savedRememberName, savedRememberCode, savedRememberExpiry, 
+      ] = await Promise.all([
         AsyncStorage.getItem(LOBBY_CODE_KEY),
         AsyncStorage.getItem(LOBBY_NAME_KEY),
         AsyncStorage.getItem(LOBBY_ROLE_KEY),
@@ -70,6 +112,10 @@ export const LobbyProvider = ({ children }) => {
         AsyncStorage.getItem(MY_DEVICE_ID_KEY),
         AsyncStorage.getItem(EMERGENCY_CONTACTS_KEY),
         AsyncStorage.getItem(MY_EMERGENCY_CONTACT_KEY),
+        AsyncStorage.getItem(REMEMBER_KEY),
+        AsyncStorage.getItem(REMEMBER_USERNAME_KEY),
+        AsyncStorage.getItem(REMEMBER_JOINCODE_KEY),
+        AsyncStorage.getItem(REMEMBER_EXPIRY_KEY), 
       ]);
 
       if (savedCode) {
@@ -130,6 +176,19 @@ export const LobbyProvider = ({ children }) => {
           setMyEmergencyContactState({ name: '', phone: '' });
         }
       }
+
+      if (savedRemember === '1') {
+        const expiry = savedRememberExpiry ? parseInt(savedRememberExpiry, 10) : null;
+        if (expiry && Date.now() > expiry) {
+          await clearRememberStorage();
+          console.log('Remember me session expired on load');
+        } else {
+          setRememberEnabled(true);
+          setRememberedUsername(savedRememberName || '');
+          setRememberedJoinCode(savedRememberCode || '');
+        }
+      }
+
     } catch (error) {
       console.error('Failed to load lobby data:', error);
     } finally {
@@ -201,6 +260,9 @@ export const LobbyProvider = ({ children }) => {
         AsyncStorage.removeItem(LOBBY_MAX_MEMBERS_KEY),
         AsyncStorage.removeItem(HOST_DEVICE_ID_KEY),
         AsyncStorage.removeItem(MY_DEVICE_ID_KEY),
+        AsyncStorage.removeItem(REMEMBER_KEY),
+        AsyncStorage.removeItem(REMEMBER_USERNAME_KEY),
+        AsyncStorage.removeItem(REMEMBER_JOINCODE_KEY),
       ]);
     } catch (error) {
       console.error('Failed to clear lobby data:', error);
@@ -237,6 +299,46 @@ export const LobbyProvider = ({ children }) => {
     } catch (error) {
       console.error('Failed to persist my device id:', error);
     }
+  }, []);
+
+  const persistRememberSettings = useCallback(async (enabled, name = '', code = '') => {
+    try {
+      if (enabled) {
+        const expiry = (Date.now() + REMEMBER_SESSION_DURATION_MS).toString();
+        await AsyncStorage.setItem(REMEMBER_KEY, '1');
+        await AsyncStorage.setItem(REMEMBER_USERNAME_KEY, name || '');
+        await AsyncStorage.setItem(REMEMBER_JOINCODE_KEY, code || '');
+        await AsyncStorage.setItem(REMEMBER_EXPIRY_KEY, expiry); 
+      } else {
+        await clearRememberStorage(); 
+      }
+    } catch (e) {
+      console.error('Failed to persist remember settings:', e);
+    }
+  }, []);
+
+  const setRememberEnabledFn = useCallback(async (enabled) => {
+    setRememberEnabled(Boolean(enabled));
+    if (!enabled) {
+      setRememberedUsername('');
+      setRememberedJoinCode('');
+    }
+    await persistRememberSettings(Boolean(enabled), rememberedUsername, rememberedJoinCode);
+  }, [persistRememberSettings, rememberedUsername, rememberedJoinCode]);
+
+  const saveRememberData = useCallback(async (name, code) => {
+    setRememberedUsername(name || '');
+    setRememberedJoinCode(code || '');
+    if (rememberEnabled) {
+      await persistRememberSettings(true, name, code);
+    }
+  }, [persistRememberSettings, rememberEnabled]);
+
+  const clearRememberData = useCallback(async () => {
+    setRememberEnabled(false);
+    setRememberedUsername('');
+    setRememberedJoinCode('');
+    await clearRememberStorage();
   }, []);
 
   const sortByJoinTime = (a, b) => {
@@ -328,8 +430,10 @@ export const LobbyProvider = ({ children }) => {
   }, [myDeviceId, persistHostDeviceId]);
 
   // Send lobby code to ESP32 device via BLE
-  const syncLobbyToDevice = useCallback(async (bleCommandFn) => {
-    if (!lobbyCode) {
+  const syncLobbyToDevice = useCallback(async (bleCommandFn, targetCode = null) => {
+    const codeToSync = targetCode ?? lobbyCode;
+
+    if (!codeToSync) {
       console.log('No lobby code to sync');
       return false;
     }
@@ -342,9 +446,9 @@ export const LobbyProvider = ({ children }) => {
     
     try {
       // Send LOBBY:XXXX command to ESP32
-      const success = await commandFn(`LOBBY:${lobbyCode}`);
+      const success = await commandFn(`LOBBY:${codeToSync}`);
       if (success) {
-        console.log(`Synced lobby code ${lobbyCode} to device`);
+        console.log(`Synced lobby code ${codeToSync} to device`);
       }
       return success;
     } catch (error) {
@@ -373,6 +477,10 @@ export const LobbyProvider = ({ children }) => {
     setMyDeviceIdState(null);
     setLobbyMembers([]);
     setMemberNicknames({});
+    setRememberEnabled(false);
+    setRememberedUsername('');
+    setRememberedJoinCode('');
+    await clearRememberStorage();
     
     await clearPersistedLobby();
     await AsyncStorage.removeItem(MEMBER_NICKNAMES_KEY);
@@ -562,8 +670,10 @@ export const LobbyProvider = ({ children }) => {
     myEmergencyContact,
     hostDeviceId,
     myDeviceId,
+    rememberEnabled,
+    rememberedUsername,
+    rememberedJoinCode,
     
-    // Actions
     createLobby,
     joinLobby,
     leaveLobby,
@@ -576,7 +686,6 @@ export const LobbyProvider = ({ children }) => {
     transferHostToFirstJoined,
     registerBleCommandSender,
     
-    // Nicknames
     setMemberNickname,
     getMemberNickname,
     setMyNickname,
@@ -585,8 +694,9 @@ export const LobbyProvider = ({ children }) => {
     setEmergencyContactForDevice,
     getEmergencyContactForDevice,
     clearNicknames,
-    
-    // Helpers
+    setRememberEnabled: setRememberEnabledFn,
+    saveRememberData,
+    clearRememberData,
     generateLobbyCode,
   };
 

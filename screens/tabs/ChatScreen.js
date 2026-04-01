@@ -102,14 +102,14 @@ const ChatScreen = ({ onBack, chatName }) => {
           onPress={onBack} 
           style={{ position: 'absolute', left: 20, top: 15, padding: 5 }}
         >
-          <ArrowLeft size={24} color={colors.textDark} />
+          <ArrowLeft size={24} color={colors.textDark} marginTop={10} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.textDark }]}>{chatInfo.name || 'Chat'}</Text>
         <TouchableOpacity 
           onPress={handleClearChat} 
           style={{ position: 'absolute', right: 20, top: 15, padding: 5 }}
         >
-          <Trash2 size={22} color={colors.gray} />
+          <Trash2 size={22} color={colors.gray} marginTop={10}/>
         </TouchableOpacity>
       </View>
     <KeyboardAvoidingView 
