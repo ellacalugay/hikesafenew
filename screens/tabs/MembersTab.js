@@ -158,6 +158,74 @@ const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname
           </Text>
         </View>
       )}
+
+      {/* Mobile Devices (if any) */}
+      {member.mobiles && member.mobiles.length > 0 && (
+        <View style={[localStyles.mobilesSection, { borderTopColor: colors.borderColor }]}>
+          <Text style={[localStyles.mobilesSectionTitle, { color: colors.gray }]}>
+            📱 Mobile Devices ({member.mobiles.length})
+          </Text>
+          {member.mobiles.map((mobile) => {
+            const mobileDistance = myLocation.valid && mobile.lat && mobile.lng
+              ? calculateDistance(myLocation.lat, myLocation.lng, mobile.lat, mobile.lng)
+              : null;
+            
+            // RSSI signal strength interpretation
+            const getRssiColor = (rssi) => {
+              if (rssi >= -50) return '#4CAF50'; // Excellent
+              if (rssi >= -60) return '#8BC34A'; // Good
+              if (rssi >= -70) return '#FFC107'; // Fair
+              if (rssi >= -80) return '#FF9800'; // Weak
+              return '#F44336'; // Very weak
+            };
+            
+            const getRssiLabel = (rssi) => {
+              if (rssi >= -50) return 'Excellent';
+              if (rssi >= -60) return 'Good';
+              if (rssi >= -70) return 'Fair';
+              if (rssi >= -80) return 'Weak';
+              return 'Very Weak';
+            };
+
+            return (
+              <View key={mobile.mobileId} style={[localStyles.mobileCard, { backgroundColor: colors.background, borderColor: colors.borderColor }]}>
+                <View style={localStyles.mobileHeader}>
+                  <View style={[localStyles.mobileAvatar, { backgroundColor: colors.primary }]}>
+                    <Text style={localStyles.mobileAvatarText}>M{mobile.mobileId}</Text>
+                  </View>
+                  <View style={localStyles.mobileInfo}>
+                    <Text style={[localStyles.mobileName, { color: colors.textDark }]}>
+                      Mobile {mobile.mobileId}
+                    </Text>
+                    <View style={localStyles.rssiRow}>
+                      <Radio size={12} color={getRssiColor(mobile.rssi)} />
+                      <Text style={[localStyles.rssiLabel, { color: getRssiColor(mobile.rssi) }]}>
+                        {getRssiLabel(mobile.rssi)} ({mobile.rssi} dBm)
+                      </Text>
+                    </View>
+                  </View>
+                  {mobileDistance !== null && (
+                    <View style={localStyles.mobileDistanceBadge}>
+                      <Text style={[localStyles.mobileDistanceText, { color: colors.primary }]}>
+                        {formatDistance(mobileDistance)}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <View style={[localStyles.mobileLocationRow, { borderTopColor: colors.borderColor }]}>
+                  <MapPin size={12} color={colors.gray} />
+                  <Text style={[localStyles.mobileLocationText, { color: colors.gray }]}>
+                    {mobile.lat.toFixed(5)}, {mobile.lng.toFixed(5)}
+                  </Text>
+                  <Text style={[localStyles.mobileDistLabel, { color: colors.gray }]}>
+                    ~{mobile.estimatedDistance}m away
+                  </Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
     </View>
   );
 };
@@ -709,6 +777,83 @@ const localStyles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 10,
     alignItems: 'center',
+  },
+  // Mobile devices section styles
+  mobilesSection: {
+    borderTopWidth: 1,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+  },
+  mobilesSectionTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 10,
+  },
+  mobileCard: {
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  mobileHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  mobileAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mobileAvatarText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  mobileInfo: {
+    marginLeft: 10,
+    flex: 1,
+  },
+  mobileName: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  rssiRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  rssiLabel: {
+    fontSize: 11,
+    marginLeft: 4,
+    fontWeight: '500',
+  },
+  mobileDistanceBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  mobileDistanceText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  mobileLocationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+  },
+  mobileLocationText: {
+    fontSize: 11,
+    marginLeft: 6,
+    flex: 1,
+  },
+  mobileDistLabel: {
+    fontSize: 11,
+    fontWeight: '500',
   },
 });
 

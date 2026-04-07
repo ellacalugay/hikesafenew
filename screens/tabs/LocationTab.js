@@ -89,7 +89,7 @@ const RadarView = ({ myLocation, members, colors, onMemberPress }) => {
         <Text style={[localStyles.dirLabel, localStyles.dirE, { color: colors.gray }]}>E</Text>
         <Text style={[localStyles.dirLabel, localStyles.dirW, { color: colors.gray }]}>W</Text>
         
-        {/* Member dots */}
+        {/* Device and Mobile dots */}
         {members.map((member) => {
           if (!myLocation.valid || !member.lat || !member.lng) return null;
           
@@ -121,9 +121,50 @@ const RadarView = ({ myLocation, members, colors, onMemberPress }) => {
               ]}
               onPress={() => onMemberPress(member)}
             >
-              <Text style={localStyles.memberDotText}>{member.name}</Text>
+              <Text style={localStyles.memberDotText}>D{member.deviceId}</Text>
             </TouchableOpacity>
           );
+        })}
+        
+        {/* Mobile device dots */}
+        {members.flatMap(member => {
+          if (!member.mobiles || member.mobiles.length === 0) return [];
+          return member.mobiles.map(mobile => {
+            if (!myLocation.valid || !mobile.lat || !mobile.lng) return null;
+            
+            const distance = calculateDistance(myLocation.lat, myLocation.lng, mobile.lat, mobile.lng);
+            const bearing = calculateBearing(myLocation.lat, myLocation.lng, mobile.lat, mobile.lng);
+            const scaledDistance = Math.min((distance / maxDistance) * radarRadius, radarRadius);
+            
+            const angleRad = (bearing - 90) * Math.PI / 180;
+            const x = Math.cos(angleRad) * scaledDistance;
+            const y = Math.sin(angleRad) * scaledDistance;
+            
+            // Get RSSI color
+            const getRssiColor = (rssi) => {
+              if (rssi >= -50) return '#4CAF50';
+              if (rssi >= -60) return '#8BC34A';
+              if (rssi >= -70) return '#FFC107';
+              if (rssi >= -80) return '#FF9800';
+              return '#F44336';
+            };
+            
+            return (
+              <View
+                key={`mobile-${member.deviceId}-${mobile.mobileId}`}
+                style={[
+                  localStyles.mobileDot,
+                  {
+                    backgroundColor: getRssiColor(mobile.rssi),
+                    left: RADAR_SIZE / 2 + x - 10,
+                    top: RADAR_SIZE / 2 + y - 10,
+                  }
+                ]}
+              >
+                <Text style={localStyles.mobileDotText}>M{mobile.mobileId}</Text>
+              </View>
+            );
+          });
         })}
       </View>
       
@@ -314,7 +355,7 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
             You
           </Text>
           
-          {/* Member markers */}
+          {/* Device markers */}
           {members.map((member) => {
             if (!member.lat || !member.lng) return null;
             
@@ -337,9 +378,46 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
                 ]}
                 onPress={() => onMemberPress(member)}
               >
-                <Text style={localStyles.memberMapLabel}>{member.name}</Text>
+                <Text style={localStyles.memberMapLabel}>D{member.deviceId}</Text>
               </TouchableOpacity>
             );
+          })}
+          
+          {/* Mobile device markers */}
+          {members.flatMap(member => {
+            if (!member.mobiles || member.mobiles.length === 0) return [];
+            return member.mobiles.map(mobile => {
+              if (!mobile.lat || !mobile.lng) return null;
+              
+              const pos = gpsToScreen(mobile.lat, mobile.lng);
+              
+              // Get RSSI color
+              const getRssiColor = (rssi) => {
+                if (rssi >= -50) return '#4CAF50';
+                if (rssi >= -60) return '#8BC34A';
+                if (rssi >= -70) return '#FFC107';
+                if (rssi >= -80) return '#FF9800';
+                return '#F44336';
+              };
+              
+              return (
+                <View
+                  key={`mobile-${member.deviceId}-${mobile.mobileId}`}
+                  style={[
+                    localStyles.mobileMapMarker,
+                    {
+                      left: pos.x - 9,
+                      top: pos.y - 9,
+                      backgroundColor: getRssiColor(mobile.rssi),
+                    }
+                  ]}
+                  title={`Mobile ${mobile.mobileId}`}
+                  description={`RSSI: ${mobile.rssi} dBm`}
+                >
+                  <Text style={localStyles.mobileMapLabel}>M{mobile.mobileId}</Text>
+                </View>
+              );
+            });
           })}
         </View>
       </View>
@@ -430,7 +508,7 @@ const MapViewComponent = ({ myLocation, members, colors, onMemberPress }) => {
           </>
         )}
         
-        {/* Member markers */}
+        {/* Device markers */}
         {members.map((member) => {
           if (!member.lat || !member.lng) return null;
           
@@ -441,12 +519,39 @@ const MapViewComponent = ({ myLocation, members, colors, onMemberPress }) => {
             <Marker
               key={member.deviceId}
               coordinate={{ latitude: member.lat, longitude: member.lng }}
-              title={member.name}
+              title={`Device ${member.deviceId}`}
               description={isEmergency ? `⚠️ ${member.alertType} ALERT` : isOffline ? '📵 Offline' : formatDistance(member.distance)}
               pinColor={isEmergency ? '#E74C3C' : isOffline ? '#999' : '#3498DB'}
               onPress={() => onMemberPress(member)}
             />
           );
+        })}
+        
+        {/* Mobile device markers */}
+        {members.flatMap(member => {
+          if (!member.mobiles || member.mobiles.length === 0) return [];
+          return member.mobiles.map(mobile => {
+            if (!mobile.lat || !mobile.lng) return null;
+            
+            // Get RSSI color for pin
+            const getRssiColor = (rssi) => {
+              if (rssi >= -50) return '#4CAF50';      // Green
+              if (rssi >= -60) return '#8BC34A';      // Light Green
+              if (rssi >= -70) return '#FFC107';      // Yellow
+              if (rssi >= -80) return '#FF9800';      // Orange
+              return '#F44336';                        // Red
+            };
+            
+            return (
+              <Marker
+                key={`mobile-${member.deviceId}-${mobile.mobileId}`}
+                coordinate={{ latitude: mobile.lat, longitude: mobile.lng }}
+                title={`D${member.deviceId} Mobile ${mobile.mobileId}`}
+                description={`RSSI: ${mobile.rssi} dBm | Distance: ~${mobile.estimatedDistance}m`}
+                pinColor={getRssiColor(mobile.rssi)}
+              />
+            );
+          });
         })}
       </MapView>
       
@@ -1046,6 +1151,22 @@ const localStyles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  mobileDot: {
+    position: 'absolute',
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 4,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  mobileDotText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '700',
+  },
   radarNote: {
     fontSize: 12,
     marginTop: 12,
@@ -1148,6 +1269,22 @@ const localStyles = StyleSheet.create({
   memberMapLabel: {
     color: '#fff',
     fontSize: 10,
+    fontWeight: '700',
+  },
+  mobileMapMarker: {
+    position: 'absolute',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#fff',
+    zIndex: 4,
+  },
+  mobileMapLabel: {
+    color: '#fff',
+    fontSize: 8,
     fontWeight: '700',
   },
   coordsDisplay: {

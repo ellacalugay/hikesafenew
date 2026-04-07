@@ -16,6 +16,7 @@ import { ArrowLeft, Send, Radio, Users, AlertCircle, Bluetooth, Trash2 } from 'l
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
+import { useLobby } from '../../context/LobbyContext';
 
 const ChatScreen = ({ onBack, chatName }) => {
   const { colors } = useTheme();
@@ -27,6 +28,7 @@ const ChatScreen = ({ onBack, chatName }) => {
     markMessagesAsRead,
     clearChatHistory
   } = useBluetoothDevice();
+  const { getMemberNickname } = useLobby();
   
   const [messageText, setMessageText] = useState('');
   const [sending, setSending] = useState(false);
@@ -102,14 +104,14 @@ const ChatScreen = ({ onBack, chatName }) => {
           onPress={onBack} 
           style={{ position: 'absolute', left: 20, top: 15, padding: 5 }}
         >
-          <ArrowLeft size={24} color={colors.textDark} />
+          <ArrowLeft size={24} color={colors.textDark} marginTop={10} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.textDark }]}>{chatInfo.name || 'Chat'}</Text>
         <TouchableOpacity 
           onPress={handleClearChat} 
           style={{ position: 'absolute', right: 20, top: 15, padding: 5 }}
         >
-          <Trash2 size={22} color={colors.gray} />
+          <Trash2 size={22} color={colors.gray} marginTop={10}/>
         </TouchableOpacity>
       </View>
     <KeyboardAvoidingView 
@@ -175,7 +177,9 @@ const ChatScreen = ({ onBack, chatName }) => {
                     <View style={[styles.avatarSmall, { width: 24, height: 24, marginRight: 6, backgroundColor: colors.primary }]}>
                       <Radio size={12} color="white" />
                     </View>
-                    <Text style={{ fontSize: 12, color: colors.gray }}>Device {msg.from}</Text>
+                    <Text style={{ fontSize: 12, color: colors.gray }}>
+                      {getMemberNickname(msg.from)}{msg.mobileId > 0 ? ` (Mobile ${msg.mobileId})` : ''}
+                    </Text>
                   </View>
                 )}
                 <View style={{

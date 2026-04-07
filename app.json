@@ -6,6 +6,7 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "icon": "./assets/hike_logo.png",
     "splash": {
       "image": "./assets/hike.png",
       "resizeMode": "contain",
@@ -26,20 +27,23 @@
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.VIBRATE"
+        "android.permission.VIBRATE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ]
     },
     "web": {
       "favicon": "./assets/hike.png"
     },
-    "extra": {
-      "eas": {
-        "projectId": "0bc9c500-9b85-4daa-8474-1dd0a8979d1e"
-      }
-    },
     "plugins": [
       "expo-asset",
       "expo-audio"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "1acdf07d-8111-4a10-a858-b5f30a08a6c4"
+      }
+    },
+    "owner": "kristinebarrina"
   }
 }

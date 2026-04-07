@@ -24,6 +24,7 @@ const DeviceConnectionScreen = ({ onBack }) => {
     isConnecting,
     isConnected,
     connectedDevice,
+    connectedDevicesList,
     availableDevices,
     myLocation,
     connectedDevicesCount,
@@ -31,6 +32,7 @@ const DeviceConnectionScreen = ({ onBack }) => {
     scanForDevices,
     connectToDevice,
     disconnect,
+    disconnectFromDevice,
   } = useBluetoothDevice();
   const { deviceNickname, setDeviceNickname } = useLobby();
   
@@ -38,15 +40,20 @@ const DeviceConnectionScreen = ({ onBack }) => {
   const [nicknameInput, setNicknameInput] = useState('');
 
   useEffect(() => {
-    if (isEnabled && !isConnected) {
+    if (isEnabled && connectedDevicesList.length === 0) {
       scanForDevices();
     }
-  }, [isEnabled]);
+  }, [isEnabled, connectedDevicesList.length, scanForDevices]);
 
   const handleDevicePress = async (device) => {
-    if (isConnected && connectedDevice?.id === device.id) {
-      await disconnect();
+    // Check if device is already connected
+    const isAlreadyConnected = connectedDevicesList.some(d => d.id === device.id);
+    
+    if (isAlreadyConnected) {
+      // Disconnect from this specific device
+      await disconnectFromDevice(device.id);
     } else {
+      // Connect to this device (without disconnecting from others)
       await connectToDevice(device);
     }
   };
@@ -72,7 +79,7 @@ const DeviceConnectionScreen = ({ onBack }) => {
   };
 
   const renderDevice = ({ item }) => {
-    const isCurrentDevice = connectedDevice?.id === item.id;
+    const isConnectedToDevice = connectedDevicesList.some(d => d.id === item.id);
     
     return (
       <TouchableOpacity
@@ -80,15 +87,15 @@ const DeviceConnectionScreen = ({ onBack }) => {
           styles.deviceItem,
           { 
             backgroundColor: colors.cardBg,
-            borderColor: isCurrentDevice ? colors.primary : colors.borderColor,
-            borderWidth: isCurrentDevice ? 2 : 1,
+            borderColor: isConnectedToDevice ? colors.primary : colors.borderColor,
+            borderWidth: isConnectedToDevice ? 2 : 1,
           }
         ]}
         onPress={() => handleDevicePress(item)}
         disabled={isConnecting}
       >
         <View style={styles.deviceInfo}>
-          <Radio size={24} color={isCurrentDevice ? colors.primary : colors.gray} />
+          <Radio size={24} color={isConnectedToDevice ? colors.primary : colors.gray} />
           <View style={styles.deviceText}>
             <Text style={[styles.deviceName, { color: colors.textDark }]}>
               {item.name || 'Unknown Device'}
@@ -98,6 +105,20 @@ const DeviceConnectionScreen = ({ onBack }) => {
             </Text>
           </View>
         </View>
+        
+        {isConnecting && !isConnectedToDevice ? null : (
+          isConnectedToDevice && isConnected ? (
+            <View style={[styles.connectedBadge, { backgroundColor: colors.primary }]}>
+              <Check size={16} color="#fff" />
+              <Text style={styles.connectedText}>Connected</Text>
+            </View>
+          ) : (
+            <Text style={[styles.tapToConnect, { color: colors.gray }]}>Tap to {isConnectedToDevice ? 'disconnect' : 'connect'}</Text>
+          )
+        )}
+      </TouchableOpacity>
+    );
+  };
         
         {isConnecting && !isCurrentDevice ? null : (
           isCurrentDevice && isConnected ? (
@@ -157,32 +178,43 @@ const DeviceConnectionScreen = ({ onBack }) => {
         )}
       </View>
 
-      {/* Connected Device Info */}
-      {isConnected && connectedDevice && (
+      {/* Connected Devices Info - MULTI-DEVICE SUPPORT */}
+      {isConnected && connectedDevicesList.length > 0 && (
         <View style={[styles.connectedCard, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
           <View style={styles.connectedHeader}>
             <Radio size={20} color={colors.primary} />
             <View style={{ flex: 1 }}>
-              <Text style={[styles.connectedTitle, { color: colors.primary }]} numberOfLines={1}>
-                Connected to {getDeviceDisplayName()}
+              <Text style={[styles.connectedTitle, { color: colors.primary }]}>
+                Connected to {connectedDevicesList.length} device{connectedDevicesList.length > 1 ? 's' : ''}
               </Text>
-              {connectedDevicesCount > 1 && (
+              {connectedDevicesCount > 0 && (
                 <Text style={[styles.multiDeviceText, { color: colors.primary }]}>
-                  {connectedDevicesCount} phones connected
+                  {connectedDevicesCount} phone{connectedDevicesCount > 1 ? 's' : ''} on LoRa
                 </Text>
               )}
             </View>
-            <TouchableOpacity onPress={handleEditNickname} style={{ padding: 4 }}>
-              <Edit2 size={18} color={colors.primary} />
-            </TouchableOpacity>
+          </View>
+
+          {/* List of connected devices */}
+          <View style={{ marginLeft: 28, marginBottom: 12 }}>
+            {connectedDevicesList.map((device, idx) => (
+              <View key={device.id} style={{ marginBottom: 8 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ color: colors.textDark, fontSize: 13 }}>
+                    {device.name || 'Device'}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => disconnectFromDevice(device.id)}
+                    style={{ padding: 4 }}
+                  >
+                    <X size={16} color={colors.accent} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
           </View>
           
-          {deviceNickname && (
-            <Text style={{ color: colors.gray, fontSize: 12, marginLeft: 28, marginBottom: 8 }}>
-              BLE: {connectedDevice.name}
-            </Text>
-          )}
-          
+          {/* GPS Info from first connected device */}
           <View style={styles.gpsInfo}>
             <Text style={[styles.gpsLabel, { color: colors.textDark }]}>GPS Status:</Text>
             {myLocation.valid ? (
@@ -205,7 +237,7 @@ const DeviceConnectionScreen = ({ onBack }) => {
             style={[styles.disconnectButton, { borderColor: colors.accent }]}
             onPress={disconnect}
           >
-            <Text style={[styles.disconnectText, { color: colors.accent }]}>Disconnect</Text>
+            <Text style={[styles.disconnectText, { color: colors.accent }]}>Disconnect All</Text>
           </TouchableOpacity>
         </View>
       )}

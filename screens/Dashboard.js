@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, ImageBackground } from 'react-native';
+import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, ImageBackground, BackHandler } from 'react-native';
 import { Home, MapPin, MessageCircle, Compass, User, Check, CheckSquare, Square, AlertTriangle, X, Users, Radio } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS } from '../constants/theme';
@@ -50,6 +50,33 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
   const [showLobbyModal, setShowLobbyModal] = useState(false);
   const [showSOSAlertModal, setShowSOSAlertModal] = useState(false);
   const joinAnnounceKeyRef = useRef(null);
+
+  // Handle hardware back button inside Dashboard: close modals first,
+  // if on profile sub-screens go back to profile, otherwise go to home.
+  useEffect(() => {
+    const onBack = () => {
+      if (showLogoutModal) { setShowLogoutModal(false); return true; }
+      if (showLocationModal) { setShowLocationModal(false); return true; }
+      if (showLobbyModal) { setShowLobbyModal(false); return true; }
+      if (showSOSAlertModal) { setShowSOSAlertModal(false); return true; }
+
+      const profileSubs = ['editProfile', 'settings', 'help', 'reportProblem'];
+      if (profileSubs.includes(activeTab)) {
+        setActiveTab('profile');
+        return true;
+      }
+
+      if (activeTab !== 'home') {
+        setActiveTab('home');
+        return true;
+      }
+
+      return false; // let system handle (may exit app)
+    };
+
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', onBack);
+    return () => backHandler.remove();
+  }, [showLogoutModal, showLocationModal, showLobbyModal, showSOSAlertModal, activeTab]);
 
   // Handle incoming SOS/MORSE/OFFLINE alerts
   useEffect(() => {
@@ -149,8 +176,8 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
   const adminDisplay = hostDeviceId === null || hostDeviceId === undefined
     ? 'Electing...'
     : myDeviceId === hostDeviceId
-      ? `You (Device ${hostDeviceId})`
-      : `Device ${hostDeviceId}`;
+      ? `You (${getMemberNickname(hostDeviceId)})`
+      : getMemberNickname(hostDeviceId);
 
   const renderContent = () => {
     switch (activeTab) {
@@ -473,8 +500,8 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
             
             <Text style={[styles.modalText, { color: colors.textDark, textAlign: 'center', fontSize: 16, marginVertical: 8 }]}>
               {activeAlert?.type === 'OFFLINE' 
-                ? `Device ${activeAlert?.deviceId} has gone offline!`
-                : `Device ${activeAlert?.deviceId} needs help!`
+                ? `${getMemberNickname(activeAlert?.deviceId)} has gone offline!`
+                : `${getMemberNickname(activeAlert?.deviceId)} needs help!`
               }
             </Text>
 

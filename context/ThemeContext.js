@@ -16,11 +16,17 @@ export const LIGHT_COLORS = {
   gray: '#9ca3af',
   cardBg: 'white',
   overlay: 'rgba(255,255,255,0)',
-  headerBg: '#f7fee7',
+  headerBg: '#9dc5a9',
   inputBg: '#f3f4f6',
   borderColor: '#e5e7eb',
   modalBg: 'white',
   surfaceBg: 'white',
+  greetBn: ['#2e7d32', '#4caf50', '#7db241', '#a5de0a'],
+  profileBg: "#E8E8E8",
+  messageBg: "#B5D5A0",
+  locationBg: "#C5DDB5",
+  compassBg: "#F0C87A",
+
 };
 
 export const DARK_COLORS = {
@@ -38,6 +44,12 @@ export const DARK_COLORS = {
   borderColor: '#404040',
   modalBg: '#2d2d2d',
   surfaceBg: '#252525',
+  // Dark-mode service background colors - muted/darker variants
+  greetBn: ['#1a431c9e', '#2d5e2e62', '#4b6a277e', '#57720b7b'],
+  profileBg: '#424141',
+  messageBg: '#52684a',
+  locationBg: '#3f4f3f',
+  compassBg: '#6b5a2f',
 };
 
 export const ThemeProvider = ({ children }) => {

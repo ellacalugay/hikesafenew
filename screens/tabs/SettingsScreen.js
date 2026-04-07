@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Switch, Modal, Animated } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Switch, Modal, Animated, ImageBackground } from 'react-native';
+import { Image } from 'react-native';
 import { ArrowLeft, Bell, Moon, MapPin, Shield, ChevronRight, X } from 'lucide-react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
@@ -53,19 +54,42 @@ const SettingsScreen = ({ onBack }) => {
   };
 
   return (
+    <ImageBackground 
+      source={require('../../assets/dashboard_bg.png')} 
+      style={[styles.tabContainer, { backgroundColor: colors.background }]}
+      imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
+    > 
+    {isDarkMode && (
+      <View style={{
+        position: 'absolute',
+        top: 0, left: 0, right: 0, bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.55)', 
+        zIndex: 0,
+      }} />
+    )}
     <Animated.View style={[{ flex: 1, opacity: themeTransitionAnim }]}>
-      <View style={[styles.tabContainer, { backgroundColor: colors.background }]}>
-        <View style={[styles.headerBar, { backgroundColor: colors.headerBg }]}>
+      <View style={[styles.tabContainer, { backgroundColor: 'transparent' }]}>
+        <View style={[styles.headerBar, { backgroundColor: colors.headerBg, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, shadowRadius: 4, elevation: 5, zIndex: 1, }]}>
           <TouchableOpacity 
             onPress={onBack} 
             style={{ position: 'absolute', left: 20, top: 15, padding: 5 }}
           >
-            <ArrowLeft size={24} color={colors.textDark} />
+            <ArrowLeft size={24} color={colors.textDark} style={{ marginTop: 13 }}  />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.textDark }]}>SETTINGS</Text>
-        </View>
-
-        <ScrollView style={{ flex: 1, padding: 20 }}>
+          <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 22, marginLeft: -115, marginTop: -10, paddingBottom: 10 }]}>SETTINGS</Text>    
+          <Image 
+            source={require('../../assets/hike_logo.png')} 
+            style={{ 
+              position: 'absolute', 
+              right: 30, 
+              top: 17,
+              width: 50, 
+              height: 50, 
+              resizeMode: 'contain' 
+            }} 
+            />
+          </View>
+        <ScrollView style={{ flex: 1, padding: 20 }} contentContainerStyle={{ paddingBottom: 50 }} showsVerticalScrollIndicator={false}>
         <Text style={[styles.sectionHeader, { marginTop: 0, color: colors.textDark }]}>Notifications</Text>
         <SettingRow 
           icon={Bell} 
@@ -121,9 +145,9 @@ const SettingsScreen = ({ onBack }) => {
               onPress={() => setShowPrivacyModal(false)} 
               style={{ position: 'absolute', left: 20, top: 15, padding: 5 }}
             >
-              <X size={24} color={colors.textDark} />
+              <X size={24} color={colors.textDark} marginTop={10} />
             </TouchableOpacity>
-            <Text style={[styles.headerTitle, { color: colors.textDark }]}>PRIVACY POLICY</Text>
+            <Text style={[styles.headerTitle, { color: colors.textDark, fontSize: 20, paddingBottom: 9, marginTop: -10 }]}>PRIVACY POLICY</Text>
           </View>
           <ScrollView style={{ flex: 1, padding: 20 }}>
             <Text style={{ fontSize: 16, fontWeight: '700', color: colors.textDark, marginBottom: 10 }}>
@@ -179,6 +203,7 @@ const SettingsScreen = ({ onBack }) => {
       </Modal>
       </View>
     </Animated.View>
+    </ImageBackground>
   );
 };
 
