@@ -99,7 +99,14 @@ const MessageTab = ({ onOpenChat }) => {
               <Text style={[styles.chatName, { color: colors.textDark }]}>Group Chat (Broadcast)</Text>
               <Text style={[localStyles.chatPreview, { color: colors.black }]}>Send to all devices</Text>
             </View>
-            {isConnected && <View style={styles.onlineDot} />}
+            <View style={localStyles.rightStatusRow}>
+              {unreadCount > 0 && (
+                <View style={[localStyles.unreadBadge, { backgroundColor: colors.primary }]}>
+                  <Text style={localStyles.unreadText}>{unreadCount}</Text>
+                </View>
+              )}
+              {isConnected && <View style={styles.onlineDot} />}
+            </View>
           </TouchableOpacity>
         )}
         
@@ -124,11 +131,14 @@ const MessageTab = ({ onOpenChat }) => {
                 </View>
                 <View style={localStyles.chatMeta}>
                   <Text style={[localStyles.chatTime, { color: colors.gray }]}>{formatTime(conv.lastTimestamp)}</Text>
-                  {conv.unreadCount > 0 && (
-                    <View style={[localStyles.unreadBadge, { backgroundColor: colors.primary }]}>
-                      <Text style={localStyles.unreadText}>{conv.unreadCount}</Text>
-                    </View>
-                  )}
+                  <View style={localStyles.rightStatusRow}>
+                    {conv.unreadCount > 0 && (
+                      <View style={[localStyles.unreadBadge, { backgroundColor: colors.primary }]}>
+                        <Text style={localStyles.unreadText}>{conv.unreadCount}</Text>
+                      </View>
+                    )}
+                    <View style={styles.onlineDot} />
+                  </View>
                 </View>
               </TouchableOpacity>
             ))}
@@ -247,6 +257,12 @@ const localStyles = StyleSheet.create({
     color: '#fff',
     fontSize: 11,
     fontWeight: '600',
+  },
+  rightStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
   },
   sectionTitle: {
     fontSize: 14,
