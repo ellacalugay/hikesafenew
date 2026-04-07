@@ -4,10 +4,12 @@ import { User, Radio, Users, MessageCircle, Bluetooth, Search, X } from 'lucide-
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
+import { useLobby } from '../../context/LobbyContext';
 
 const MessageTab = ({ onOpenChat }) => {
   const { colors } = useTheme();
   const { isConnected, connectedDevice, memberLocations, getConversations, unreadCount } = useBluetoothDevice();
+  const { getMemberNickname } = useLobby();
   const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -16,7 +18,7 @@ const MessageTab = ({ onOpenChat }) => {
   // Get known devices from memberLocations that we can message
   const knownDevices = memberLocations.map(m => ({
     deviceId: m.deviceId,
-    name: `Device ${m.deviceId}`,
+    name: getMemberNickname(m.deviceId),
     online: Date.now() - m.lastUpdate < 60000, // Online if updated within 1 minute
   }));
   

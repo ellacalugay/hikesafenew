@@ -16,6 +16,7 @@ import { ArrowLeft, Send, Radio, Users, AlertCircle, Bluetooth, Trash2 } from 'l
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
+import { useLobby } from '../../context/LobbyContext';
 
 const ChatScreen = ({ onBack, chatName }) => {
   const { colors } = useTheme();
@@ -27,6 +28,7 @@ const ChatScreen = ({ onBack, chatName }) => {
     markMessagesAsRead,
     clearChatHistory
   } = useBluetoothDevice();
+  const { getMemberNickname } = useLobby();
   
   const [messageText, setMessageText] = useState('');
   const [sending, setSending] = useState(false);
@@ -175,7 +177,9 @@ const ChatScreen = ({ onBack, chatName }) => {
                     <View style={[styles.avatarSmall, { width: 24, height: 24, marginRight: 6, backgroundColor: colors.primary }]}>
                       <Radio size={12} color="white" />
                     </View>
-                    <Text style={{ fontSize: 12, color: colors.gray }}>Device {msg.from}</Text>
+                    <Text style={{ fontSize: 12, color: colors.gray }}>
+                      {getMemberNickname(msg.from)}{msg.mobileId > 0 ? ` (Mobile ${msg.mobileId})` : ''}
+                    </Text>
                   </View>
                 )}
                 <View style={{

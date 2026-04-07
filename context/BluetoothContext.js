@@ -73,15 +73,18 @@ export const BluetoothProvider = ({ children }) => {
     setEmergencyContactForDevice,
   } = useLobby();
 
-  // Connection state
+  // Connection state - MULTI-DEVICE SUPPORT
   const [isEnabled, setIsEnabled] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
-  const [connectedDevice, setConnectedDevice] = useState(null);
+  const [connectedDevicesList, setConnectedDevicesList] = useState([]); // Array of { id, name, address, bleDevice, subscription, currentId, remoteDevice }
   const [availableDevices, setAvailableDevices] = useState([]);
-  const [connectedDevicesCount, setConnectedDevicesCount] = useState(0); // Number of phones connected to device via BLE
-  const [isDeviceReachable, setIsDeviceReachable] = useState(false); // True if ANY phone can reach the device
+  const [connectedDevicesCount, setConnectedDevicesCount] = useState(0); // Number of phones connected to LoRa device via BLE
+  const [isDeviceReachable, setIsDeviceReachable] = useState(false); // True if ANY connected device has LoRa link
+  
+  // For backward compatibility, expose first connected device as "connectedDevice"
+  const connectedDevice = connectedDevicesList.length > 0 ? connectedDevicesList[0] : null;
+  const isConnected = connectedDevicesList.length > 0;
   
   // GPS and Location data
   const [myLocation, setMyLocation] = useState({ lat: 0, lng: 0, satellites: 0, valid: false });
@@ -106,6 +109,9 @@ export const BluetoothProvider = ({ children }) => {
   // Track whether the BLE link *actually* dropped (vs. screen navigation/rerender).
   const wasEverConnectedRef = useRef(false);
   const lastDisconnectAtRef = useRef(null);
+
+  // Multi-device refs: key = device.id, value = { subscriptionRef, disconnectSubRef }
+  const deviceConnectionsRef = useRef(new Map()); // Map<deviceId, { subscription, disconnectSubscription, device }>
 
   // Serialize BLE writes to avoid overlapping GATT operations (common cause of flakiness).
   const writeQueueRef = useRef(Promise.resolve());
@@ -1053,12 +1059,33 @@ export const BluetoothProvider = ({ children }) => {
         setMorseInput(prev => prev + '-');
       }
       
-      // MSG:[FROM_ID],[TEXT] - Incoming text message via LoRa
+      // MSG:[FROM_ID],M[MOBILE_ID],[TEXT],...,RSSI:[VALUE] - Incoming text message via LoRa
       else if (trimmed.startsWith('MSG:')) {
         const firstComma = trimmed.indexOf(',');
         if (firstComma > 4) {
           const fromId = parseInt(trimmed.substring(4, firstComma), 10);
-          const text = trimmed.substring(firstComma + 1);
+          const remaining = trimmed.substring(firstComma + 1);
+          
+          // Parse mobile ID (Mx format) if present
+          let mobileId = 0;
+          let textWithMeta = remaining;
+          let rssiValue = null;
+          
+          if (remaining.startsWith('M')) {
+            const mobileMatch = remaining.match(/^M(\d+),(.*)$/);
+            if (mobileMatch) {
+              mobileId = parseInt(mobileMatch[1], 10);
+              textWithMeta = mobileMatch[2];
+            }
+          }
+          
+          // Extract RSSI if present (format: ...,RSSI:-75)
+          const rssiMatch = textWithMeta.match(/,RSSI:(-?\d+)$/);
+          let text = textWithMeta;
+          if (rssiMatch) {
+            text = textWithMeta.substring(0, rssiMatch.index);
+            rssiValue = parseInt(rssiMatch[1], 10);
+          }
 
           if (text.startsWith('__JOINED_TS__:')) {
             const ts = parseInt(text.substring(14), 10);
@@ -1068,15 +1095,17 @@ export const BluetoothProvider = ({ children }) => {
             return;
           }
           
-          console.log(`Received MSG from Device ${fromId}: ${text}`);
+          console.log(`Received MSG from Device ${fromId}${mobileId > 0 ? ` Mobile ${mobileId}` : ''}: ${text}`);
           
           const newMessage = {
-            id: `msg-${Date.now()}-${fromId}`,
+            id: `msg-${Date.now()}-${fromId}-${mobileId}`,
             from: fromId,
+            mobileId: mobileId,
             to: 'me',
             text: text,
             timestamp: Date.now(),
             isMine: false,
+            rssi: rssiValue,
           };
           
           setMessages(prev => [...prev, newMessage]);
@@ -1139,6 +1168,81 @@ export const BluetoothProvider = ({ children }) => {
         }
       }
       
+      // MOBILE: Mobile device location with RSSI tracking
+      // Format: MOBILE:[mobileID],[lat],[lng],[rssi],[estimatedDistance]
+      else if (trimmed.startsWith('MOBILE:')) {
+        const parts = trimmed.substring(7).split(',');
+        if (parts.length >= 5) {
+          const mobileId = parseInt(parts[0], 10);
+          const lat = parseFloat(parts[1]);
+          const lng = parseFloat(parts[2]);
+          const rssi = parseInt(parts[3], 10);
+          const estimatedDistance = parseInt(parts[4], 10);
+          
+          // Mobile devices are associated with the connected device
+          if (connectedDevice) {
+            setMemberLocations(prev => {
+              const existing = prev.findIndex(m => m.deviceId === connectedDevice.id);
+              
+              if (existing >= 0) {
+                // Device already in memberLocations, update its mobile data
+                const updated = [...prev];
+                const mobiles = updated[existing].mobiles || [];
+                const mobileIdx = mobiles.findIndex(m => m.mobileId === mobileId);
+                
+                if (mobileIdx >= 0) {
+                  // Update existing mobile
+                  mobiles[mobileIdx] = {
+                    ...mobiles[mobileIdx],
+                    lat,
+                    lng,
+                    rssi,
+                    estimatedDistance,
+                    lastUpdate: Date.now()
+                  };
+                } else {
+                  // Add new mobile
+                  mobiles.push({
+                    mobileId,
+                    lat,
+                    lng,
+                    rssi,
+                    estimatedDistance,
+                    lastUpdate: Date.now()
+                  });
+                }
+                
+                updated[existing] = {
+                  ...updated[existing],
+                  mobiles: mobiles.slice().sort((a, b) => a.mobileId - b.mobileId)
+                };
+                return updated;
+              } else {
+                // Device not in memberLocations yet, add it with mobile data
+                return [...prev, {
+                  deviceId: connectedDevice.id,
+                  lat: null,
+                  lng: null,
+                  lastUpdate: Date.now(),
+                  alertType: null,
+                  isOffline: false,
+                  mobiles: [{
+                    mobileId,
+                    lat,
+                    lng,
+                    rssi,
+                    estimatedDistance,
+                    lastUpdate: Date.now()
+                  }]
+                }];
+              }
+            });
+            
+            addActivity('mobile', connectedDevice.id, `Mobile device ${mobileId} location updated (RSSI: ${rssi} dBm, Distance: ${estimatedDistance}m)`);
+          }
+        }
+      }
+      
       // MSG_SENT confirmation
       else if (trimmed === 'MSG_SENT') {
         setStatusMessage('Message sent via LoRa');
@@ -1164,10 +1268,10 @@ export const BluetoothProvider = ({ children }) => {
     return sendCommand(`EC:${name},${phone}`);
   }, [isConnected, myEmergencyContact, sendCommand]);
 
-  // Connect to a BLE device - direct connection, no pairing needed!
+  // Connect to a BLE device - MULTI-DEVICE SUPPORT - no pairing needed!
+  // Now supports multiple simultaneous connections (3-4 phones to same device)
   const connectToDevice = useCallback(async (device) => {
     if (!bleAvailable || !bleManagerRef.current) {
-      // BLE not available - cannot connect
       Alert.alert(
         'Bluetooth Not Available',
         'Bluetooth is required to connect to your HikeSafe device. Please use a native build (not Expo Go) and ensure Bluetooth is enabled.',
@@ -1182,17 +1286,10 @@ export const BluetoothProvider = ({ children }) => {
       return false;
     }
 
-    if (deviceRef.current?.id === device.id && isConnected) {
+    // Check if already connected to this specific device
+    if (connectedDevicesList.some(d => d.id === device.id)) {
+      console.log(`Already connected to device ${device.id}`);
       return true;
-    }
-
-    if (deviceRef.current && deviceRef.current?.id !== device.id) {
-      try {
-        await deviceRef.current.cancelConnection();
-      } catch (cleanupError) {
-        console.log('Previous connection cleanup skipped:', cleanupError?.message || cleanupError);
-      }
-      deviceRef.current = null;
     }
 
     // Stop scanning if still running
@@ -1225,13 +1322,13 @@ export const BluetoothProvider = ({ children }) => {
           if (error) {
             console.error('Notification error:', error);
             if (error.message?.includes('disconnected') || error.message?.includes('cancel')) {
-              handleConnectionLost();
+              // Handle disconnection for this specific device
+              disconnectFromDevice(device.id);
             }
             return;
           }
           
           if (characteristic?.value) {
-            // Decode base64 value from BLE
             try {
               const decoded = Buffer.from(characteristic.value, 'base64').toString('utf-8');
               parseBluetoothData(decoded);
@@ -1243,15 +1340,26 @@ export const BluetoothProvider = ({ children }) => {
       );
       
       // Listen for disconnection events
-      disconnectSubscriptionRef.current = connectedDev.onDisconnected((error, disconnectedDevice) => {
+      const disconnectSubscription = connectedDev.onDisconnected((error, disconnectedDevice) => {
         console.log('Device disconnected:', error?.message || 'Connection closed');
-        handleConnectionLost();
+        disconnectFromDevice(device.id);
       });
       
-      deviceRef.current = connectedDev;
-      subscriptionRef.current = subscription;
-      setConnectedDevice({ ...device, bleDevice: connectedDev });
-      setIsConnected(true);
+      // Store device connection info
+      const newDeviceInfo = {
+        ...device,
+        bleDevice: connectedDev,
+      };
+      
+      // Store subscription refs for this device
+      deviceConnectionsRef.current.set(device.id, {
+        subscription,
+        disconnectSubscription,
+        device: connectedDev,
+      });
+      
+      // Add to connected devices list and update state
+      setConnectedDevicesList(prev => [...prev, newDeviceInfo]);
       wasEverConnectedRef.current = true;
       setLastDataReceived(Date.now());
       setConnectionHealth('good');
@@ -1267,6 +1375,7 @@ export const BluetoothProvider = ({ children }) => {
       // Play connection success sound
       playConnectionSound();
       
+      console.log(`Successfully connected to device ${device.id}. Total connected: ${connectedDevicesList.length + 1}`);
       return true;
     } catch (error) {
       console.error('Connection error:', error);
@@ -1278,57 +1387,84 @@ export const BluetoothProvider = ({ children }) => {
     } finally {
       setIsConnecting(false);
     }
-  }, [isConnected, isInLobby, parseBluetoothData, handleConnectionLost, parseDeviceId, playConnectionSound, registerMemberSync, requestPermissions, setMyDeviceId]);
+  }, [connectedDevicesList, isInLobby, parseBluetoothData, parseDeviceId, playConnectionSound, registerMemberSync, requestPermissions, setMyDeviceId]);
 
-  // Disconnect from device
-  const disconnect = useCallback(async () => {
-    if (mockIntervalRef.current) {
-      clearInterval(mockIntervalRef.current);
-      mockIntervalRef.current = null;
-    }
+  // Disconnect from a specific device (multi-device support)
+  const disconnectFromDevice = useCallback(async (deviceId) => {
+    const connInfo = deviceConnectionsRef.current.get(deviceId);
     
-    if (subscriptionRef.current) {
-      subscriptionRef.current.remove();
-      subscriptionRef.current = null;
-    }
-    
-    if (disconnectSubscriptionRef.current) {
-      disconnectSubscriptionRef.current.remove();
-      disconnectSubscriptionRef.current = null;
-    }
-    
-    if (deviceRef.current) {
-      try {
-        await deviceRef.current.cancelConnection();
-      } catch (error) {
-        console.error('Disconnect error:', error);
+    if (connInfo) {
+      // Clean up subscriptions
+      if (connInfo.subscription) {
+        connInfo.subscription.remove();
       }
-      deviceRef.current = null;
+      if (connInfo.disconnectSubscription) {
+        connInfo.disconnectSubscription.remove();
+      }
+      
+      // Close BLE connection
+      if (connInfo.device) {
+        try {
+          await connInfo.device.cancelConnection();
+        } catch (error) {
+          console.error('Error canceling connection:', error);
+        }
+      }
+      
+      deviceConnectionsRef.current.delete(deviceId);
     }
     
-    setConnectedDevice(null);
-    setIsConnected(false);
+    // Remove from connected devices list
+    setConnectedDevicesList(prev => prev.filter(d => d.id !== deviceId));
+    
+    // If no more connected devices, clear flags
+    if (connectedDevicesList.length <= 1) {
+      setConnectedDevicesCount(0);
+      setIsDeviceReachable(false);
+      setMyLocation({ lat: 0, lng: 0, satellites: 0, valid: false });
+      setLastDataReceived(null);
+      setLoraSignalStrength(null);
+      setConnectionHealth('unknown');
+    }
+    
+    console.log(`Disconnected from device ${deviceId}`);
+  }, [connectedDevicesList.length]);
+
+  // Disconnect from all devices
+  const disconnect = useCallback(async () => {
+    // Disconnect from all connected devices
+    for (const deviceId of connectedDevicesList.map(d => d.id)) {
+      await disconnectFromDevice(deviceId);
+    }
+    
+    setConnectedDevicesList([]);
     setConnectedDevicesCount(0);
     setIsDeviceReachable(false);
-    commandQueueRef.current = Promise.resolve();
-    lastDisconnectAtRef.current = Date.now();
-    stopEmergencySignals();
     setMyLocation({ lat: 0, lng: 0, satellites: 0, valid: false });
     setConnectionHealth('unknown');
     setLastDataReceived(null);
     setLoraSignalStrength(null);
-  }, [stopEmergencySignals]);
+    commandQueueRef.current = Promise.resolve();
+    lastDisconnectAtRef.current = Date.now();
+    stopEmergencySignals();
+    
+    // Also cleanup old single-device refs for backward compatibility
+    if (mockIntervalRef.current) {
+      clearInterval(mockIntervalRef.current);
+      mockIntervalRef.current = null;
+    }
+  }, [connectedDevicesList, disconnectFromDevice, stopEmergencySignals]);
 
-  // Send command to device via BLE
+  // Send command to ALL connected devices via BLE (MULTI-DEVICE BROADCAST)
   const sendCommand = useCallback(async (command) => {
-    if (!isConnected) {
+    if (!isConnected || connectedDevicesList.length === 0) {
       Alert.alert('Not Connected', 'Please connect to a device first.');
       return false;
     }
     
     const cmdWithNewline = command.endsWith('\n') ? command : command + '\n';
     
-    if (!BleManager || !deviceRef.current) {
+    if (!BleManager || connectedDevicesList.length === 0) {
       // Mock command handling
       console.log('Mock sending:', cmdWithNewline);
       if (command === 'SOS') {
@@ -1339,148 +1475,107 @@ export const BluetoothProvider = ({ children }) => {
       setTimeout(() => setStatusMessage(''), 2000);
       return true;
     }
-    
-    const queuedWrite = async () => {
-      const dev = deviceRef.current;
-      if (!dev) {
-        throw new Error('BLE device is not connected');
-      }
 
-      // Defensive: avoid writing if the OS already dropped the connection.
-      try {
-        const stillConnected = await dev.isConnected();
-        if (!stillConnected) {
-          throw new Error('BLE device is not connected');
-        }
-      } catch (e) {
-        throw new Error('BLE device is not connected');
-      }
+    const encoded = Buffer.from(cmdWithNewline, 'utf-8').toString('base64');
+    let successCount = 0;
+    let failureCount = 0;
 
-      // Encode to base64 for BLE transmission
-      const encoded = Buffer.from(cmdWithNewline, 'utf-8').toString('base64');
-
-      // Write to RX characteristic (app → device)
-      await dev.writeCharacteristicWithResponseForService(
-        NUS_SERVICE_UUID,
-        NUS_RX_CHAR_UUID,
-        encoded
-      );
-
-      return true;
-    };
-
-    // Ensure a previous write failure doesn't poison the whole queue.
-    writeQueueRef.current = writeQueueRef.current
-      .catch(() => undefined)
-      .then(queuedWrite);
-
-    try {
-      return await writeQueueRef.current;
-    } catch (error) {
-      console.error('Send error:', error);
-
-      const message = (error?.message || '').toLowerCase();
-      if (message.includes('disconnected') || message.includes('not connected') || message.includes('cancel')) {
-        handleConnectionLost();
+    // Send to all connected devices in parallel
+    const sendPromises = connectedDevicesList.map(async (deviceInfo) => {
+      const connInfo = deviceConnectionsRef.current.get(deviceInfo.id);
+      if (!connInfo || !connInfo.device) {
+        failureCount++;
         return false;
       }
 
-      Alert.alert('Send Failed', 'Could not send command to device.');
-
-    const queuedWrite = async () => {
-      const encoded = Buffer.from(cmdWithNewline, 'utf-8').toString('base64');
-      const maxAttempts = 3;
-
-      const writeWithResponse = async () => {
-        await deviceRef.current.writeCharacteristicWithResponseForService(
-          NUS_SERVICE_UUID,
-          NUS_RX_CHAR_UUID,
-          encoded
-        );
-      };
-
-      const writeWithoutResponse = async () => {
-        await deviceRef.current.writeCharacteristicWithoutResponseForService(
-          NUS_SERVICE_UUID,
-          NUS_RX_CHAR_UUID,
-          encoded
-        );
-      };
-
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        if (!deviceRef.current || !isConnected) {
-          return false;
-        }
-
+      try {
+        const dev = connInfo.device;
+        
+        // Defensive: check if connection is still valid
         try {
-          // Keep BLE writes serialized to avoid operation-rejected/timeouts from parallel requests.
-          await writeWithResponse();
-          return true;
-        } catch (error) {
-          const message = (error?.message || '').toLowerCase();
-          const isDisconnectedError = message.includes('disconnected') || message.includes('cancel');
-          const isTransientError =
-            message.includes('timed out') ||
-            message.includes('timeout') ||
-            message.includes('rejected') ||
-            message.includes('busy') ||
-            message.includes('in progress') ||
-            message.includes('already in progress');
-          const supportsWriteWithoutResponse =
-            deviceRef.current && typeof deviceRef.current.writeCharacteristicWithoutResponseForService === 'function';
-
-          if (isDisconnectedError) {
-            console.error('Send error:', error);
-            handleConnectionLost();
+          const stillConnected = await dev.isConnected();
+          if (!stillConnected) {
+            failureCount++;
+            await disconnectFromDevice(deviceInfo.id);
             return false;
           }
-
-          // Some firmware exposes RX as write-without-response only.
-          if (supportsWriteWithoutResponse && (message.includes('rejected') || message.includes('timed out') || message.includes('timeout'))) {
-            try {
-              await delay(80 * attempt);
-              await writeWithoutResponse();
-              return true;
-            } catch (fallbackError) {
-              const fallbackMessage = (fallbackError?.message || '').toLowerCase();
-              if (fallbackMessage.includes('disconnected') || fallbackMessage.includes('cancel')) {
-                console.error('Send error:', fallbackError);
-                handleConnectionLost();
-                return false;
-              }
-            }
-          }
-
-          if (isTransientError && attempt < maxAttempts) {
-            console.log(`BLE write retry (${attempt}/${maxAttempts}) for command:`, command);
-            await delay(120 * attempt);
-            continue;
-          }
-
-          console.error('Send error:', error);
-          if (!isTransientError) {
-            Alert.alert('Send Failed', 'Could not send command to device.');
-          }
+        } catch (e) {
+          failureCount++;
+          await disconnectFromDevice(deviceInfo.id);
           return false;
         }
+
+        // Try write with response first
+        try {
+          await dev.writeCharacteristicWithResponseForService(
+            NUS_SERVICE_UUID,
+            NUS_RX_CHAR_UUID,
+            encoded
+          );
+          console.log(`Command sent to device ${deviceInfo.id}`);
+          successCount++;
+          return true;
+        } catch (writeError) {
+          const message = (writeError?.message || '').toLowerCase();
+          
+          // If disconnected, handle removal
+          if (message.includes('disconnected') || message.includes('cancel')) {
+            await disconnectFromDevice(deviceInfo.id);
+            failureCount++;
+            return false;
+          }
+          
+          // Try write without response as fallback
+          if (typeof dev.writeCharacteristicWithoutResponseForService === 'function') {
+            try {
+              await delay(80);
+              await dev.writeCharacteristicWithoutResponseForService(
+                NUS_SERVICE_UUID,
+                NUS_RX_CHAR_UUID,
+                encoded
+              );
+              console.log(`Command sent to device ${deviceInfo.id} (no response)`);
+              successCount++;
+              return true;
+            } catch (fallbackError) {
+              failureCount++;
+              return false;
+            }
+          }
+          
+          failureCount++;
+          return false;
+        }
+      } catch (error) {
+        console.error(`Error sending to device ${deviceInfo.id}:`, error);
+        failureCount++;
+        return false;
       }
+    });
 
+    // Wait for all sends to complete
+    await Promise.all(sendPromises);
+
+    // Provide feedback
+    if (successCount > 0) {
+      if (successCount === connectedDevicesList.length) {
+        // All succeeded
+        console.log(`Command delivered to all ${successCount} devices`);
+        return true;
+      } else {
+        // Partial success
+        console.warn(`Command sent to ${successCount}/${connectedDevicesList.length} devices`);
+        setStatusMessage(`Sent to ${successCount}/${connectedDevicesList.length} devices`);
+        setTimeout(() => setStatusMessage(''), 3000);
+        return true; // Consider partial success as OK
+      }
+    } else {
+      // All failed
+      console.error('Command failed on all devices');
+      Alert.alert('Send Failed', 'Could not send command to any device.');
       return false;
-    };
-
     }
-
-    // Chain onto the previous write so all BLE writes happen sequentially.
-    const runWrite = commandQueueRef.current
-      .catch(() => undefined)
-      .then(queuedWrite);
-
-    commandQueueRef.current = runWrite
-      .then(() => undefined)
-      .catch(() => undefined);
-
-    return runWrite;
-  }, [isConnected, handleConnectionLost, delay]);
+  }, [isConnected, connectedDevicesList, disconnectFromDevice, delay]);
 
   // Expose BLE command sender to LobbyContext so it can sync lobby code to device.
   useEffect(() => {
@@ -1642,6 +1737,7 @@ export const BluetoothProvider = ({ children }) => {
     isConnected,
     isDeviceReachable,
     connectedDevice,
+    connectedDevicesList,  // Multi-device list
     availableDevices,
     connectedDevicesCount,
     myLocation,
@@ -1673,6 +1769,7 @@ export const BluetoothProvider = ({ children }) => {
     scanForDevices,
     connectToDevice,
     disconnect,
+    disconnectFromDevice,  // Multi-device disconnect
     sendCommand,
     sendSOS,
     sendOK,

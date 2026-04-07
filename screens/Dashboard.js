@@ -176,8 +176,8 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
   const adminDisplay = hostDeviceId === null || hostDeviceId === undefined
     ? 'Electing...'
     : myDeviceId === hostDeviceId
-      ? `You (Device ${hostDeviceId})`
-      : `Device ${hostDeviceId}`;
+      ? `You (${getMemberNickname(hostDeviceId)})`
+      : getMemberNickname(hostDeviceId);
 
   const renderContent = () => {
     switch (activeTab) {
@@ -500,8 +500,8 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
             
             <Text style={[styles.modalText, { color: colors.textDark, textAlign: 'center', fontSize: 16, marginVertical: 8 }]}>
               {activeAlert?.type === 'OFFLINE' 
-                ? `Device ${activeAlert?.deviceId} has gone offline!`
-                : `Device ${activeAlert?.deviceId} needs help!`
+                ? `${getMemberNickname(activeAlert?.deviceId)} has gone offline!`
+                : `${getMemberNickname(activeAlert?.deviceId)} needs help!`
               }
             </Text>
 
