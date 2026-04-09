@@ -1,22 +1,48 @@
 import React from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ImageBackground, StyleSheet, Image } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Image } from 'react-native';
 import { User, Settings, HelpCircle, AlertOctagon, LogOut } from 'lucide-react-native';
-import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
 import { useLobby } from '../../context/LobbyContext';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useUser } from '../../context/UserContext';
+import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const MenuOption = ({ icon: Icon, label, onPress, colors }) => (
-  <TouchableOpacity style={[styles.menuOption, { backgroundColor: colors.cardBg, borderColor: colors.borderColor, paddingVertical: 20, paddingHorizontal: 30 }]} onPress={onPress}>
-    <Icon size={20} color={colors.textDark} />
-    <Text style={[styles.menuLabel, { color: colors.textDark }]}>{label}</Text>
+  <TouchableOpacity
+    style={[
+      styles.menuOption,
+      {
+        borderWidth: 1,
+        borderColor: colors.glassBorder,
+        paddingVertical: 20,
+        paddingHorizontal: 20,
+      },
+    ]}
+    onPress={onPress}
+    activeOpacity={0.7}
+  >
+    <BlurView
+      intensity={colors.glassIntensity}
+      tint={colors.glassTint}
+      style={StyleSheet.absoluteFillObject}
+      pointerEvents="none"
+    />
+    <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+
+    <View style={{ flexDirection: 'row', alignItems: 'center', zIndex: 1 }}>
+      <Icon size={20} color={colors.textDark} />
+      <Text style={[styles.menuLabel, { color: colors.textDark, marginLeft: 16, fontWeight: '600' }]}>
+        {label}
+      </Text>
+    </View>
   </TouchableOpacity>
 );
 
 const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProblem }) => {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const { myNickname, clearRememberData, leaveLobby } = useLobby();
   const { firstName, lastName, memberId } = useUser();
 
@@ -33,20 +59,22 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
   };
   
   return (
-    <ImageBackground 
-      source={require('../../assets/dashboard_bg.png')} 
-      style={[styles.tabContainer, { backgroundColor: colors.background }]}
-      imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
-    >
+    <View style={[styles.tabContainer, { backgroundColor: 'transparent' }]}>
       <View style={{ flex: 1, position: 'relative' }}>
-      <View pointerEvents="none" style={StyleSheet.absoluteFillObject} />
-      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
-      <Image
-        source={require('../../assets/Assets.png')} 
-        style={{ width: 120, height: 25, position: 'absolute', top: 40, left: 118, zIndex: 20 }}
-        resizeMode="contain"
-      />
-      <ScrollView style={[styles.tabContainer, { backgroundColor: 'transparent' }]}> 
+
+        <View style={{ alignItems: 'center', paddingTop: insets.top + 16, paddingBottom: 10, zIndex: 20 }}>
+          <Image
+            source={require('../../assets/Assets.png')}
+            style={{ width: 120, height: 25 }}
+            resizeMode="contain"
+          />
+        </View>
+
+        <ScrollView
+          style={{ flex: 1, backgroundColor: 'transparent' }}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 90 }}
+          showsVerticalScrollIndicator={false}
+        >
         <LinearGradient
           colors={colors.greetBn}
           start={{ x: 0, y: 0.5 }}
@@ -58,10 +86,10 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
             flexDirection: 'row',
             alignItems: 'center',
             gap: 16,
-            margin: 20,
+            marginHorizontal: 20,
+            marginBottom: 20,
             overflow: 'hidden',
-            width: '88%',
-            marginTop: 80,
+            marginTop: 10,
           }}
         >
           <View style={{ flex: 1 }}>
@@ -69,7 +97,7 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
             <Text style={{ fontSize: 30, color: colors.textDark, fontWeight: '700', lineHeight: 30 }}>
               {myNickname}
             </Text>
-            <Text style={{ fontSize: 9.5, color: 'rgb(255, 255, 255, 0.84)', marginTop: 9 }}>
+            <Text style={{ fontSize: 9.5, color: 'rgba(255, 255, 255, 0.84)', marginTop: 9 }}>
               <Text style={{ fontWeight: 'bold' }}>{'MEMBER ID: '}</Text> 
                {memberId }
             </Text>
@@ -92,16 +120,16 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
           </View>
         </LinearGradient>
 
-        <View style={[styles.menuList, { gap: 5 }, {padding: 4}]}>
+        <View style={{ paddingHorizontal: 20, gap: 4 }}>
           <MenuOption icon={User} label="Edit Profile" onPress={onEditProfile} colors={colors} />
           <MenuOption icon={Settings} label="Settings" onPress={onSettings} colors={colors} />
           <MenuOption icon={HelpCircle} label="Help" onPress={onHelp} colors={colors} />
           <MenuOption icon={AlertOctagon} label="Report a Problem" onPress={onReportProblem} colors={colors} />
           <MenuOption icon={LogOut} label="Logout" onPress={handleLogout} colors={colors} />
         </View>
-      </ScrollView>
+        </ScrollView>
       </View>
-    </ImageBackground>
+    </View>
   );
 };
 

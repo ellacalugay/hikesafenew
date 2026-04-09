@@ -5,13 +5,18 @@ import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import * as Notifications from 'expo-notifications';
+import * as Location from 'expo-location';
+import { v4 as uuidv4 } from 'uuid';
 import { useLobby } from './LobbyContext';
 import { startAndroidMonitorService, stopAndroidMonitorService } from '../utils/AndroidMonitorService';
 import { startBreadcrumbBackgroundUpdates, stopBreadcrumbBackgroundUpdates } from '../utils/BreadcrumbBackgroundTask';
+import { calculateDistance } from '../utils/math';
 
 // Storage keys
 const CHAT_HISTORY_KEY = '@hikesafe_chat_history';
 const BREADCRUMBS_KEY = '@hikesafe_breadcrumbs';
+const PHONE_TOKEN_KEY = '@hikesafe_phone_token';
+const PHONE_MOBILE_ID_KEY = '@hikesafe_phone_mobile_id';
 
 // Keep runtime memory bounded (storage already caps at 200).
 const MAX_MESSAGES_IN_MEMORY = 300;
@@ -80,11 +85,21 @@ export const BluetoothProvider = ({ children }) => {
     pendingDeviceLobbySyncCode,
     clearPendingDeviceLobbySync,
     myNickname,
+    myDeviceId,
     setMemberNickname,
     getMemberNickname,
     myEmergencyContact,
     setEmergencyContactForDevice,
   } = useLobby();
+
+  // Live refs for BLE listeners (prevents stale-closure bugs in long-lived subscriptions).
+  const isInLobbyRef = useRef(isInLobby);
+  const lobbyCodeRef = useRef(lobbyCode);
+
+  useEffect(() => {
+    isInLobbyRef.current = isInLobby;
+    lobbyCodeRef.current = lobbyCode;
+  }, [isInLobby, lobbyCode]);
 
   // Connection state - MULTI-DEVICE SUPPORT
   const [isEnabled, setIsEnabled] = useState(false);
@@ -98,6 +113,15 @@ export const BluetoothProvider = ({ children }) => {
   // For backward compatibility, expose first connected device as "connectedDevice"
   const connectedDevice = connectedDevicesList.length > 0 ? connectedDevicesList[0] : null;
   const isConnected = connectedDevicesList.length > 0;
+
+  // Live refs for connection state (prevents stale-closure bugs in delayed sends / retries).
+  const isConnectedRef = useRef(isConnected);
+  const connectedDevicesListRef = useRef(connectedDevicesList);
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+    connectedDevicesListRef.current = connectedDevicesList;
+  }, [isConnected, connectedDevicesList]);
 
   // Android: keep BLE monitoring alive in background via a Foreground Service.
   // This is required for offline SOS listening while the app is backgrounded.
@@ -134,6 +158,80 @@ export const BluetoothProvider = ({ children }) => {
   // Alerts
   const [activeAlert, setActiveAlert] = useState(null);
   const [statusMessage, setStatusMessage] = useState('');
+
+  // Phone-as-sensor (many-to-one): each phone claims a mobileID (1..4) and relays its own GPS to the LoRa hub.
+  const [phoneToken, setPhoneToken] = useState(null);
+  const [myMobileId, setMyMobileId] = useState(null);
+  const myMobileIdRef = useRef(null);
+  useEffect(() => {
+    myMobileIdRef.current = myMobileId;
+  }, [myMobileId]);
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        const [storedToken, storedMobileIdRaw] = await Promise.all([
+          AsyncStorage.getItem(PHONE_TOKEN_KEY),
+          AsyncStorage.getItem(PHONE_MOBILE_ID_KEY),
+        ]);
+
+        if (!alive) return;
+
+        let nextToken = storedToken;
+        if (!nextToken) {
+          nextToken = uuidv4();
+          await AsyncStorage.setItem(PHONE_TOKEN_KEY, nextToken);
+        }
+
+        setPhoneToken(nextToken);
+
+        const parsed = storedMobileIdRaw ? parseInt(storedMobileIdRaw, 10) : NaN;
+        if (!Number.isNaN(parsed) && parsed >= 1 && parsed <= 4) {
+          setMyMobileId(parsed);
+        }
+      } catch (e) {
+        // Best-effort only
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Prevent status banner race conditions when multiple events arrive close together.
+  const statusTimeoutRef = useRef(null);
+  const showTemporaryStatus = useCallback((message, duration = 3000) => {
+    setStatusMessage(message);
+    if (statusTimeoutRef.current) {
+      clearTimeout(statusTimeoutRef.current);
+    }
+    statusTimeoutRef.current = setTimeout(() => {
+      setStatusMessage('');
+    }, duration);
+  }, []);
+
+  const persistMyMobileId = useCallback(async (id) => {
+    try {
+      if (!id) {
+        await AsyncStorage.removeItem(PHONE_MOBILE_ID_KEY);
+        return;
+      }
+      await AsyncStorage.setItem(PHONE_MOBILE_ID_KEY, String(id));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (statusTimeoutRef.current) {
+        clearTimeout(statusTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Lobby verification (LoRa handshake)
   const [lastLobbyVerification, setLastLobbyVerification] = useState(null); // { nonce, fromId, timestamp }
@@ -213,8 +311,8 @@ export const BluetoothProvider = ({ children }) => {
   }, []);
 
   const requestSosTrailSnapshot = useCallback((deviceId) => {
-    if (!isConnected) return;
-    if (!isInLobby || !lobbyCode) return;
+    if (!isConnectedRef.current || (connectedDevicesListRef.current?.length || 0) === 0) return;
+    if (!isInLobbyRef.current || !lobbyCodeRef.current) return;
     if (Number.isNaN(deviceId)) return;
 
     const now = Date.now();
@@ -229,17 +327,19 @@ export const BluetoothProvider = ({ children }) => {
 
     // A couple retries helps with LoRa loss.
     setTimeout(() => {
+      if (!isConnectedRef.current || (connectedDevicesListRef.current?.length || 0) === 0) return;
+      if (!isInLobbyRef.current || !lobbyCodeRef.current) return;
       const retryNow = Date.now();
       const retryLast = lastSosTrailRequestRef.current?.[deviceId] || 0;
       if (retryNow - retryLast < 5000) return;
       lastSosTrailRequestRef.current = { ...(lastSosTrailRequestRef.current || {}), [deviceId]: retryNow };
       sendCommand(`MSG:${deviceId},__TRAIL_REQ__:${nonce}`);
     }, 5000);
-  }, [isConnected, isInLobby, lobbyCode, sendCommand]);
+  }, [sendCommand]);
 
   const sendSosTrailSnapshot = useCallback((nonce, toDeviceId = 0) => {
-    if (!isConnected) return;
-    if (!isInLobby || !lobbyCode) return;
+    if (!isConnectedRef.current || (connectedDevicesListRef.current?.length || 0) === 0) return;
+    if (!isInLobbyRef.current || !lobbyCodeRef.current) return;
 
     // Firmware LoRaTextMessage payload is MAX_TEXT_LEN=50, so we must send one point per message.
     // Cap high enough for an entire day hike (typical: <= ~2500 points at ~10m spacing).
@@ -263,10 +363,12 @@ export const BluetoothProvider = ({ children }) => {
       const tsS = Math.floor((p.timestamp || Date.now()) / 1000);
       const cmd = `MSG:${toDeviceId},__BREAD__:${latE5},${lngE5},${tsS}`;
       setTimeout(() => {
+        if (!isConnectedRef.current || (connectedDevicesListRef.current?.length || 0) === 0) return;
+        if (!isInLobbyRef.current || !lobbyCodeRef.current) return;
         sendCommand(cmd);
       }, idx * SEND_GAP_MS);
     });
-  }, [filterTrailToSessionDay, isConnected, isInLobby, lobbyCode, breadcrumbs, sendCommand]);
+  }, [filterTrailToSessionDay, breadcrumbs, sendCommand]);
   
   // Vibration control
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
@@ -499,7 +601,11 @@ export const BluetoothProvider = ({ children }) => {
   }, [ensureAudioModeConfigured]);
 
   // Log activity
-  const addActivity = useCallback((type, details) => {
+  // Supports both call styles:
+  // - addActivity(type, details)
+  // - addActivity(type, deviceId, details)
+  const addActivity = useCallback((type, deviceIdOrDetails, maybeDetails) => {
+    const details = maybeDetails !== undefined ? maybeDetails : deviceIdOrDetails;
     const activity = {
       id: Date.now(),
       type,
@@ -657,20 +763,9 @@ export const BluetoothProvider = ({ children }) => {
     if (lastBreadcrumbRef.current) {
       const lastLat = lastBreadcrumbRef.current.lat;
       const lastLng = lastBreadcrumbRef.current.lng;
-      
-      // Haversine distance calculation
-      const R = 6371e3;
-      const φ1 = lastLat * Math.PI / 180;
-      const φ2 = lat * Math.PI / 180;
-      const Δφ = (lat - lastLat) * Math.PI / 180;
-      const Δλ = (lng - lastLng) * Math.PI / 180;
-      const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                Math.cos(φ1) * Math.cos(φ2) *
-                Math.sin(Δλ/2) * Math.sin(Δλ/2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-      const distance = R * c;
-      
-      if (distance < 10) return; // Skip if less than 10m
+
+      const distance = calculateDistance(lastLat, lastLng, lat, lng);
+      if (distance !== null && distance < 10) return; // Skip if less than 10m
     }
     
     const point = {
@@ -759,17 +854,8 @@ export const BluetoothProvider = ({ children }) => {
     for (let i = 1; i < breadcrumbs.length; i++) {
       const prev = breadcrumbs[i - 1];
       const curr = breadcrumbs[i];
-      
-      const R = 6371e3;
-      const φ1 = prev.lat * Math.PI / 180;
-      const φ2 = curr.lat * Math.PI / 180;
-      const Δφ = (curr.lat - prev.lat) * Math.PI / 180;
-      const Δλ = (curr.lng - prev.lng) * Math.PI / 180;
-      const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                Math.cos(φ1) * Math.cos(φ2) *
-                Math.sin(Δλ/2) * Math.sin(Δλ/2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-      total += R * c;
+
+      total += calculateDistance(prev.lat, prev.lng, curr.lat, curr.lng) || 0;
     }
     
     return total; // meters
@@ -861,7 +947,7 @@ export const BluetoothProvider = ({ children }) => {
   const handleConnectionLost = useCallback(async () => {
     // Legacy single-device disconnect handler; keep it safe under the multi-device model.
     setConnectionHealth('lost');
-    setStatusMessage('Device disconnected');
+    showTemporaryStatus('Device disconnected', 3000);
 
     if (subscriptionRef.current) {
       subscriptionRef.current.remove();
@@ -892,8 +978,7 @@ export const BluetoothProvider = ({ children }) => {
     setLastDataReceived(null);
     setLoraSignalStrength(null);
 
-    setTimeout(() => setStatusMessage(''), 3000);
-  }, [stopEmergencySignals]);
+  }, [showTemporaryStatus, stopEmergencySignals]);
 
   // Request permissions (Android 12+)
   const requestPermissions = useCallback(async () => {
@@ -1066,7 +1151,7 @@ export const BluetoothProvider = ({ children }) => {
         // Only process LoRa lobby traffic when this phone is actually in a lobby.
         // The LoRa device lobby is shared across multiple phones; a phone that leaves locally
         // should not keep receiving/processing group traffic.
-        if (!isInLobby) {
+        if (!isInLobbyRef.current) {
           return;
         }
         const parts = trimmed.substring(6).split(',');
@@ -1087,12 +1172,11 @@ export const BluetoothProvider = ({ children }) => {
             return [...prev, { deviceId, isOffline: true, alertType: 'OFFLINE', lastUpdate: Date.now() }];
           });
           setActiveAlert({ type: 'OFFLINE', deviceId, timestamp: Date.now() });
-          if (isInLobby) {
+          if (isInLobbyRef.current) {
             setMemberOffline(deviceId, true);
           }
           addActivity('offline', deviceId, `Device ${deviceId} went offline`);
-          setStatusMessage(`Device ${deviceId} went OFFLINE`);
-          setTimeout(() => setStatusMessage(''), 5000);
+          showTemporaryStatus(`Device ${deviceId} went OFFLINE`, 5000);
           return;
         }
         
@@ -1113,13 +1197,36 @@ export const BluetoothProvider = ({ children }) => {
             }
             return prev;
           });
-          if (isInLobby) {
+          if (isInLobbyRef.current) {
             setMemberOffline(deviceId, false);
             registerMemberSync(deviceId, Date.now(), { source: 'online' });
           }
           addActivity('online', deviceId, `Device ${deviceId} is back online`);
-          setStatusMessage(`Device ${deviceId} is back ONLINE`);
-          setTimeout(() => setStatusMessage(''), 3000);
+          showTemporaryStatus(`Device ${deviceId} is back ONLINE`, 3000);
+          return;
+        }
+
+        // Separation alerts (no coordinates)
+        // Firmware format:
+        // - ALERT:TOO_FAR,<deviceId>,<distanceMeters>
+        // - ALERT:REGROUPED,<deviceId>,<distanceMeters>
+        if (type === 'TOO_FAR' || type === 'REGROUPED') {
+          const dist = parts.length >= 3 ? parseFloat(parts[2]) : 0;
+          const displayName = getMemberNickname ? getMemberNickname(deviceId) : `Device ${deviceId}`;
+
+          if (type === 'TOO_FAR') {
+            showTemporaryStatus(
+              `Warning: ${displayName} is ${Number.isFinite(dist) ? dist.toFixed(0) : '?'}m away`,
+              6000
+            );
+            triggerVibration('ALERT');
+            addActivity('separation', deviceId, `Separation warning: ${displayName} is ${Number.isFinite(dist) ? dist.toFixed(1) : '?'}m away`);
+          } else {
+            showTemporaryStatus(`${displayName} is back in range`, 3500);
+            triggerVibration('OK');
+            addActivity('separation', deviceId, `Regrouped: ${displayName} is back in range`);
+          }
+
           return;
         }
         
@@ -1149,7 +1256,7 @@ export const BluetoothProvider = ({ children }) => {
             setMessages(prev => [...prev, joinMsg].slice(-MAX_MESSAGES_IN_MEMORY));
             setUnreadCount(prev => prev + 1);
           }
-          if (isInLobby) {
+          if (isInLobbyRef.current) {
             registerMemberSync(deviceId, Date.now(), { source: isNewMember ? 'first-signal' : 'signal-update' });
           }
           
@@ -1238,8 +1345,7 @@ export const BluetoothProvider = ({ children }) => {
 
             addActivity('ok', deviceId, `Device ${deviceId} cancelled alert`);
             // Show status message
-            setStatusMessage(`Device ${deviceId} is OK`);
-            setTimeout(() => setStatusMessage(''), 3000);
+            showTemporaryStatus(`Device ${deviceId} is OK`, 3000);
             
             // Vibrate with OK pattern
             triggerVibration('OK');
@@ -1256,8 +1362,7 @@ export const BluetoothProvider = ({ children }) => {
             addActivity('on_my_way', deviceId, `Device ${deviceId} is on the way to help`);
             
             // Show status message
-            setStatusMessage(`Device ${deviceId} is on the way`);
-            setTimeout(() => setStatusMessage(''), 3000);
+            showTemporaryStatus(`Device ${deviceId} is on the way`, 3000);
             
             // Vibrate with different pattern
             triggerVibration('OK');
@@ -1281,7 +1386,7 @@ export const BluetoothProvider = ({ children }) => {
 
       // LOC:[ID],[LAT],[LON],[SATS],[RSSI] - Regular location heartbeat forwarded from LoRa
       else if (trimmed.startsWith('LOC:')) {
-        if (!isInLobby) {
+        if (!isInLobbyRef.current) {
           return;
         }
         const parts = trimmed.substring(4).split(',');
@@ -1299,7 +1404,7 @@ export const BluetoothProvider = ({ children }) => {
               knownMembersRef.current.add(deviceId);
               addActivity('join', deviceId, `Device ${deviceId} joined the group`);
             }
-            if (isInLobby) {
+            if (isInLobbyRef.current) {
               registerMemberSync(deviceId, Date.now(), { source: isNewMember ? 'first-location' : 'location-update' });
             }
 
@@ -1342,7 +1447,7 @@ export const BluetoothProvider = ({ children }) => {
         if (status.startsWith('LOBBY_SET,')) {
           const lobbyCode = status.substring(10);
           console.log(`Lobby code set on device: ${lobbyCode}`);
-          setStatusMessage(`Lobby ${lobbyCode} synced to device`);
+          showTemporaryStatus(`Lobby ${lobbyCode} synced to device`, 3000);
 
           // If we were retrying a pending lobby sync, clear it once confirmed.
           const confirmed = parseInt(lobbyCode, 10);
@@ -1351,7 +1456,7 @@ export const BluetoothProvider = ({ children }) => {
           }
 
           const localDeviceId = parseDeviceId(connectedDevice || deviceRef.current);
-          if (isInLobby && localDeviceId !== null) {
+          if (isInLobbyRef.current && localDeviceId !== null) {
             setMyDeviceId(localDeviceId);
             registerMemberSync(localDeviceId, Date.now(), { isSelf: true, source: 'lobby-sync' });
           }
@@ -1408,7 +1513,7 @@ export const BluetoothProvider = ({ children }) => {
         } else {
           setStatusMessage(status);
         }
-        setTimeout(() => setStatusMessage(''), 3000);
+        showTemporaryStatus(status, 3000);
       }
 
       // Nickname sync from device: NICK:[DEVICE_ID],[NICKNAME]
@@ -1420,8 +1525,7 @@ export const BluetoothProvider = ({ children }) => {
           const nickname = payload.substring(firstComma + 1).trim();
           if (!Number.isNaN(deviceId) && nickname.length > 0 && setMemberNickname) {
             setMemberNickname(deviceId, nickname);
-            setStatusMessage(`Name synced: ${nickname}`);
-            setTimeout(() => setStatusMessage(''), 2000);
+            showTemporaryStatus(`Name synced: ${nickname}`, 2000);
             // Update any existing "joined" system messages for this device to use the new nickname
             setMessages(prev => prev.map(m => {
               if (m && m.system && m.from === deviceId && typeof m.text === 'string' && m.text.toLowerCase().includes('joined')) {
@@ -1461,7 +1565,7 @@ export const BluetoothProvider = ({ children }) => {
       
       // MSG:[FROM_ID],M[MOBILE_ID],[TEXT],...,RSSI:[VALUE] - Incoming text message via LoRa
       else if (trimmed.startsWith('MSG:')) {
-        if (!isInLobby) {
+        if (!isInLobbyRef.current) {
           return;
         }
         const firstComma = trimmed.indexOf(',');
@@ -1490,9 +1594,20 @@ export const BluetoothProvider = ({ children }) => {
             rssiValue = parseInt(rssiMatch[1], 10);
           }
 
-          if (text.startsWith('__JOINED_TS__:')) {
-            const ts = parseInt(text.substring(14), 10);
-            if (isInLobby && !Number.isNaN(fromId)) {
+          const isJoinTsMessage =
+            text.startsWith('__JOINED_TS__:') ||
+            text.startsWith('__JOIN_TS__:') ||
+            text.startsWith('JOIN_TS:') ||
+            text.startsWith('JOIN TS:') ||
+            text === '__JOINED_TS__' ||
+            text === '__JOIN_TS__' ||
+            text === 'JOIN_TS' ||
+            text === 'JOIN TS';
+
+          if (isJoinTsMessage) {
+            const tsPart = text.includes(':') ? text.split(':').pop() : '';
+            const ts = parseInt(tsPart, 10);
+            if (isInLobbyRef.current && !Number.isNaN(fromId)) {
               registerMemberSync(fromId, Number.isNaN(ts) ? Date.now() : ts, { source: 'join-broadcast' });
             }
             return;
@@ -1596,6 +1711,16 @@ export const BluetoothProvider = ({ children }) => {
 
           // Don't surface internal control traffic as chat.
           if (
+            text.startsWith('__JOINED_TS__:') ||
+            text.startsWith('__LEFT_TS__:') ||
+            text.startsWith('__JOIN_TS__:') ||
+            text.startsWith('JOIN_TS:') ||
+            text.startsWith('JOIN TS:') ||
+            text === '__JOINED_TS__' ||
+            text === '__LEFT_TS__' ||
+            text === '__JOIN_TS__' ||
+            text === 'JOIN_TS' ||
+            text === 'JOIN TS' ||
             text.startsWith('__LOBBY_VERIFY__:') ||
             text.startsWith('__LOBBY_ACK__:') ||
             text.startsWith('__BREAD__:') ||
@@ -1652,8 +1777,7 @@ export const BluetoothProvider = ({ children }) => {
               `echo-${deviceId}-${now}`
             );
           }
-          setStatusMessage('Message synced to connected phones');
-          setTimeout(() => setStatusMessage(''), 2000);
+          showTemporaryStatus('Message synced to connected phones', 2000);
         }
       }
       
@@ -1669,9 +1793,10 @@ export const BluetoothProvider = ({ children }) => {
           const estimatedDistance = parseInt(parts[4], 10);
           
           // Mobile devices are associated with the connected device
-          if (connectedDevice) {
+          const localDeviceId = myDeviceId ?? (connectedDevice ? parseDeviceId(connectedDevice) : null);
+          if (localDeviceId !== null && localDeviceId !== undefined && !Number.isNaN(localDeviceId)) {
             setMemberLocations(prev => {
-              const existing = prev.findIndex(m => m.deviceId === connectedDevice.id);
+              const existing = prev.findIndex(m => m.deviceId === localDeviceId);
               
               if (existing >= 0) {
                 // Device already in memberLocations, update its mobile data
@@ -1709,7 +1834,7 @@ export const BluetoothProvider = ({ children }) => {
               } else {
                 // Device not in memberLocations yet, add it with mobile data
                 return [...prev, {
-                  deviceId: connectedDevice.id,
+                  deviceId: localDeviceId,
                   lat: null,
                   lng: null,
                   lastUpdate: Date.now(),
@@ -1727,21 +1852,101 @@ export const BluetoothProvider = ({ children }) => {
               }
             });
             
-            addActivity('mobile', connectedDevice.id, `Mobile device ${mobileId} location updated (RSSI: ${rssi} dBm, Distance: ${estimatedDistance}m)`);
+            addActivity('mobile', localDeviceId, `Mobile device ${mobileId} location updated (RSSI: ${rssi} dBm, Distance: ${estimatedDistance}m)`);
+          }
+        }
+      }
+
+      // MOBILELOC: Mobile location associated with a specific LoRa device
+      // Format: MOBILELOC:<deviceId>,<mobileId>,<lat>,<lng>,<rssi>,<estimatedDistance>
+      else if (trimmed.startsWith('MOBILELOC:')) {
+        const parts = trimmed.substring(10).split(',');
+        if (parts.length >= 4) {
+          const deviceId = parseInt(parts[0], 10);
+          const mobileId = parseInt(parts[1], 10);
+          const lat = parseFloat(parts[2]);
+          const lng = parseFloat(parts[3]);
+          const rssi = parts.length >= 5 ? parseInt(parts[4], 10) : 0;
+          const estimatedDistance = parts.length >= 6 ? parseInt(parts[5], 10) : -1;
+
+          if (!Number.isNaN(deviceId) && !Number.isNaN(mobileId)) {
+            setMemberLocations(prev => {
+              const existing = prev.findIndex(m => m.deviceId === deviceId);
+
+              const upsertMobiles = (entry) => {
+                const prevMobiles = Array.isArray(entry.mobiles) ? entry.mobiles : [];
+                const mobileIdx = prevMobiles.findIndex(m => m.mobileId === mobileId);
+                const nextMobile = {
+                  mobileId,
+                  lat,
+                  lng,
+                  rssi,
+                  estimatedDistance,
+                  lastUpdate: Date.now(),
+                };
+
+                const nextMobiles = mobileIdx >= 0
+                  ? prevMobiles.map((m, idx) => (idx === mobileIdx ? { ...m, ...nextMobile } : m))
+                  : [...prevMobiles, nextMobile];
+
+                return {
+                  ...entry,
+                  mobiles: nextMobiles.slice().sort((a, b) => a.mobileId - b.mobileId),
+                };
+              };
+
+              if (existing >= 0) {
+                const updated = [...prev];
+                updated[existing] = upsertMobiles(updated[existing]);
+                return updated;
+              }
+
+              // Create a new member entry if we haven't seen this device yet.
+              return [...prev, upsertMobiles({
+                deviceId,
+                lat: null,
+                lng: null,
+                satellites: 0,
+                lastUpdate: Date.now(),
+                alertType: null,
+                isOffline: false,
+                mobiles: [],
+              })];
+            });
+          }
+        }
+      }
+
+      // CLAIMED: Response to CLAIM handshake
+      // Format: CLAIMED:<token>,<mobileId>
+      else if (trimmed.startsWith('CLAIMED:')) {
+        const rest = trimmed.substring(8);
+        const comma = rest.indexOf(',');
+        if (comma > 0) {
+          const token = rest.substring(0, comma).trim();
+          const mobileId = parseInt(rest.substring(comma + 1).trim(), 10);
+
+          if (phoneToken && token === phoneToken) {
+            if (!Number.isNaN(mobileId) && mobileId >= 1 && mobileId <= 4) {
+              if (myMobileIdRef.current !== mobileId) {
+                setMyMobileId(mobileId);
+                persistMyMobileId(mobileId);
+                showTemporaryStatus(`Mobile slot assigned: M${mobileId}`, 2500);
+              }
+            }
           }
         }
       }
       
         // MSG_SENT confirmation
         else if (trimmed === 'MSG_SENT') {
-          setStatusMessage('Message sent via LoRa');
-          setTimeout(() => setStatusMessage(''), 2000);
+          showTemporaryStatus('Message sent via LoRa', 2000);
         }
       } catch (e) {
         console.error('parseBluetoothData line error:', e);
       }
     });
-  }, [addActivity, clearPendingDeviceLobbySync, connectedDevice, getMemberNickname, isDeviceSosActive, isInLobby, parseDeviceId, pendingDeviceLobbySyncCode, pushEmergencyNotification, pushMessageNotification, registerMemberSync, requestSosTrailSnapshot, sendSosTrailSnapshot, setEmergencyContactForDevice, setMemberNickname, setMemberOffline, setMyDeviceId, shouldThrottleEmergency, startEmergencySignals, stopEmergencySignals, triggerVibration]);
+  }, [addActivity, clearPendingDeviceLobbySync, connectedDevice, getMemberNickname, isDeviceSosActive, parseDeviceId, pendingDeviceLobbySyncCode, pushEmergencyNotification, pushMessageNotification, registerMemberSync, requestSosTrailSnapshot, sendSosTrailSnapshot, setEmergencyContactForDevice, setMemberNickname, setMemberOffline, setMyDeviceId, shouldThrottleEmergency, showTemporaryStatus, startEmergencySignals, stopEmergencySignals, triggerVibration]);
 
   const sendMyNicknameToDevice = useCallback(async () => {
     if (!isConnected) return false;
@@ -1864,7 +2069,7 @@ export const BluetoothProvider = ({ children }) => {
       const localDeviceId = parseDeviceId(device);
       if (localDeviceId !== null) {
         setMyDeviceId(localDeviceId);
-        if (isInLobby) {
+        if (isInLobbyRef.current) {
           registerMemberSync(localDeviceId, Date.now(), { isSelf: true, source: 'ble-connect' });
         }
       }
@@ -1915,7 +2120,7 @@ export const BluetoothProvider = ({ children }) => {
     setConnectedDevicesList(prev => prev.filter(d => d.id !== deviceId));
     
     // If no more connected devices, clear flags
-    if (connectedDevicesList.length <= 1) {
+    if ((connectedDevicesListRef.current?.length || 0) <= 1) {
       setConnectedDevicesCount(0);
       setIsDeviceReachable(false);
       setMyLocation({ lat: 0, lng: 0, satellites: 0, valid: false });
@@ -1925,12 +2130,13 @@ export const BluetoothProvider = ({ children }) => {
     }
     
     console.log(`Disconnected from device ${deviceId}`);
-  }, [connectedDevicesList.length]);
+  }, []);
 
   // Disconnect from all devices
   const disconnect = useCallback(async () => {
     // Disconnect from all connected devices
-    for (const deviceId of connectedDevicesList.map(d => d.id)) {
+    const ids = (connectedDevicesListRef.current || []).map(d => d.id);
+    for (const deviceId of ids) {
       await disconnectFromDevice(deviceId);
     }
     
@@ -1950,26 +2156,29 @@ export const BluetoothProvider = ({ children }) => {
       clearInterval(mockIntervalRef.current);
       mockIntervalRef.current = null;
     }
-  }, [connectedDevicesList, disconnectFromDevice, stopEmergencySignals]);
+  }, [disconnectFromDevice, stopEmergencySignals]);
 
   // Send command to ALL connected devices via BLE (MULTI-DEVICE BROADCAST)
   const sendCommand = useCallback(async (command) => {
-    if (!isConnected || connectedDevicesList.length === 0) {
+    const devicesSnapshot = Array.isArray(connectedDevicesListRef.current)
+      ? connectedDevicesListRef.current
+      : [];
+
+    if (!isConnectedRef.current || devicesSnapshot.length === 0) {
       Alert.alert('Not Connected', 'Please connect to a device first.');
       return false;
     }
     
     const cmdWithNewline = command.endsWith('\n') ? command : command + '\n';
     
-    if (!BleManager || connectedDevicesList.length === 0) {
+    if (!BleManager || devicesSnapshot.length === 0) {
       // Mock command handling
       console.log('Mock sending:', cmdWithNewline);
       if (command === 'SOS') {
-        setStatusMessage('SENDING_SOS');
+        showTemporaryStatus('SENDING_SOS', 2000);
       } else if (command === 'OK') {
-        setStatusMessage('SENDING_OK');
+        showTemporaryStatus('SENDING_OK', 2000);
       }
-      setTimeout(() => setStatusMessage(''), 2000);
       return true;
     }
 
@@ -1978,7 +2187,11 @@ export const BluetoothProvider = ({ children }) => {
     let failureCount = 0;
 
     // Send to all connected devices in parallel
-    const sendPromises = connectedDevicesList.map(async (deviceInfo) => {
+    const sendPromises = devicesSnapshot.map(async (deviceInfo) => {
+      if (!isConnectedRef.current) {
+        failureCount++;
+        return false;
+      }
       const connInfo = deviceConnectionsRef.current.get(deviceInfo.id);
       if (!connInfo || !connInfo.device) {
         failureCount++;
@@ -2026,6 +2239,10 @@ export const BluetoothProvider = ({ children }) => {
           if (typeof dev.writeCharacteristicWithoutResponseForService === 'function') {
             try {
               await delay(80);
+              if (!isConnectedRef.current) {
+                failureCount++;
+                return false;
+              }
               await dev.writeCharacteristicWithoutResponseForService(
                 NUS_SERVICE_UUID,
                 NUS_RX_CHAR_UUID,
@@ -2055,15 +2272,14 @@ export const BluetoothProvider = ({ children }) => {
 
     // Provide feedback
     if (successCount > 0) {
-      if (successCount === connectedDevicesList.length) {
+      if (successCount === devicesSnapshot.length) {
         // All succeeded
         console.log(`Command delivered to all ${successCount} devices`);
         return true;
       } else {
         // Partial success
-        console.warn(`Command sent to ${successCount}/${connectedDevicesList.length} devices`);
-        setStatusMessage(`Sent to ${successCount}/${connectedDevicesList.length} devices`);
-        setTimeout(() => setStatusMessage(''), 3000);
+        console.warn(`Command sent to ${successCount}/${devicesSnapshot.length} devices`);
+        showTemporaryStatus(`Sent to ${successCount}/${devicesSnapshot.length} devices`, 3000);
         return true; // Consider partial success as OK
       }
     } else {
@@ -2072,7 +2288,7 @@ export const BluetoothProvider = ({ children }) => {
       Alert.alert('Send Failed', 'Could not send command to any device.');
       return false;
     }
-  }, [isConnected, connectedDevicesList, disconnectFromDevice, delay]);
+  }, [delay, disconnectFromDevice, showTemporaryStatus]);
 
   // Expose BLE command sender to LobbyContext so it can sync lobby code to device.
   useEffect(() => {
@@ -2110,28 +2326,13 @@ export const BluetoothProvider = ({ children }) => {
     if (!isSosTrailSharingActive) return;
     if (!myLocation.valid || myLocation.lat === 0) return;
 
-    const calcMetersBetween = (lat1, lng1, lat2, lng2) => {
-      if (lat1 === null || lat1 === undefined || lng1 === null || lng1 === undefined) return null;
-      if (lat2 === null || lat2 === undefined || lng2 === null || lng2 === undefined) return null;
-      const R = 6371e3;
-      const φ1 = lat1 * Math.PI / 180;
-      const φ2 = lat2 * Math.PI / 180;
-      const Δφ = (lat2 - lat1) * Math.PI / 180;
-      const Δλ = (lng2 - lng1) * Math.PI / 180;
-      const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-        Math.cos(φ1) * Math.cos(φ2) *
-        Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
-    };
-
     const now = Date.now();
     const last = lastBreadcrumbBroadcastRef.current || { ts: 0, lat: null, lng: null };
     if (now - (last.ts || 0) < 60000) return; // 60s minimum interval
 
     const moved = last.lat === null
       ? 999999
-      : (calcMetersBetween(last.lat, last.lng, myLocation.lat, myLocation.lng) || 0);
+      : (calculateDistance(last.lat, last.lng, myLocation.lat, myLocation.lng) || 0);
     if (moved < 25) return; // at least 25m from last broadcast
 
     const latE5 = Math.round(myLocation.lat * 1e5);
@@ -2148,6 +2349,78 @@ export const BluetoothProvider = ({ children }) => {
     sendMyNicknameToDevice();
     sendMyEmergencyContactToDevice();
   }, [isConnected, isInLobby, sendMyNicknameToDevice, sendMyEmergencyContactToDevice]);
+
+  // Many-to-one tracking: claim a stable per-phone mobileID (1..4) from the hub.
+  useEffect(() => {
+    if (!isConnected) return;
+    if (!phoneToken) return;
+    if (myMobileId) return;
+    if (connectedDevicesCount !== 1) return;
+
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+      if (!isConnectedRef.current) return;
+      if (myMobileIdRef.current) return;
+      try {
+        await sendCommand(`CLAIM:${phoneToken}`);
+      } catch {
+        // ignore
+      }
+    };
+
+    // Try immediately + retry until we get CLAIMED.
+    tick();
+    const id = setInterval(tick, 4000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [connectedDevicesCount, isConnected, phoneToken, myMobileId, sendCommand]);
+
+  // Many-to-one tracking: periodically send this phone's GPS to the hub.
+  useEffect(() => {
+    if (!isConnected) return;
+    if (!phoneToken) return;
+    if (!myMobileId) return;
+    if (connectedDevicesCount !== 1) return;
+
+    let cancelled = false;
+
+    const sendOnce = async () => {
+      if (cancelled) return;
+      if (!isConnectedRef.current) return;
+
+      try {
+        const perm = await Location.getForegroundPermissionsAsync();
+        if (perm.status !== 'granted') return;
+
+        const pos = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+
+        const lat = pos?.coords?.latitude;
+        const lng = pos?.coords?.longitude;
+        if (typeof lat !== 'number' || typeof lng !== 'number') return;
+
+        const cmd = `PLOC:${phoneToken},${myMobileId},${lat},${lng}`;
+        await sendCommand(cmd);
+      } catch {
+        // ignore (best-effort telemetry)
+      }
+    };
+
+    // Send immediately, then at a low cadence.
+    sendOnce();
+    const id = setInterval(sendOnce, 5000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [connectedDevicesCount, isConnected, phoneToken, myMobileId, sendCommand]);
 
   // Convenience methods
   const sendSOS = useCallback(() => sendCommand('SOS'), [sendCommand]);

@@ -1,85 +1,36 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  ActivityIndicator,
-  FlatList,
+  Image,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Smartphone, Users, Radio, Wifi, WifiOff, Clock } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ArrowLeft, Smartphone, Users, Radio, Wifi, WifiOff } from 'lucide-react-native';
+import { BlurView } from 'expo-blur';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
+import { useLobby } from '../../context/LobbyContext';
+import { styles } from '../../styles/styles';
 
 const ConnectedPhonesScreen = ({ onBack }) => {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const { getMemberNickname } = useLobby();
   const {
     isConnected,
     connectedDevice,
     connectedDevicesCount,
     memberLocations,
     myLocation,
+    lastDataReceived,
+    connectionHealth,
+    loraSignalStrength,
   } = useBluetoothDevice();
 
-  // Mock data for demonstration - in production, track phone IDs from LoRa messages
-  const [connectedPhones, setConnectedPhones] = useState([
-    {
-      id: 'this-phone',
-      name: 'Your Phone',
-      deviceId: null,
-      role: 'Primary',
-      isConnected: true,
-      Location: myLocation.valid
-        ? `${myLocation.lat.toFixed(4)}, ${myLocation.lng.toFixed(4)}`
-        : 'Awaiting GPS',
-      lastUpdate: Date.now(),
-      signalStrength: 'Strong',
-    },
-  ]);
-
-  // Add member locations to the connected phones list
-  useEffect(() => {
-    if (memberLocations.length > 0) {
-      const otherPhones = memberLocations.map((member) => ({
-        id: `device-${member.deviceId}`,
-        name: `Device ${member.deviceId}`,
-        deviceId: member.deviceId,
-        role: 'Member',
-        isConnected: !member.isOffline,
-        location: member.lat && member.lng
-          ? `${member.lat.toFixed(4)}, ${member.lng.toFixed(4)}`
-          : 'No GPS',
-        lastUpdate: member.lastUpdate || Date.now(),
-        signalStrength: member.signalStrength || 'Unknown',
-      }));
-
-      setConnectedPhones((prev) => {
-        // Update this-phone location if it changed
-        const updated = prev.map((p) =>
-          p.id === 'this-phone'
-            ? {
-                ...p,
-                location: myLocation.valid
-                  ? `${myLocation.lat.toFixed(4)}, ${myLocation.lng.toFixed(4)}`
-                  : 'Awaiting GPS',
-                lastUpdate: Date.now(),
-              }
-            : p
-        );
-        // Merge with other phones (avoid duplicates)
-        const otherIds = new Set(otherPhones.map((p) => p.id));
-        const merged = [
-          updated[0], // Keep "this-phone" first
-          ...otherPhones,
-        ];
-        return merged;
-      });
-    }
-  }, [memberLocations, myLocation]);
-
-  const formatTime = (timestamp) => {
+  const formatTime = useCallback((timestamp) => {
     if (!timestamp) return 'Never';
     const now = Date.now();
     const diff = now - timestamp;
@@ -91,20 +42,65 @@ const ConnectedPhonesScreen = ({ onBack }) => {
     if (minutes < 60) return `${minutes}m ago`;
     if (hours < 1) return `${(minutes / 60).toFixed(1)}h ago`;
     return new Date(timestamp).toLocaleTimeString();
-  };
+  }, []);
 
-  const renderPhoneItem = ({ item }) => (
+  const connectedPhones = useMemo(() => {
+    const bleSignal = (() => {
+      if (!isConnected) return 'Disconnected';
+      if (connectionHealth === 'good') return 'Strong';
+      if (connectionHealth === 'warning') return 'Weak';
+      if (connectionHealth === 'lost') return 'Disconnected';
+      return 'Unknown';
+    })();
+
+    const mySignal = typeof loraSignalStrength === 'number'
+      ? `${bleSignal} • LoRa ${loraSignalStrength} dBm`
+      : bleSignal;
+
+    const myPhoneData = {
+      id: 'this-phone',
+      name: 'Your Phone',
+      deviceId: connectedDevice ? connectedDevice.id : null,
+      role: 'Primary',
+      isConnected,
+      location: myLocation?.valid
+        ? `${myLocation.lat.toFixed(5)}, ${myLocation.lng.toFixed(5)}`
+        : 'Awaiting GPS',
+      lastUpdate: lastDataReceived,
+      signalStrength: mySignal,
+    };
+
+    const otherPhonesData = (memberLocations || []).map((member) => ({
+      id: `device-${member.deviceId}`,
+      name: (getMemberNickname && getMemberNickname(member.deviceId)) || `Device ${member.deviceId}`,
+      deviceId: member.deviceId,
+      role: 'Member',
+      isConnected: !member.isOffline,
+      location: member.lat && member.lng
+        ? `${member.lat.toFixed(5)}, ${member.lng.toFixed(5)}`
+        : 'No GPS',
+      lastUpdate: member.lastUpdate || Date.now(),
+      signalStrength: member.signalStrength || 'Unknown',
+    }));
+
+    return [myPhoneData, ...otherPhonesData];
+  }, [connectionHealth, connectedDevice, getMemberNickname, isConnected, lastDataReceived, loraSignalStrength, memberLocations, myLocation?.lat, myLocation?.lng, myLocation?.valid]);
+
+  const renderPhoneItem = (item) => (
     <View
+      key={item.id}
       style={[
-        styles.phoneCard,
+        localStyles.phoneCard,
         {
-          backgroundColor: colors.cardBg,
-          borderColor: item.isConnected ? colors.primary : colors.borderColor,
-          borderWidth: 1.5,
+          borderColor: item.isConnected ? colors.primary : colors.glassBorder,
+          borderWidth: item.isConnected ? 1.5 : 1,
         },
       ]}
     >
-      <View style={styles.phoneHeader}>
+      <BlurView intensity={colors.glassIntensity} tint={colors.glassTint} style={StyleSheet.absoluteFillObject} />
+      <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+
+      <View style={localStyles.phoneHeader}>
         <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
           <Smartphone
             size={24}
@@ -112,10 +108,10 @@ const ConnectedPhonesScreen = ({ onBack }) => {
             style={{ marginRight: 12 }}
           />
           <View>
-            <Text style={[styles.phoneName, { color: colors.textDark }]}>
+            <Text style={[localStyles.phoneName, { color: colors.textDark }]}>
               {item.name}
             </Text>
-            <Text style={[styles.phoneRole, { color: colors.gray }]}>
+            <Text style={[localStyles.phoneRole, { color: colors.gray }]}>
               {item.role}
               {item.isConnected &&  ' • Online'}
             </Text>
@@ -123,45 +119,46 @@ const ConnectedPhonesScreen = ({ onBack }) => {
         </View>
         <View
           style={[
-            styles.statusBadge,
-            { backgroundColor: item.isConnected ? colors.primaryLight : colors.borderColor },
+            localStyles.statusBadge,
+            { backgroundColor: item.isConnected ? `${colors.primaryLight}33` : colors.inputBg },
           ]}
         >
           {item.isConnected ? (
-            <Wifi size={14} color={colors.primary} />
+            <Wifi size={16} color={colors.primary} />
           ) : (
-            <WifiOff size={14} color={colors.gray} />
+            <WifiOff size={16} color={colors.gray} />
           )}
         </View>
       </View>
 
-      <View style={styles.phoneDetails}>
-        <View style={styles.detailRow}>
-          <Text style={[styles.label, { color: colors.gray }]}>Location:</Text>
-          <Text style={[styles.value, { color: colors.textDark }]}>
+      <View style={[localStyles.phoneDetails, { borderTopColor: colors.glassBorder }]}>
+        <View style={localStyles.detailRow}>
+          <Text style={[localStyles.label, { color: colors.gray }]}>Location:</Text>
+          <Text style={[localStyles.value, { color: colors.textDark }]}>
             {item.location}
           </Text>
         </View>
 
-        <View style={styles.detailRow}>
-          <Text style={[styles.label, { color: colors.gray }]}>Last Update:</Text>
-          <Text style={[styles.value, { color: colors.textDark }]}>
+        <View style={localStyles.detailRow}>
+          <Text style={[localStyles.label, { color: colors.gray }]}>Last Update:</Text>
+          <Text style={[localStyles.value, { color: colors.textDark }]}>
             {formatTime(item.lastUpdate)}
           </Text>
         </View>
 
-        <View style={styles.detailRow}>
-          <Text style={[styles.label, { color: colors.gray }]}>Signal:</Text>
+        <View style={localStyles.detailRow}>
+          <Text style={[localStyles.label, { color: colors.gray }]}>Signal:</Text>
           <Text
             style={[
-              styles.value,
+              localStyles.value,
               {
-                color:
-                  item.signalStrength === 'Strong'
-                    ? colors.primary
-                    : item.signalStrength === 'Weak'
-                    ? colors.accent
-                    : colors.gray,
+                color: (() => {
+                  const s = String(item.signalStrength || '');
+                  if (s.startsWith('Strong')) return colors.primary;
+                  if (s.startsWith('Weak')) return colors.accent;
+                  if (s.startsWith('Disconnected')) return colors.danger;
+                  return colors.gray;
+                })(),
               },
             ]}
           >
@@ -173,110 +170,97 @@ const ConnectedPhonesScreen = ({ onBack }) => {
   );
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    <View style={[localStyles.container, { backgroundColor: 'transparent' }]}
+    >
+
       {/* Header */}
-      <View style={[styles.header, { backgroundColor: colors.headerBg, borderBottomColor: colors.borderColor }]}>
-        <TouchableOpacity onPress={onBack} style={styles.backButton}>
+      <View
+        style={[
+          styles.headerBar,
+          {
+            backgroundColor: colors.headerBg,
+            borderBottomLeftRadius: 20,
+            borderBottomRightRadius: 20,
+            marginBottom: 10,
+            paddingTop: insets.top + 10,
+            paddingBottom: 15,
+            height: insets.top + 60,
+          },
+        ]}
+      >
+        <TouchableOpacity
+          onPress={onBack}
+          style={{ position: 'absolute', left: 16, bottom: 12, padding: 4 }}
+        >
           <ArrowLeft size={24} color={colors.textDark} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.textDark }]}>
-          Connected Phones
-        </Text>
-        <View style={{ width: 40 }} />
+        <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 20, bottom: -4 }]}>CONNECTED PHONES</Text>
+        <Image
+          source={require('../../assets/hike_logo.png')}
+          style={{ position: 'absolute', right: 16, bottom: 6, width: 36, height: 36, resizeMode: 'contain' }}
+        />
       </View>
 
-      {/* Summary Card */}
-      <View style={[styles.summaryCard, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
-        <View style={styles.summaryItem}>
-          <Users size={28} color={colors.primary} />
-          <View style={{ marginLeft: 12 }}>
-            <Text style={[styles.summaryLabel, { color: colors.gray }]}>
-              Total Connected
-            </Text>
-            <Text style={[styles.summaryValue, { color: colors.primary }]}>
-              {connectedDevicesCount} {connectedDevicesCount === 1 ? 'Phone' : 'Phones'}
+      <ScrollView
+        style={{ flex: 1, backgroundColor: 'transparent' }}
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom + 90, 50) }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Summary Card */}
+        <View style={[localStyles.summaryCard, { borderColor: colors.glassBorder, backgroundColor: 'transparent' }]}
+        >
+          <BlurView intensity={colors.glassIntensity} tint={colors.glassTint} style={StyleSheet.absoluteFillObject} />
+          <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+
+          <View style={localStyles.summaryItem}>
+            <Users size={28} color={colors.primary} />
+            <View style={{ marginLeft: 12 }}>
+              <Text style={[localStyles.summaryLabel, { color: colors.gray }]}>Total Connected</Text>
+              <Text style={[localStyles.summaryValue, { color: colors.primary }]}>
+                {connectedDevicesCount} {connectedDevicesCount === 1 ? 'Phone' : 'Phones'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={[localStyles.connectedStatus, { backgroundColor: isConnected ? colors.primary : colors.danger }]}>
+            {isConnected ? <Radio size={16} color={colors.textLight} /> : <WifiOff size={16} color={colors.textLight} />}
+            <Text style={[localStyles.statusText, { color: colors.textLight }]}>
+              {isConnected ? 'Device Connected' : 'Disconnected'}
             </Text>
           </View>
         </View>
 
-        {isConnected ? (
-          <View style={[styles.connectedStatus, { backgroundColor: colors.primaryLight }]}>
-            <Radio size={16} color={colors.textLight} />
-            <Text style={[styles.statusText, { color: colors.textLight }]} >
-              Device Connected
-            </Text>
-          </View>
-        ) : (
-          <View style={[styles.connectedStatus, { backgroundColor: colors.primaryLight }]}>
-            <Radio size={16} color={colors.textLight} />
-            <Text style={[styles.statusText, { color: colors.textLight }]}>
-              Device Disconnected
-            </Text>
-          </View>
-        )}
-      </View>
+        {/* Phone List */}
+        <View style={localStyles.listContent}>
+          {connectedPhones.map((phone) => renderPhoneItem(phone))}
+        </View>
 
-      {/* Phone List */}
-      <FlatList
-        data={connectedPhones}
-        renderItem={renderPhoneItem}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
-        scrollEnabled={false}
-      />
-
-      <ScrollView style={{ flex: 1 }}>
-        <View style={styles.infoSection}>
-          <Text style={[styles.infoTitle, { color: colors.textDark }]}>
-            About This Screen
-          </Text>
-          <Text style={[styles.infoText, { color: colors.gray }]}>
-            • "Your Phone" shows your primary connection to the HikeSafe device
-          </Text>
-          <Text style={[styles.infoText, { color: colors.gray }]}>
-            • Other devices connect through the LoRa mesh network
-          </Text>
-          <Text style={[styles.infoText, { color: colors.gray }]}>
-            • Location updates are shared in real-time across all connected phones
-          </Text>
-          <Text style={[styles.infoText, { color: colors.gray }]}>
-            • Offline devices can still receive broadcasts through other connected phones
-          </Text>
+        {/* Info */}
+        <View style={[localStyles.infoSection, { borderTopColor: colors.glassBorder }]}>
+          <Text style={[localStyles.infoTitle, { color: colors.textDark }]}>About This Screen</Text>
+          <Text style={[localStyles.infoText, { color: colors.gray }]}>• "Your Phone" shows your primary connection to the HikeSafe device</Text>
+          <Text style={[localStyles.infoText, { color: colors.gray }]}>• Other devices connect through the LoRa mesh network</Text>
+          <Text style={[localStyles.infoText, { color: colors.gray }]}>• Location updates are shared in real-time across all connected phones</Text>
+          <Text style={[localStyles.infoText, { color: colors.gray }]}>• Offline devices can still receive broadcasts through other connected phones</Text>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 };
 
-const styles = StyleSheet.create({
+const localStyles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-  },
-  backButton: {
-    padding: 8,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    flex: 1,
-    textAlign: 'center',
   },
   summaryCard: {
     margin: 16,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    overflow: 'hidden',
   },
   summaryItem: {
     flexDirection: 'row',
@@ -286,46 +270,49 @@ const styles = StyleSheet.create({
   summaryLabel: {
     fontSize: 12,
     marginBottom: 4,
+    fontWeight: '600',
   },
   summaryValue: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 20,
+    fontWeight: '800',
   },
   connectedStatus: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+    paddingVertical: 8,
+    borderRadius: 10,
     marginLeft: 12,
   },
   statusText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
     marginLeft: 6,
   },
   listContent: {
     paddingHorizontal: 16,
-    paddingBottom: 16,
+    paddingBottom: 8,
   },
   phoneCard: {
     marginBottom: 12,
-    padding: 14,
-    borderRadius: 12,
+    padding: 16,
+    borderRadius: 16,
+    overflow: 'hidden',
   },
   phoneHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: 16,
   },
   phoneName: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   phoneRole: {
     fontSize: 12,
     marginTop: 2,
+    fontWeight: '500',
   },
   statusBadge: {
     width: 36,
@@ -336,39 +323,40 @@ const styles = StyleSheet.create({
   },
   phoneDetails: {
     borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.1)',
     paddingTop: 12,
   },
   detailRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
   },
   label: {
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   value: {
-    fontSize: 12,
+    fontSize: 13,
     flex: 1,
     textAlign: 'right',
     marginLeft: 12,
+    fontWeight: '500',
   },
   infoSection: {
-    padding: 16,
+    padding: 20,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.1)',
+    marginTop: 8,
   },
   infoTitle: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
     marginBottom: 12,
   },
   infoText: {
-    fontSize: 12,
-    lineHeight: 18,
+    fontSize: 13,
+    lineHeight: 20,
     marginBottom: 8,
+    fontWeight: '500',
   },
 });
 

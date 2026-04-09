@@ -1,14 +1,17 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, TextInput, ImageBackground } from 'react-native';
-import { User, Radio, Users, MessageCircle, Bluetooth, Search, X } from 'lucide-react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, TextInput, Keyboard } from 'react-native';
+import { Radio, Users, MessageCircle, Search, X } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
 import { useLobby } from '../../context/LobbyContext';
+import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const MessageTab = ({ onOpenChat }) => {
   const { colors } = useTheme();
-  const { isConnected, connectedDevice, memberLocations, getConversations, unreadCount } = useBluetoothDevice();
+  const insets = useSafeAreaInsets();
+  const { isConnected, memberLocations, getConversations, unreadCount } = useBluetoothDevice();
   const { getMemberNickname } = useLobby();
   const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -43,21 +46,28 @@ const MessageTab = ({ onOpenChat }) => {
   };
   
   return (
-    <ImageBackground 
-      source={require('../../assets/dashboard_bg.png')} 
-      style={[styles.tabContainer, { backgroundColor: colors.background }]}
-      imageStyle={{ resizeMode: 'cover' }}
-    >
-      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
+    <View style={[styles.tabContainer, { backgroundColor: 'transparent' }]}>
       <View style={{ backgroundColor: colors.primaryLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 10, marginHorizontal: 16, marginTop: 16, marginBottom: 6, borderRadius: 12 }}>
         {isSearching ? (
           <TextInput
-            style={{ flex: 1, fontSize: 16, color: colors.textLight, paddingVertical: 0 }}
+            style={{
+              flex: 1,
+              fontSize: 16,
+              color: colors.textLight,
+              backgroundColor: colors.glassOverlay,
+              borderRadius: 8,
+              paddingVertical: 8,
+              paddingHorizontal: 10,
+              minHeight: 38,
+              marginRight: 8,
+            }}
             placeholder="Search messages..."
             placeholderTextColor={colors.textLight}
             value={searchQuery}
             onChangeText={setSearchQuery}
             autoFocus
+            returnKeyType="search"
+            onSubmitEditing={() => Keyboard.dismiss()}
           />
         ) : (
           <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 10}}>
@@ -70,6 +80,7 @@ const MessageTab = ({ onOpenChat }) => {
           onPress={() => {
             if (isSearching) {
               setSearchQuery('');
+              Keyboard.dismiss();
             }
             setIsSearching(!isSearching);
           }}
@@ -82,11 +93,16 @@ const MessageTab = ({ onOpenChat }) => {
         </TouchableOpacity>
       </View>
       
-      <ScrollView style={{flex:1, padding: 16, backgroundColor: 'transparent'}}>
+      <ScrollView
+        style={{ flex: 1, paddingHorizontal: 16, backgroundColor: 'transparent' }}
+        contentContainerStyle={{ paddingTop: 10, paddingBottom: insets.bottom + 90 }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* Group Chat - Broadcast - only show if not searching or matches */}
         {(!searchQuery || 'group chat broadcast'.includes(searchQuery.toLowerCase())) && (
           <TouchableOpacity 
-            style={[styles.chatItem, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]} 
+            style={[styles.chatItem, { backgroundColor: colors.primaryLight, borderWidth: 1, borderColor: colors.primary }]}
             onPress={() => onOpenChat({ type: 'broadcast', name: 'Group Chat', deviceId: 0 })}
           >
             <View style={[localStyles.groupIcon, { backgroundColor: colors.primary }]}>
@@ -114,9 +130,16 @@ const MessageTab = ({ onOpenChat }) => {
             {filteredConversations.map((conv) => (
               <TouchableOpacity 
                 key={conv.deviceId}
-                style={[styles.chatItem, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]} 
+                style={[styles.chatItem, { borderWidth: 1, borderColor: colors.glassBorder }]}
                 onPress={() => onOpenChat({ type: 'direct', name: conv.name, deviceId: conv.deviceId })}
               >
+                <BlurView
+                  intensity={colors.glassIntensity}
+                  tint={colors.glassTint}
+                  style={StyleSheet.absoluteFillObject}
+                />
+                <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+
                 <View style={[localStyles.avatarCircle, { backgroundColor: colors.inputBg }]}>
                   <Radio size={16} color={colors.textDark} />
                 </View>
@@ -149,9 +172,16 @@ const MessageTab = ({ onOpenChat }) => {
             {filteredDevices.map((device) => (
               <TouchableOpacity 
                 key={device.deviceId}
-                style={[styles.chatItem, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]} 
+                style={[styles.chatItem, { borderWidth: 1, borderColor: colors.glassBorder }]}
                 onPress={() => onOpenChat({ type: 'direct', name: device.name, deviceId: device.deviceId })}
               >
+                <BlurView
+                  intensity={colors.glassIntensity}
+                  tint={colors.glassTint}
+                  style={StyleSheet.absoluteFillObject}
+                />
+                <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+
                 <View style={[localStyles.avatarCircle, { backgroundColor: colors.inputBg }]}>
                   <Radio size={16} color={colors.textDark} />
                 </View>
@@ -167,7 +197,24 @@ const MessageTab = ({ onOpenChat }) => {
         
         {/* Empty State */}
         {knownDevices.length === 0 && conversations.length === 0 && !searchQuery && (
-          <View style={[localStyles.emptyState, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
+          <View
+            style={[
+              localStyles.emptyState,
+              {
+                backgroundColor: 'transparent',
+                borderColor: colors.glassBorder,
+                overflow: 'hidden',
+                position: 'relative',
+              },
+            ]}
+          >
+            <BlurView
+              intensity={colors.glassIntensity}
+              tint={colors.glassTint}
+              style={StyleSheet.absoluteFillObject}
+            />
+            <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+
             <MessageCircle size={40} color={colors.gray} />
             <Text style={[localStyles.emptyTitle, { color: colors.textDark }]}>No Contacts Yet</Text>
             <Text style={[localStyles.emptyText, { color: colors.gray }]}>
@@ -180,7 +227,24 @@ const MessageTab = ({ onOpenChat }) => {
         
         {/* No Search Results */}
         {searchQuery && filteredConversations.length === 0 && filteredDevices.length === 0 && (
-          <View style={[localStyles.emptyState, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
+          <View
+            style={[
+              localStyles.emptyState,
+              {
+                backgroundColor: 'transparent',
+                borderColor: colors.glassBorder,
+                overflow: 'hidden',
+                position: 'relative',
+              },
+            ]}
+          >
+            <BlurView
+              intensity={colors.glassIntensity}
+              tint={colors.glassTint}
+              style={StyleSheet.absoluteFillObject}
+            />
+            <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+
             <Search size={40} color={colors.gray} />
             <Text style={[localStyles.emptyTitle, { color: colors.textDark }]}>No Results</Text>
             <Text style={[localStyles.emptyText, { color: colors.gray }]}>
@@ -189,7 +253,7 @@ const MessageTab = ({ onOpenChat }) => {
           </View>
         )}
       </ScrollView>
-    </ImageBackground>
+    </View>
   );
 };
 
@@ -276,7 +340,7 @@ const localStyles = StyleSheet.create({
   },
   emptyState: {
     padding: 32,
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
     alignItems: 'center',
     marginTop: 20,

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, Keyboard, Image, ImageBackground, Alert, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, Keyboard, Image, ImageBackground, Alert, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 // remember persistence moved to LobbyContext
 import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
@@ -288,147 +289,166 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
 
   // (button text function moved above to support verify state)
 
-  if (mode === 'create') {
-    return (
-      <ImageBackground
-        source={require('../assets/forest_bg 1.png')}
-        style={styles.lobbyCreateBg}
-        resizeMode="cover"
-      >
-        <View style={styles.centerContent}>
-          <View style={styles.cardGreen}>
-            <Text style={styles.cardTitleLarge}>CREATE A LOBBY</Text>
-            <View style={styles.separatorThin} />
-
-            <Text style={[styles.cardSubtitleWhite, { textAlign: 'left', alignSelf: 'flex-start', fontSize: 20 }]}>Welcome to HIKESAFE!</Text>
-            <Text style={[styles.cardDescWhite, { textAlign: 'left', alignSelf: 'flex-start' }]} numberOfLines={2}>Create a lobby and share the code with your group members.</Text>
-            <View style={styles.separatorThin} />
-
-            <View style={styles.formGrid}>
-              <View style={styles.fieldRow}>
-                <Text style={styles.fieldLabel}>Lobby Name</Text>
-                <TextInput 
-                  style={styles.inputWhiteRounded} 
-                  placeholder="Enter lobby name" 
-                  placeholderTextColor="rgba(0,0,0,0.35)"
-                  value={lobbyName}
-                  onChangeText={setLobbyName}
-                />
-              </View>
-
-              <View style={styles.fieldRow}>
-                <Text style={styles.fieldLabel} numberOfLines={1}>Max Members</Text>
-                <TextInput 
-                  style={styles.inputWhiteRounded} 
-                  placeholder="10" 
-                  placeholderTextColor="rgba(0,0,0,0.35)" 
-                  keyboardType="numeric"
-                  value={maxMember}
-                  onChangeText={setMaxMember}
-                  maxLength={2}
-                />
-              </View>
-              
-              <View style={styles.fieldRow}>
-                <Text style={[styles.fieldLabel, { opacity: 0.7 }]}>Lobby Code</Text>
-                <View style={[styles.inputWhiteRounded, { backgroundColor: 'rgba(255,255,255,0.5)', justifyContent: 'center' }]}>
-                  <Text style={{ color: 'rgba(0,0,0,0.5)', fontStyle: 'italic' }}>Auto-generated (4 digits)</Text>
-                </View>
-              </View>
-            </View>
-
-            <TouchableOpacity 
-              style={[styles.createNowButton, isSubmitting && { opacity: 0.7 }]} 
-              onPress={handleCreateLobby}
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? (
-                <ActivityIndicator color="#1B4332" />
-              ) : (
-                <Text style={styles.createNowText}>CREATE NOW</Text>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={() => setMode('join')} style={{marginTop: 8}}>
-               <Text style={styles.linkTextWhite}>Already have a Lobby? <Text style={{fontWeight: 'bold', color: 'green', textDecorationLine: 'underline'}}>Click Here</Text></Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </ImageBackground>
-    );
-  }
-
   return (
     <ImageBackground
       source={require('../assets/forest_bg 1.png')}
       style={styles.lobbyCreateBg}
       resizeMode="cover"
     >
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-        <View style={styles.contentContainer}>
-          <View style={styles.logoSection}>
-            <Image source={require('../assets/hike.png')} style={styles.logoImage} />
-            <Text style={styles.tagline}>"Stay connected. Stay safe."</Text>
-          </View>
-
-        <View style={[styles.formSection, { top:-10, width: '80%', alignSelf: 'center' }]}> 
-          <InputField 
-            placeholder="Your Name" 
-            value={username}
-            onChangeText={setUsername}
-            editable={false}
-          />
-          <InputField 
-            placeholder="Lobby Code (4 digits)" 
-            value={joinCode}
-            onChangeText={setJoinCode}
-            keyboardType="numeric"
-            maxLength={4}
-          />
-          
-          <Text style={localStyles.infoText}>
-            Get the 4-digit code from your group leader who created the lobby.
-          </Text>
-          
-          <View style={styles.row}>
-            <TouchableOpacity
-              onPress={async () => {
-                const next = !rememberEnabled;
-                await setRememberEnabled(next);
-                if (next) {
-                  await saveRememberData(username, joinCode);
-                } else {
-                  await clearRememberData();
-                }
-              }}
-              style={[styles.checkbox, rememberEnabled ? styles.checkboxChecked : null]}
-            >
-              {rememberEnabled && <Text style={styles.checkboxTick}>✓</Text>}
-            </TouchableOpacity>
-            <Text style={[styles.labelSmall, { color: 'white', fontWeight: '600', marginLeft: 8 }]}>Remember me</Text>
-          </View>
-          <View style={[styles.hrLine, { marginTop: 30 }]} />
-        </View>
-
-        <MainButton 
-          title={getJoinButtonText()} 
-          onPress={handleJoinLobby} 
-          style={{ top: -30, width: '80%', alignSelf: 'center' }} 
-          disabled={isSubmitting}
-        />
-        
-        <TouchableOpacity
-          onPress={() => setMode('create')}
-          style={{ marginTop: 20, alignItems: 'center' }}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1 }}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
         >
-          <Text style={{ color: colors.primary, fontWeight: '600', textAlign: 'center' }}>
-            Do you want to create a Lobby?{' '}
-            <Text style={{ color: 'white', fontWeight: 'bold' }}>Create Here.</Text>
-          </Text>
-        </TouchableOpacity>
-        </View>
-      </TouchableWithoutFeedback>
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+            <View style={{ flex: 1 }}>
+              {mode === 'create' ? (
+                <View style={styles.centerContent}>
+                  <View style={styles.cardGreen}>
+                    <Text style={styles.cardTitleLarge}>CREATE A LOBBY</Text>
+                    <View style={styles.separatorThin} />
+
+                    <Text style={[styles.cardSubtitleWhite, { textAlign: 'left', alignSelf: 'flex-start', fontSize: 20 }]}>Welcome to HIKESAFE!</Text>
+                    <Text style={[styles.cardDescWhite, { textAlign: 'left', alignSelf: 'flex-start' }]} numberOfLines={2}>Create a lobby and share the code with your group members.</Text>
+                    <View style={styles.separatorThin} />
+
+                    <View style={styles.formGrid}>
+                      <View style={styles.fieldRow}>
+                        <Text style={styles.fieldLabel}>Lobby Name</Text>
+                        <TextInput
+                          style={styles.inputWhiteRounded}
+                          placeholder="Enter lobby name"
+                          placeholderTextColor={colors.gray}
+                          value={lobbyName}
+                          onChangeText={setLobbyName}
+                        />
+                      </View>
+
+                      <View style={styles.fieldRow}>
+                        <Text style={styles.fieldLabel} numberOfLines={1}>Max Members</Text>
+                        <TextInput
+                          style={styles.inputWhiteRounded}
+                          placeholder="10"
+                          placeholderTextColor={colors.gray}
+                          keyboardType="numeric"
+                          value={maxMember}
+                          onChangeText={setMaxMember}
+                          maxLength={2}
+                        />
+                      </View>
+
+                      <View style={styles.fieldRow}>
+                        <Text style={[styles.fieldLabel, { opacity: 0.7 }]}>Lobby Code</Text>
+                        <View
+                          style={[
+                            styles.inputWhiteRounded,
+                            {
+                              backgroundColor: colors.glassOverlay,
+                              borderWidth: 1,
+                              borderColor: colors.glassBorder,
+                              justifyContent: 'center',
+                            },
+                          ]}
+                        >
+                          <Text style={{ color: colors.gray, fontStyle: 'italic' }}>Auto-generated (4 digits)</Text>
+                        </View>
+                      </View>
+                    </View>
+
+                    <TouchableOpacity
+                      style={[styles.createNowButton, isSubmitting && { opacity: 0.7 }]}
+                      onPress={handleCreateLobby}
+                      disabled={isSubmitting}
+                    >
+                      {isSubmitting ? (
+                        <ActivityIndicator color={colors.primary} />
+                      ) : (
+                        <Text style={styles.createNowText}>CREATE NOW</Text>
+                      )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity onPress={() => setMode('join')} style={{ marginTop: 8 }}>
+                      <Text style={styles.linkTextWhite}>
+                        Already have a Lobby?{' '}
+                        <Text style={{ fontWeight: 'bold', color: colors.accent, textDecorationLine: 'underline' }}>Click Here</Text>
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.contentContainer}>
+                  <View style={styles.logoSection}>
+                    <Image source={require('../assets/hike.png')} style={styles.logoImage} />
+                    <Text style={styles.tagline}>"Stay connected. Stay safe."</Text>
+                  </View>
+
+                  <View style={[styles.formSection, { top: -10, width: '80%', alignSelf: 'center' }]}> 
+                    <InputField 
+                      placeholder="Your Name" 
+                      value={username}
+                      onChangeText={setUsername}
+                      editable={false}
+                    />
+                    <InputField 
+                      placeholder="Lobby Code (4 digits)" 
+                      value={joinCode}
+                      onChangeText={setJoinCode}
+                      keyboardType="numeric"
+                      maxLength={4}
+                    />
+                    
+                    <Text style={[localStyles.infoText, { color: colors.textLight, opacity: 0.8 }]}>
+                      Get the 4-digit code from your group leader who created the lobby.
+                    </Text>
+                    
+                    <View style={styles.row}>
+                      <TouchableOpacity
+                        onPress={async () => {
+                          const next = !rememberEnabled;
+                          await setRememberEnabled(next);
+                          if (next) {
+                            await saveRememberData(username, joinCode);
+                          } else {
+                            await clearRememberData();
+                          }
+                        }}
+                        style={[
+                          styles.checkbox,
+                          rememberEnabled
+                            ? { backgroundColor: colors.accent, borderColor: colors.accent }
+                            : { borderColor: colors.textLight },
+                        ]}
+                      >
+                        {rememberEnabled && <Text style={{ color: colors.background, fontWeight: '900', fontSize: 14 }}>✓</Text>}
+                      </TouchableOpacity>
+                      <Text style={[styles.labelSmall, { color: colors.textLight, fontWeight: '600', marginLeft: 8 }]}>Remember me</Text>
+                    </View>
+                    <View style={[styles.hrLine, { marginTop: 30 }]} />
+                  </View>
+
+                  <MainButton 
+                    title={getJoinButtonText()} 
+                    onPress={handleJoinLobby} 
+                    style={{ top: -30, width: '80%', alignSelf: 'center' }} 
+                    disabled={isSubmitting}
+                  />
+                  
+                  <TouchableOpacity
+                    onPress={() => setMode('create')}
+                    style={{ marginTop: 20, alignItems: 'center' }}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Text style={{ color: colors.textLight, fontWeight: '600', textAlign: 'center' }}>
+                      Do you want to create a Lobby?{' '}
+                      <Text style={{ color: colors.accent, fontWeight: 'bold' }}>Create Here.</Text>
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </ImageBackground>
   );
 };

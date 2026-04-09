@@ -1,21 +1,48 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ImageBackground } from 'react-native';
-import { Image } from 'react-native';
-import { ArrowLeft, ChevronDown, ChevronUp, MessageCircle, Mail, Phone } from 'lucide-react-native';
-import { COLORS } from '../../constants/theme';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Image, LayoutAnimation, Platform, UIManager } from 'react-native';
+import { ArrowLeft, ChevronDown, ChevronUp, MessageCircle, Mail } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
+import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+// Enable LayoutAnimation for Android
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const FAQItem = ({ question, answer, colors }) => {
   const [expanded, setExpanded] = useState(false);
+
+  const toggleExpand = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpanded(!expanded);
+  };
   
   return (
     <TouchableOpacity 
-      style={[styles.menuOption, { flexDirection: 'column', alignItems: 'stretch', backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}
-      onPress={() => setExpanded(!expanded)}
+      style={[
+        styles.menuOption,
+        {
+          flexDirection: 'column',
+          alignItems: 'stretch',
+          borderWidth: 1,
+          borderColor: colors.glassBorder,
+          marginBottom: 12,
+        },
+      ]}
+      onPress={toggleExpand}
+      activeOpacity={0.7}
     >
+      <BlurView
+        intensity={colors.glassIntensity}
+        tint={colors.glassTint}
+        style={StyleSheet.absoluteFillObject}
+      />
+      <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Text style={{ color: colors.textDark, fontWeight: '600', flex: 1, paddingRight: 10 }}>
+        <Text style={{ color: colors.textDark, fontWeight: '600', flex: 1, paddingRight: 10, lineHeight: 20 }}>
           {question}
         </Text>
         {expanded ? (
@@ -25,7 +52,7 @@ const FAQItem = ({ question, answer, colors }) => {
         )}
       </View>
       {expanded && (
-        <Text style={{ color: colors.gray, marginTop: 10, lineHeight: 20 }}>
+        <Text style={{ color: colors.gray, marginTop: 12, lineHeight: 22, fontSize: 14 }}>
           {answer}
         </Text>
       )}
@@ -35,6 +62,7 @@ const FAQItem = ({ question, answer, colors }) => {
 
 const HelpScreen = ({ onBack }) => {
   const { colors, isDarkMode } = useTheme();
+  const insets = useSafeAreaInsets();
   
   const faqs = [
     {
@@ -60,52 +88,76 @@ const HelpScreen = ({ onBack }) => {
   ];
 
   return (
-    <ImageBackground 
-      source={require('../../assets/dashboard_bg.png')} 
-      style={[styles.tabContainer, { backgroundColor: colors.background }]}
-      imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
-    > 
-    {isDarkMode && (
-      <View style={{
-        position: 'absolute',
-        top: 0, left: 0, right: 0, bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.55)', 
-        zIndex: 0,
-      }} />
-    )}
     <View style={[styles.tabContainer, { backgroundColor: 'transparent' }]}>
-      <View style={[styles.headerBar, { backgroundColor: colors.headerBg, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, shadowRadius: 4, elevation: 5, zIndex: 1 }]}>
-        <TouchableOpacity 
-          onPress={onBack} 
-          style={{ position: 'absolute', left: 20, top: 15, padding: 5 }}
+        <View
+          style={[
+            styles.headerBar,
+            {
+              backgroundColor: colors.headerBg,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 3 },
+              shadowOpacity: 0.15,
+              shadowRadius: 4,
+              elevation: 5,
+              zIndex: 1,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              paddingTop: insets.top + 10,
+              paddingBottom: 15,
+              height: insets.top + 60,
+            },
+          ]}
         >
-          <ArrowLeft size={24} color={colors.textDark} style={{ marginTop: 13 }} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 22, marginLeft: -160, marginTop: -10, paddingBottom: 10 }]}>HELP</Text>
-      
-        <Image 
-          source={require('../../assets/hike_logo.png')} 
-          style={{ 
-            position: 'absolute', 
-            right: 30, 
-            top: 17,
-            width: 50, 
-            height: 50, 
-            resizeMode: 'contain' 
-          }} 
-        />
-      </View>
-  
-      <ScrollView style={{ flex: 1, padding: 20 }} contentContainerStyle={{ paddingBottom: 50 }} showsVerticalScrollIndicator={false}>
+          <TouchableOpacity
+            onPress={onBack}
+            style={{ position: 'absolute', left: 16, bottom: 12, padding: 4 }}
+          >
+            <ArrowLeft size={24} color={colors.textDark} />
+          </TouchableOpacity>
+
+          <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 20, bottom: -4 }]}>
+            HELP
+          </Text>
+
+          <Image
+            source={require('../../assets/hike_logo.png')}
+            style={{
+              position: 'absolute',
+              right: 16,
+              bottom: 6,
+              width: 36,
+              height: 36,
+              resizeMode: 'contain',
+            }}
+          />
+        </View>
+
+      <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={{ padding: 20, paddingBottom: 50 }} showsVerticalScrollIndicator={false}>
         <Text style={[styles.sectionHeader, { marginTop: 0, color: colors.textDark }]}>Frequently Asked Questions</Text>
         
         {faqs.map((faq, index) => (
           <FAQItem key={index} question={faq.question} answer={faq.answer} colors={colors} />
         ))}
 
-        <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Contact Support</Text>
+        <Text style={[styles.sectionHeader, { color: colors.textDark, marginTop: 10 }]}>Contact Support</Text>
         
-        <TouchableOpacity style={[styles.menuOption, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
+        <TouchableOpacity
+          style={[
+            styles.menuOption,
+            {
+              borderWidth: 1,
+              borderColor: colors.glassBorder,
+            },
+          ]}
+        >
+          <BlurView
+            intensity={colors.glassIntensity}
+            tint={colors.glassTint}
+            style={StyleSheet.absoluteFillObject}
+          />
+          <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+
           <Mail size={20} color={colors.textDark} />
           <Text style={[styles.menuLabel, { color: colors.textDark }]}>hikesafe.team@gmail.com</Text>
         </TouchableOpacity>
@@ -127,7 +179,6 @@ const HelpScreen = ({ onBack }) => {
         </View>
       </ScrollView>
     </View>
-    </ImageBackground>
   );
 };
 

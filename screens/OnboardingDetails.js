@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Modal, Keyboard, KeyboardAvoidingView, ScrollView, Platform, ImageBackground, Animated } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronDown, ChevronLeft, User, Phone, Plus } from 'lucide-react-native';
 import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
@@ -14,6 +15,7 @@ const OnboardingDetails = ({ next, onShowReminder, onBack, disableMountAnimation
     setContactName: setCtxContactName,
     setContactPhone: setCtxContactPhone,
     setMedicalCondition: setCtxMedicalCondition,
+    setExperience: setCtxExperience,
   } = useUser();
   const titleOpacity = useRef(new Animated.Value(disableMountAnimation ? 1 : 0)).current;
   const titleTranslateY = useRef(new Animated.Value(disableMountAnimation ? 0 : -20)).current;
@@ -77,6 +79,7 @@ const OnboardingDetails = ({ next, onShowReminder, onBack, disableMountAnimation
     contactName: ctxContactName,
     contactPhone: ctxContactPhone,
     medicalCondition: ctxMedicalCondition,
+    experience: ctxExperience,
   } = useUser();
 
   const validatePhone = (phone) => {
@@ -111,6 +114,7 @@ const OnboardingDetails = ({ next, onShowReminder, onBack, disableMountAnimation
         await setCtxContactName(contactName);
         await setCtxContactPhone(contactPhone);
         await setCtxMedicalCondition(medicalCondition);
+        if (setCtxExperience) await setCtxExperience(experience);
       } catch (e) {
         console.error('Failed to save onboarding details:', e);
       }
@@ -131,7 +135,8 @@ const OnboardingDetails = ({ next, onShowReminder, onBack, disableMountAnimation
     if (ctxContactName) setContactName(ctxContactName);
     if (ctxContactPhone) setContactPhone(ctxContactPhone);
     if (ctxMedicalCondition) setMedicalCondition(ctxMedicalCondition);
-  }, [ctxContactName, ctxContactPhone, ctxMedicalCondition]);
+    if (ctxExperience) setExperience(ctxExperience);
+  }, [ctxContactName, ctxContactPhone, ctxMedicalCondition, ctxExperience]);
 
   return (
     <ImageBackground
@@ -139,11 +144,12 @@ const OnboardingDetails = ({ next, onShowReminder, onBack, disableMountAnimation
       resizeMode="cover"
       style={{ flex: 1 }}
     >
-      <KeyboardAvoidingView 
-        style={{ flex: 1 }} 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <View style={styles.onboardingPage}>
+      <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1 }}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <View style={styles.onboardingPage}>
             <View style={styles.onboardingHeader}>
               <TouchableOpacity
                 onPress={() => {
@@ -165,61 +171,70 @@ const OnboardingDetails = ({ next, onShowReminder, onBack, disableMountAnimation
               </View>
             </View>
 
-            <View style={styles.onboardingBody}>
-              <View style={{ marginTop: 10 }}>
-                <Animated.Text style={[styles.titleLarge, styles.detailTitle, { color: colors.textDark, top: 0, marginTop: 25, marginBottom: 12, textAlign: 'left', fontSize: 48, lineHeight: 50 }, {
-                  opacity: titleOpacity,
-                  transform: [{ translateY: titleTranslateY }],
-                }]}>Get ready with the trail!</Animated.Text>
+            <ScrollView
+              contentContainerStyle={{ flexGrow: 1, justifyContent: 'space-between' }}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={styles.onboardingBody}>
+                <View style={{ marginTop: 10 }}>
+                  <Animated.Text style={[styles.titleLarge, styles.detailTitle, { color: colors.textDark, top: 0, marginTop: 25, marginBottom: 12, textAlign: 'left', fontSize: 48, lineHeight: 50 }, {
+                    opacity: titleOpacity,
+                    transform: [{ translateY: titleTranslateY }],
+                  }]}>Get ready with the trail!</Animated.Text>
 
-                <Animated.View style={[styles.onboardingForm, {
-                  opacity: formOpacity,
-                  transform: [{ translateY: formTranslateY }],
-                  marginTop: 10,
-                }]}>
-                  <InputField
-                    label="Contact Name"
-                    placeholder="Emergency Contact Name"
-                    value={contactName}
-                    onChangeText={(t) => { setContactName(t); if (contactNameError) setContactNameError(''); }}
-                    error={contactNameError}
-                    icon={<User size={16} color={colors.gray} />}
-                    containerStyle={styles.onboardingFieldGap}
-                  />
-                  <InputField
-                    label="Contact Phone"
-                    placeholder="Emergency Contact Phone"
-                    value={contactPhone}
-                    onChangeText={(t) => {
-                      if (t.length <= 11) {
-                        setContactPhone(t);
-                        if (contactPhoneError) setContactPhoneError('');
-                      }
-                    }}
-                    keyboardType="phone-pad"
-                    error={contactPhoneError}
-                    maxLength={11}
-                    icon={<Phone size={16} color={colors.gray} />}
-                    containerStyle={styles.onboardingFieldGap}
-                  />
-                  <InputField
-                    label="Medical Condition"
-                    placeholder="Any allergies or conditions?"
-                    value={medicalCondition}
-                    onChangeText={setMedicalCondition}
-                    icon={<Plus size={16} color={colors.gray} />}
-                    containerStyle={styles.onboardingFieldGap}
-                  />
+                  <Animated.View style={[styles.onboardingForm, {
+                    opacity: formOpacity,
+                    transform: [{ translateY: formTranslateY }],
+                    marginTop: 10,
+                  }]}>
+                    <InputField
+                      label="Contact Name"
+                      placeholder="Emergency Contact Name"
+                      value={contactName}
+                      onChangeText={(t) => { setContactName(t); if (contactNameError) setContactNameError(''); }}
+                      error={contactNameError}
+                      icon={<User size={16} color={colors.gray} />}
+                      containerStyle={styles.onboardingFieldGap}
+                    />
+                    <InputField
+                      label="Contact Phone"
+                      placeholder="Emergency Contact Phone"
+                      value={contactPhone}
+                      onChangeText={(t) => {
+                        if (t.length <= 11) {
+                          setContactPhone(t);
+                          if (contactPhoneError) setContactPhoneError('');
+                        }
+                      }}
+                      keyboardType="phone-pad"
+                      error={contactPhoneError}
+                      maxLength={11}
+                      icon={<Phone size={16} color={colors.gray} />}
+                      containerStyle={styles.onboardingFieldGap}
+                    />
+                    <InputField
+                      label="Medical Condition"
+                      placeholder="Any allergies or conditions?"
+                      value={medicalCondition}
+                      onChangeText={setMedicalCondition}
+                      icon={<Plus size={16} color={colors.gray} />}
+                      containerStyle={styles.onboardingFieldGap}
+                    />
 
-                  <Text style={[styles.inputLabel, { color: colors.textDark, marginBottom: 6, marginTop: 2 }]}>Hiking Experience level</Text>
-                  <TouchableOpacity
-                    style={[styles.inputBox, { backgroundColor: colors.inputBg, borderColor: colors.borderColor, paddingVertical: 14, paddingHorizontal: 16 }]}
-                    onPress={() => setDropdownOpen(true)}
-                  >
-                    <Text style={{ color: colors.textDark, fontWeight: '600' }}>{experience}</Text>
-                    <ChevronDown size={18} color={colors.gray} />
-                  </TouchableOpacity>
-                </Animated.View>
+                    <Text style={[styles.inputLabel, { color: colors.textDark, marginBottom: 6, marginTop: 2 }]}>Hiking Experience level</Text>
+                    <TouchableOpacity
+                      style={[styles.inputBox, { backgroundColor: colors.inputBg, borderColor: colors.borderColor, paddingVertical: 14, paddingHorizontal: 16 }]}
+                      onPress={() => {
+                        Keyboard.dismiss();
+                        setDropdownOpen(true);
+                      }}
+                    >
+                      <Text style={{ color: colors.textDark, fontWeight: '600' }}>{experience}</Text>
+                      <ChevronDown size={18} color={colors.gray} />
+                    </TouchableOpacity>
+                  </Animated.View>
+                </View>
               </View>
 
               <Animated.View style={[styles.onboardingFooter, {
@@ -228,7 +243,7 @@ const OnboardingDetails = ({ next, onShowReminder, onBack, disableMountAnimation
               }]}>
                 <MainButton title="ACCEPT AND CONTINUE" onPress={handleAccept} style={{ marginTop: 8, marginBottom: 12 }} />
               </Animated.View>
-            </View>
+            </ScrollView>
 
             <Modal visible={dropdownOpen} transparent animationType="fade">
               <TouchableOpacity style={styles.dropdownModalOverlay} activeOpacity={1} onPress={() => setDropdownOpen(false)}>
@@ -245,8 +260,9 @@ const OnboardingDetails = ({ next, onShowReminder, onBack, disableMountAnimation
                 </View>
               </TouchableOpacity>
             </Modal>
-        </View>
-      </KeyboardAvoidingView>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </ImageBackground>
   );
 };
