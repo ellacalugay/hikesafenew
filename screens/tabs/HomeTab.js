@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ImageBackground, Image } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ImageBackground, Image, Pressable, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Trees, User, MessageCircle, MapPin, Compass, Radio, Users, AlertTriangle } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
@@ -41,7 +41,7 @@ const ServiceItem = ({ icon: Icon, label, onPress, colors, bgColor, badge }) => 
 
 const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
-  const { isConnected, isDeviceReachable, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, unreadCount } = useBluetoothDevice();
+  const { isConnected, isDeviceReachable, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, unreadCount, sendSOS } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isHost, myNickname } = useLobby();
   
   // Get signal quality from RSSI (LoRa typical ranges: -30 to -120 dBm)
@@ -72,6 +72,16 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
     if (meters === null) return '--';
     if (meters < 1000) return `${meters.toFixed(0)} m`;
     return `${(meters / 1000).toFixed(1)} km`;
+  };
+
+  const handleEmergencySOS = async () => {
+    if (!isConnected) {
+      Alert.alert('Not Connected', 'Please connect to your SOS device first via the Location tab.');
+      return;
+    }
+
+    await sendSOS();
+    Alert.alert('SOS Sent', 'Your SOS signal has been broadcasted to all group members.');
   };
 
   // Dynamic badge counts
@@ -215,11 +225,39 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
 
         <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Services</Text>
           <View style={styles.servicesGrid}>
-            <ServiceItem icon={User}        label="Profile"   onPress={() => onChangeTab('profile')}   colors={colors} bgColor= {colors.profileBg} badge={0} />
+            <ServiceItem icon={User}        label="Profile"   onPress={() => onChangeTab('profile')}   colors={colors} bgColor={colors.profileBg} badge={0} />
             <ServiceItem icon={MessageCircle} label="Message" onPress={() => onChangeTab('message')}   colors={colors} bgColor={colors.messageBg} badge={unreadMsgs} />
             <ServiceItem icon={MapPin}      label="Location"  onPress={() => onChangeTab('location')}  colors={colors} bgColor={colors.locationBg} badge={totalAlerts} />
             <ServiceItem icon={Compass}     label="Compass"   onPress={() => onChangeTab('compass')}   colors={colors} bgColor={colors.compassBg} badge={0} />
           </View>
+
+        <Text style={[styles.sectionHeader, { color: colors.textDark, marginTop: 26 }]}>Emergency SOS</Text>
+        <Text style={[localStyles.sosHint, { color: colors.gray }]}>Press and hold for 2 seconds to send an SOS alert to your group.</Text>
+
+        <Pressable
+          onLongPress={handleEmergencySOS}
+          delayLongPress={2000}
+          style={({ pressed }) => [
+            localStyles.sosPressable,
+            !isConnected && localStyles.sosDisabled,
+            pressed && localStyles.sosPressed,
+          ]}
+        >
+          <LinearGradient
+            colors={isConnected ? ['#FF7A7A', '#E53935'] : ['#E7B1B1', '#C84A4A']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={localStyles.sosCard}
+          >
+            <View style={localStyles.sosInnerFrame}>
+              <View style={localStyles.sosIconWrap}>
+                <AlertTriangle size={42} color="#fff" strokeWidth={2.6} />
+              </View>
+              <Text style={localStyles.sosLabel}>SOS</Text>
+              <Text style={localStyles.sosSubLabel}>HOLD TO ALERT</Text>
+            </View>
+          </LinearGradient>
+        </Pressable>
 
       </ScrollView>
     </ImageBackground>
@@ -306,6 +344,73 @@ const localStyles = StyleSheet.create({
   rssiText: {
     fontSize: 11,
     fontWeight: '600',
+  },
+
+  sosHint: {
+    fontSize: 12,
+    fontWeight: '500',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+
+  sosPressable: {
+    marginTop: 6,
+    alignSelf: 'stretch',
+  },
+
+  sosDisabled: {
+    opacity: 0.7,
+  },
+
+  sosPressed: {
+    transform: [{ scale: 0.985 }],
+  },
+
+  sosCard: {
+    borderRadius: 28,
+    padding: 16,
+    minHeight: 250,
+    shadowColor: '#B71C1C',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.28,
+    shadowRadius: 18,
+    elevation: 10,
+  },
+
+  sosInnerFrame: {
+    flex: 1,
+    borderRadius: 24,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.26)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingVertical: 22,
+  },
+
+  sosIconWrap: {
+    width: 96,
+    height: 96,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    marginBottom: 18,
+  },
+
+  sosLabel: {
+    color: '#fff',
+    fontSize: 30,
+    fontWeight: '900',
+    letterSpacing: 6,
+  },
+
+  sosSubLabel: {
+    color: 'rgba(255,255,255,0.9)',
+    marginTop: 10,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 2,
   },
 
   serviceItem: {
