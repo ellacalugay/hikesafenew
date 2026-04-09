@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Modal, Animated, BackHandler } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Modal, Animated, BackHandler, ActivityIndicator, Easing } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useFonts, SpaceGrotesk_500Medium, SpaceGrotesk_700Bold } from '@expo-google-fonts/space-grotesk';
+import { PublicSans_400Regular, PublicSans_600SemiBold, PublicSans_700Bold } from '@expo-google-fonts/public-sans';
 import { ScreenContainer } from './components/shared';
 import { styles } from './styles/styles';
 import { ThemeProvider } from './context/ThemeContext';
@@ -9,6 +11,7 @@ import { LobbyProvider } from './context/LobbyContext';
 import { UserProvider } from './context/UserContext';
 import { useBluetoothDevice } from './context/BluetoothContext';
 import { useUser } from './context/UserContext';
+import { useLobby } from './context/LobbyContext';
 import DeviceSetupScreen from './screens/DeviceSetupScreen';
 import OnboardingName from './screens/OnboardingName';
 import OnboardingDetails from './screens/OnboardingDetails';
@@ -18,14 +21,20 @@ import Dashboard from './screens/Dashboard';
 function AppContent() {
   const { disconnect } = useBluetoothDevice();
   const { firstName, lastName, isLoading: userLoading } = useUser();
+  const { myNickname, isLoading: lobbyLoading } = useLobby();
   const [screenStack, setScreenStack] = useState(['deviceSetup']);
   const screen = screenStack[screenStack.length - 1];
+  const [transitioningOnboardingScreen, setTransitioningOnboardingScreen] = useState(null);
+  const [transitionDirection, setTransitionDirection] = useState(1);
+  const [disableOnboardingIntroFor, setDisableOnboardingIntroFor] = useState(null);
   const [resumeAfterReconnect, setResumeAfterReconnect] = useState(false);
   const [showReminder, setShowReminder] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [lobbyData, setLobbyData] = useState({ lobbyName: '', groupId: '', maxMember: '' });
   const screenFadeAnim = useRef(new Animated.Value(0)).current;
+  const onboardingTransitionAnim = useRef(new Animated.Value(0)).current;
+  const skipNextScreenFadeRef = useRef(false);
 
   const [activeTab, setActiveTab] = useState('home');
   const [tabHistory, setTabHistory] = useState(['home']);
@@ -38,6 +47,46 @@ function AppContent() {
     setScreenStack(prev => prev.length > 1 ? prev.slice(0, -1) : prev);
   };
 
+  const startOnboardingTransition = (nextScreen, direction) => {
+    if (transitioningOnboardingScreen) return;
+    if (screen === nextScreen) return;
+
+    skipNextScreenFadeRef.current = true;
+    setDisableOnboardingIntroFor(nextScreen);
+    setTransitionDirection(direction);
+    setTransitioningOnboardingScreen(nextScreen);
+    onboardingTransitionAnim.setValue(0);
+
+    Animated.timing(onboardingTransitionAnim, {
+      toValue: 1,
+      duration: 280,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (!finished) return;
+
+      setScreenStack(prev => {
+        if (direction > 0) {
+          return [...prev, nextScreen];
+        }
+        return prev.length > 1 ? prev.slice(0, -1) : prev;
+      });
+
+      // Keep the overlay fully visible for at least one frame while the
+      // underlying screen swaps/mounts to avoid a one-frame flash/jitter.
+      requestAnimationFrame(() => {
+        setTransitioningOnboardingScreen(null);
+        onboardingTransitionAnim.setValue(0);
+      });
+    });
+  };
+
+  useEffect(() => {
+    if (disableOnboardingIntroFor && screen === disableOnboardingIntroFor) {
+      setDisableOnboardingIntroFor(null);
+    }
+  }, [screen, disableOnboardingIntroFor]);
+
   const handleTabChange = (tab) => {
     setActiveTab(tab);
     setTabHistory(prev => [...prev, tab]);
@@ -49,14 +98,16 @@ function AppContent() {
       navigateTo('dashboard');
       return;
     }
-    // If user profile already exists, skip onboarding and go to lobby
-    if (!userLoading && (firstName || lastName)) {
+    // Nickname is required for lobby identity. Only skip onboarding if we have it.
+    // This also handles older installs where first/last name existed but nickname was never collected.
+    if (!userLoading && !lobbyLoading && (myNickname || '').trim().length > 0) {
       navigateTo('lobby'); 
       return;
     }
     navigateTo('onboarding1');
   };
-  const handleNextOnboarding = () => navigateTo('onboarding2');
+  const handleNextOnboarding = () => startOnboardingTransition('onboarding2', 1);
+  const handleBackOnboarding = () => startOnboardingTransition('onboarding1', -1);
   
   const handleShowReminder = () => setShowReminder(true);
   
@@ -127,6 +178,12 @@ function AppContent() {
 
   // Screen transition animation
   useEffect(() => {
+    if (skipNextScreenFadeRef.current) {
+      screenFadeAnim.setValue(1);
+      skipNextScreenFadeRef.current = false;
+      return;
+    }
+
     screenFadeAnim.setValue(0);
     Animated.timing(screenFadeAnim, {
       toValue: 1,
@@ -138,24 +195,95 @@ function AppContent() {
   return (
     <ScreenContainer>
       <Animated.View style={{ flex: 1, opacity: screenFadeAnim }}>
-        {screen === 'deviceSetup' && (
-          <DeviceSetupScreen
-            onNext={handleDeviceSetupComplete}
-            onSkip={handleDeviceSetupComplete}
-            allowSkip={!resumeAfterReconnect}
-          />
-        )}
-        {screen === 'onboarding1' && <OnboardingName next={handleNextOnboarding} />}
-        {screen === 'onboarding2' && <OnboardingDetails next={handleShowReminder} onShowReminder={handleShowReminder} />}
-        {screen === 'lobby' && <LobbyScreen onLogin={handleEnterDashboard} onShowCreateSuccess={handleCreateLobbySuccess} />}
-        {screen === 'dashboard' && (
-          <Dashboard
-            onLogout={handleLogout}
-            onRequireDeviceSetup={handleRequireDeviceSetup}
-            activeTab={activeTab}
-            onTabChange={handleTabChange}
-          />
-        )}
+        <View style={{ flex: 1 }}>
+          {screen === 'deviceSetup' && (
+            <DeviceSetupScreen
+              onNext={handleDeviceSetupComplete}
+              onSkip={handleDeviceSetupComplete}
+              allowSkip={!resumeAfterReconnect}
+            />
+          )}
+          {screen === 'onboarding1' && (
+            <OnboardingName
+              next={handleNextOnboarding}
+              disableMountAnimation={disableOnboardingIntroFor === 'onboarding1'}
+            />
+          )}
+          {screen === 'onboarding2' && (
+            <OnboardingDetails
+              next={handleShowReminder}
+              onShowReminder={handleShowReminder}
+              onBack={handleBackOnboarding}
+              disableMountAnimation={disableOnboardingIntroFor === 'onboarding2'}
+            />
+          )}
+          {screen === 'lobby' && <LobbyScreen onLogin={handleEnterDashboard} onShowCreateSuccess={handleCreateLobbySuccess} />}
+          {screen === 'dashboard' && (
+            <Dashboard
+              onLogout={handleLogout}
+              onRequireDeviceSetup={handleRequireDeviceSetup}
+              activeTab={activeTab}
+              onTabChange={handleTabChange}
+            />
+          )}
+
+          {transitioningOnboardingScreen && screen === 'onboarding1' && (
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                opacity: onboardingTransitionAnim,
+                renderToHardwareTextureAndroid: true,
+                shouldRasterizeIOS: true,
+                transform: [
+                  {
+                    translateX: onboardingTransitionAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [16 * transitionDirection, 0],
+                    }),
+                  },
+                ],
+              }}
+            >
+              <OnboardingDetails
+                next={handleShowReminder}
+                onShowReminder={handleShowReminder}
+                onBack={handleBackOnboarding}
+                disableMountAnimation
+              />
+            </Animated.View>
+          )}
+
+          {transitioningOnboardingScreen && screen === 'onboarding2' && (
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                opacity: onboardingTransitionAnim,
+                renderToHardwareTextureAndroid: true,
+                shouldRasterizeIOS: true,
+                transform: [
+                  {
+                    translateX: onboardingTransitionAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [16 * transitionDirection, 0],
+                    }),
+                  },
+                ],
+              }}
+            >
+              <OnboardingName next={handleNextOnboarding} disableMountAnimation />
+            </Animated.View>
+          )}
+        </View>
       </Animated.View>
 
       {/* HikeSafe Reminder Modal */}
@@ -336,6 +464,27 @@ function AppContent() {
 }
 
 export default function App() {
+  const [fontsLoaded] = useFonts({
+    SpaceGrotesk_500Medium,
+    SpaceGrotesk_700Bold,
+    PublicSans_400Regular,
+    PublicSans_600SemiBold,
+    PublicSans_700Bold,
+  });
+
+  if (!fontsLoaded) {
+    return (
+      <SafeAreaProvider>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8faf5' }}>
+          <ActivityIndicator size="large" color="#156e05" />
+          <Text style={{ marginTop: 12, fontSize: 14, color: '#404a3b', fontWeight: '600' }}>
+            Loading…
+          </Text>
+        </View>
+      </SafeAreaProvider>
+    );
+  }
+
   return (
     <SafeAreaProvider>
       <ThemeProvider>

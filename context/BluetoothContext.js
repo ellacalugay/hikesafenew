@@ -93,6 +93,9 @@ export const BluetoothProvider = ({ children }) => {
   // Alerts
   const [activeAlert, setActiveAlert] = useState(null);
   const [statusMessage, setStatusMessage] = useState('');
+
+  // Lobby verification (LoRa handshake)
+  const [lastLobbyVerification, setLastLobbyVerification] = useState(null); // { nonce, fromId, timestamp }
   
   // Morse input feedback
   const [morseInput, setMorseInput] = useState('');
@@ -1094,6 +1097,18 @@ export const BluetoothProvider = ({ children }) => {
             }
             return;
           }
+
+          // Ignore lobby verification traffic in chat, but capture ACK for join gating.
+          if (text.startsWith('__LOBBY_VERIFY__:')) {
+            return;
+          }
+          if (text.startsWith('__LOBBY_ACK__:')) {
+            const nonce = text.substring('__LOBBY_ACK__:'.length).trim();
+            if (nonce && !Number.isNaN(fromId)) {
+              setLastLobbyVerification({ nonce, fromId, timestamp: Date.now() });
+            }
+            return;
+          }
           
           console.log(`Received MSG from Device ${fromId}${mobileId > 0 ? ` Mobile ${mobileId}` : ''}: ${text}`);
           
@@ -1744,6 +1759,7 @@ export const BluetoothProvider = ({ children }) => {
     memberLocations,
     activeAlert,
     statusMessage,
+    lastLobbyVerification,
     morseInput,
     messages,
     unreadCount,

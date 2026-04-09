@@ -847,7 +847,21 @@ void receiveLoRaMessage() {
     }
 
     txtMsg.text[MAX_TEXT_LEN - 1] = '\0';
-    sendToPhone("MSG:" + String(txtMsg.deviceID) + ",M" + String(txtMsg.mobileID) + "," + String(txtMsg.text) + ",RSSI:" + String(currentRssi));
+
+    // --- Lobby verification handshake ---
+    // Joiner broadcasts: __LOBBY_VERIFY__:<nonce>
+    // Any device in the same lobby responds directly: __LOBBY_ACK__:<nonce>
+    String text = String(txtMsg.text);
+    if (text.startsWith("__LOBBY_VERIFY__:")) {
+      const String nonce = text.substring(String("__LOBBY_VERIFY__:").length());
+      if (nonce.length() > 0) {
+        sendLoRaTextMessage(txtMsg.deviceID, "__LOBBY_ACK__:" + nonce, 0);
+      }
+      // Don't forward verification pings to phones as chat messages.
+      return;
+    }
+
+    sendToPhone("MSG:" + String(txtMsg.deviceID) + ",M" + String(txtMsg.mobileID) + "," + text + ",RSSI:" + String(currentRssi));
     digitalWrite(GREEN_LED, HIGH); delay(200); digitalWrite(GREEN_LED, LOW);
     updateDisplay();
 

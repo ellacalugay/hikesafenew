@@ -57,26 +57,36 @@ export const MainButton = ({ title, onPress, variant = 'primary', style }) => (
 );
 
 // Custom Input
-export const InputField = ({ label, placeholder, value, onChangeText, secureTextEntry, keyboardType, error, maxLength }) => {
+export const InputField = ({ label, placeholder, value, onChangeText, secureTextEntry, keyboardType, error, maxLength, icon, rightElement, containerStyle, inputStyle, editable = true }) => {
   const { colors } = useTheme();
+  const textColor = editable ? colors.textDark : colors.gray;
   
   return (
-    <View style={styles.inputContainer}>
+    <View style={[styles.inputContainer, containerStyle]}>
       {label && <Text style={[styles.inputLabel, { color: colors.textDark }]}>{label}</Text>}
-      <TextInput
+      <View
         style={[
-          styles.input, 
-          { backgroundColor: colors.inputBg, color: colors.textDark, borderColor: colors.borderColor },
-          error ? { borderColor: 'red' } : null
+          styles.inputRow,
+          { backgroundColor: colors.inputBg, borderColor: colors.borderColor },
+          !editable ? { opacity: 0.72, borderStyle: 'dashed' } : null,
+          error ? { borderColor: 'red' } : null,
         ]}
-        placeholder={placeholder}
-        placeholderTextColor={colors.gray}
-        value={value}
-        onChangeText={onChangeText}
-        secureTextEntry={secureTextEntry}
-        keyboardType={keyboardType}
-        maxLength={maxLength}
-      />
+      >
+        {icon ? <View style={styles.inputIcon}>{icon}</View> : null}
+        <TextInput
+          style={[styles.input, { color: textColor, borderWidth: 0, flex: 1 }, inputStyle]}
+          placeholder={placeholder}
+          placeholderTextColor={colors.gray}
+          value={value}
+          onChangeText={onChangeText}
+          secureTextEntry={secureTextEntry}
+          keyboardType={keyboardType}
+          maxLength={maxLength}
+          editable={editable}
+          selectTextOnFocus={editable}
+        />
+        {rightElement ? <View style={styles.inputRight}>{rightElement}</View> : null}
+      </View>
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </View>
   );
