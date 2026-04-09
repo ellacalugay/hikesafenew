@@ -96,7 +96,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
       imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
     >
       <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
-      <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={[styles.scrollContent, { backgroundColor: 'transparent', paddingBottom: 120 }]}>
+      <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={[styles.scrollContent, { backgroundColor: 'transparent', paddingBottom: 96 }]}>
         <View style={styles.headerRow}>
           <View>
             <Text style={[styles.welcomeText, { color: colors.textDark }, { fontWeight: 'bold' }]}>Hello!</Text>
@@ -223,7 +223,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
           </LinearGradient>
         </TouchableOpacity>
 
-        <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Services</Text>
+        <Text style={[styles.sectionHeader, { color: colors.textDark, marginTop: -10 }]}>Services</Text>
           <View style={styles.servicesGrid}>
             <ServiceItem icon={User}        label="Profile"   onPress={() => onChangeTab('profile')}   colors={colors} bgColor={colors.profileBg} badge={0} />
             <ServiceItem icon={MessageCircle} label="Message" onPress={() => onChangeTab('message')}   colors={colors} bgColor={colors.messageBg} badge={unreadMsgs} />
@@ -347,19 +347,19 @@ const localStyles = StyleSheet.create({
   },
 
   sosHint: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '500',
     textAlign: 'center',
-    marginBottom: 14,
+    marginBottom: 12,
     letterSpacing: 0.4,
   },
 
   sosTitle: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '900',
     textAlign: 'center',
     letterSpacing: 1,
-    marginTop: 26,
+    marginTop: 18,
   },
 
   sosPressable: {
@@ -377,8 +377,8 @@ const localStyles = StyleSheet.create({
 
   sosCard: {
     borderRadius: 28,
-    padding: 18,
-    minHeight: 230,
+    padding: 16,
+    minHeight: 200,
     shadowColor: '#B71C1C',
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.28,
@@ -394,22 +394,22 @@ const localStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.08)',
-    paddingVertical: 24,
+    paddingVertical: 20,
   },
 
   sosIconWrap: {
-    width: 100,
-    height: 100,
+    width: 84,
+    height: 84,
     borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.18)',
-    marginBottom: 18,
+    marginBottom: 14,
   },
 
   sosLabel: {
     color: '#fff',
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: '900',
     letterSpacing: 6,
   },
@@ -424,11 +424,11 @@ const localStyles = StyleSheet.create({
 
   serviceItem: {
     alignItems: 'center',
-    width: '22%',
+    width: '23%',
   },
   serviceIconBox: {
-    width: 64,
-    height: 64,
+    width: 58,
+    height: 58,
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
@@ -440,7 +440,7 @@ const localStyles = StyleSheet.create({
     elevation: 3,
   },
   serviceText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     textAlign: 'center',
   },
