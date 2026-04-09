@@ -397,9 +397,9 @@ export const styles = StyleSheet.create({
   bottomNav: {
     flexDirection: 'row',
     backgroundColor: 'white',
-    paddingTop: 8,
-    paddingBottom: 8,
-    justifyContent: 'space-around',
+    paddingTop: 16,
+    paddingBottom: 18,
+    justifyContent: 'space-between',
     borderTopWidth: 1,
     borderTopColor: '#f3f4f6',
     position: 'absolute',
@@ -409,6 +409,7 @@ export const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     overflow: 'hidden',
+    paddingHorizontal: 20,
   },
   tabItem: {
     backgroundColor: 'transparent',
@@ -417,6 +418,29 @@ export const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
+  },
+  tabIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabIconWrapActive: {
+    backgroundColor: '#4d7c0f',
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+  },
+  tabLabel: {
+    marginTop: 6,
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#a5a09a',
+    letterSpacing: 0.5,
+  },
+  tabLabelActive: {
+    color: '#2f5d1f',
   },
   activeTabGradient: {
     width: 44,

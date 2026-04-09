@@ -25,20 +25,6 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
   return R * c; // meters
 };
 
-const ServiceItem = ({ icon: Icon, label, onPress, colors, bgColor, badge }) => (
-  <TouchableOpacity style={localStyles.serviceCard} onPress={onPress} activeOpacity={0.8}>
-    <View style={[localStyles.serviceIconBox, { backgroundColor: bgColor }]}>
-      <Icon size={28} color={colors.textDark} strokeWidth={2} />
-      {badge > 0 && (
-        <View style={localStyles.badge}>
-          <Text style={localStyles.badgeText}>{badge}</Text>
-        </View>
-      )}
-    </View>
-    <Text style={[localStyles.serviceText, { color: colors.textDark }]}>{label}</Text>
-  </TouchableOpacity>
-);
-
 const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
   const { isConnected, isDeviceReachable, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, unreadCount, sendSOS } = useBluetoothDevice();
@@ -215,7 +201,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
             pressed && localStyles.sosPressed,
           ]}
         >
-          <View style={[localStyles.sosCard, { backgroundColor: isConnected ? '#D0312D' : '#8C4A4A' }]}>
+          <View style={[localStyles.sosCard, { backgroundColor: isConnected ? '#9A0000' : '#ff0000' }]}>
             <View style={localStyles.sosInnerFrame}>
               <View style={localStyles.sosIconWrap}>
                 <AlertTriangle size={42} color="#fff" strokeWidth={2.6} />
@@ -225,17 +211,6 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
             </View>
           </View>
         </Pressable>
-
-        <View style={localStyles.servicesGrid2x2}>
-          <View style={localStyles.serviceRow}>
-            <ServiceItem icon={User}          label="PROFILE"   onPress={() => onChangeTab('profile')}   colors={colors} bgColor={colors.profileBg} badge={0} />
-            <ServiceItem icon={MessageCircle} label="MESSAGE"   onPress={() => onChangeTab('message')}   colors={colors} bgColor={colors.messageBg} badge={unreadMsgs} />
-          </View>
-          <View style={localStyles.serviceRow}>
-            <ServiceItem icon={MapPin}  label="LOCATION"  onPress={() => onChangeTab('location')}  colors={colors} bgColor={colors.locationBg} badge={totalAlerts} />
-            <ServiceItem icon={Compass} label="COMPASS"   onPress={() => onChangeTab('compass')}   colors={colors} bgColor={colors.compassBg} badge={0} />
-          </View>
-        </View>
 
       </ScrollView>
     </ImageBackground>
@@ -357,9 +332,12 @@ const localStyles = StyleSheet.create({
     borderRadius: 28,
     padding: 16,
     minHeight: 200,
-    shadowColor: '#D0312D',
+    borderWidth: 1,
+    backgroundColor: '#9A0000',
+    borderColor: 'rgba(255,255,255,0.18)',
+    shadowColor: '#9A0000',
     shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.38,
+    shadowOpacity: 0.45,
     shadowRadius: 18,
     elevation: 13,
   },
@@ -368,10 +346,10 @@ const localStyles = StyleSheet.create({
     flex: 1,
     borderRadius: 24,
     borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.26)',
+    borderColor: 'rgba(255,255,255,0.30)',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    // backgroundColor: 'rgba(255,255,255,0.14)',
     paddingVertical: 20,
   },
 
@@ -381,7 +359,7 @@ const localStyles = StyleSheet.create({
     borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(255,255,255,0.24)',
     marginBottom: 14,
   },
 

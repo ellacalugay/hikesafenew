@@ -8,12 +8,21 @@ import { useTheme } from '../../context/ThemeContext';
 
 const SettingRow = ({ icon: Icon, label, hasToggle, value, onValueChange, onPress, colors }) => (
   <TouchableOpacity 
-    style={[styles.menuOption, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]} 
+    style={[
+      styles.menuOption,
+      {
+        backgroundColor: colors.cardBg,
+        borderColor: colors.borderColor,
+        minHeight: 64,
+        paddingHorizontal: 16,
+        paddingVertical: 0,
+      },
+    ]} 
     onPress={onPress}
     disabled={hasToggle}
   >
     <Icon size={20} color={colors.textDark} />
-    <Text style={[styles.menuLabel, { flex: 1, color: colors.textDark }]}>{label}</Text>
+    <Text numberOfLines={1} style={[styles.menuLabel, { flex: 1, color: colors.textDark }]}>{label}</Text>
     {hasToggle ? (
       <Switch
         trackColor={{ false: "#767577", true: colors.primaryLight }}

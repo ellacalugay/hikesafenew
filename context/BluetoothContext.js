@@ -968,6 +968,30 @@ export const BluetoothProvider = ({ children }) => {
               [{ text: 'Dismiss' }],
               { cancelable: true }
             );
+          } else if (type === 'ON_MY_WAY') {
+            // Device is coming to help - keep SOS active but notify sender
+            addActivity('on_my_way', deviceId, `Device ${deviceId} is on the way to help`);
+            
+            // Show status message
+            setStatusMessage(`Device ${deviceId} is on the way`);
+            setTimeout(() => setStatusMessage(''), 3000);
+            
+            // Vibrate with different pattern
+            triggerVibration('OK');
+            
+            // Show notification
+            pushEmergencyNotification(
+              'Help Coming',
+              `Device ${deviceId} is on the way to help you.`,
+              `on_my_way-${deviceId}`
+            );
+            
+            Alert.alert(
+              '✅ Help on the Way',
+              `Device ${deviceId} is coming to help!`,
+              [{ text: 'Dismiss' }],
+              { cancelable: true }
+            );
           }
         }
       }
