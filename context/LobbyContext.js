@@ -657,6 +657,8 @@ export const LobbyProvider = ({ children }) => {
   const setMemberNickname = useCallback(async (deviceId, nickname) => {
     const newNicknames = { ...memberNicknames, [deviceId]: nickname };
     setMemberNicknames(newNicknames);
+    // Also update lobbyMembers display name so member lists reflect the nickname immediately
+    setLobbyMembers(prev => prev.map(m => (m && m.deviceId === deviceId ? { ...m, name: nickname } : m)));
     try {
       await AsyncStorage.setItem(MEMBER_NICKNAMES_KEY, JSON.stringify(newNicknames));
     } catch (error) {
