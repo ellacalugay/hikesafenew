@@ -81,6 +81,7 @@ export const BluetoothProvider = ({ children }) => {
     getMemberNickname,
     myEmergencyContact,
     setEmergencyContactForDevice,
+    getMemberNickname,
   } = useLobby();
 
   // Connection state - MULTI-DEVICE SUPPORT
@@ -1123,11 +1124,26 @@ export const BluetoothProvider = ({ children }) => {
           const lat = parseFloat(parts[2]);
           const lng = parseFloat(parts[3]);
           
-          // Track new member joins
+          // Track new member joins and announce with nickname when available
           const isNewMember = !knownMembersRef.current.has(deviceId);
           if (isNewMember) {
             knownMembersRef.current.add(deviceId);
-            addActivity('join', deviceId, `Device ${deviceId} joined the group`);
+            const nick = (typeof getMemberNickname === 'function') ? getMemberNickname(deviceId) : '';
+            const displayName = nick && nick.trim().length > 0 ? nick : `Device ${deviceId}`;
+            addActivity('join', `${displayName} joined the group`);
+
+            // Also add a system chat message so group chat shows "<name> joined"
+            const joinMsg = {
+              id: `join-${deviceId}-${Date.now()}`,
+              from: deviceId,
+              to: 'me',
+              text: `${displayName} joined`,
+              timestamp: Date.now(),
+              isMine: false,
+              system: true,
+            };
+            setMessages(prev => [...prev, joinMsg]);
+            setUnreadCount(prev => prev + 1);
           }
           if (isInLobby) {
             registerMemberSync(deviceId, Date.now(), { source: isNewMember ? 'first-signal' : 'signal-update' });
@@ -1402,6 +1418,13 @@ export const BluetoothProvider = ({ children }) => {
             setMemberNickname(deviceId, nickname);
             setStatusMessage(`Name synced: ${nickname}`);
             setTimeout(() => setStatusMessage(''), 2000);
+            // Update any existing "joined" system messages for this device to use the new nickname
+            setMessages(prev => prev.map(m => {
+              if (m && m.system && m.from === deviceId && typeof m.text === 'string' && m.text.toLowerCase().includes('joined')) {
+                return { ...m, text: `${nickname} joined` };
+              }
+              return m;
+            }));
           }
         }
       }

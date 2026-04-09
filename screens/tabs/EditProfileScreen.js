@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Image } from 'react-native';
-import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ImageBackground, TextInput } from 'react-native';
-import { ArrowLeft, User, Radio, Camera, Phone } from 'lucide-react-native';
-import { COLORS } from '../../constants/theme';
+import { View, Text, Image, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ImageBackground, TextInput } from 'react-native';
+import { ArrowLeft, User, Radio, Phone } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
 import { MainButton } from '../../components/shared';
 import { useTheme } from '../../context/ThemeContext';
@@ -10,15 +8,10 @@ import { useLobby } from '../../context/LobbyContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
 import { useUser } from '../../context/UserContext';
 
-let ImagePicker = null;
-try {
-  ImagePicker = require('expo-image-picker');
-} catch (error) {
-  console.warn('expo-image-picker is not available in this runtime build.', error);
-}
+// Image upload removed — using initials instead of profile photo
 
 const EditProfileScreen = ({ onBack }) => {
-  const { colors, isDarkMode, toggleDarkMode } = useTheme();
+  const { colors, isDarkMode } = useTheme();
   const { myNickname, setMyNickname, deviceNickname, setDeviceNickname } = useLobby();
   const { connectedDevice, isConnected } = useBluetoothDevice();
   const {
@@ -27,13 +20,11 @@ const EditProfileScreen = ({ onBack }) => {
     contactName: ctxContactName,
     contactPhone: ctxContactPhone,
     medicalCondition: ctxMedicalCondition,
-    profilePicture: ctxProfilePicture, 
     setFirstName: setCtxFirstName,
     setLastName: setCtxLastName,
     setContactName: setCtxContactName,
     setContactPhone: setCtxContactPhone,
     setMedicalCondition: setCtxMedicalCondition,
-    setProfilePicture: setCtxProfilePicture,
   } = useUser();
   
   const [firstName, setFirstName] = useState('');
@@ -43,7 +34,6 @@ const EditProfileScreen = ({ onBack }) => {
   const [contactName, setContactName] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [medicalCondition, setMedicalCondition] = useState('');
-  const [profilePicture, setProfilePicture] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
 
   // Load saved nickname on mount
@@ -76,11 +66,9 @@ const EditProfileScreen = ({ onBack }) => {
       setMedicalCondition(ctxMedicalCondition);
     }
 
-    if (ctxProfilePicture) {
-      setProfilePicture(ctxProfilePicture);
-    }
+    // profile picture handling removed
 
-  }, [ctxFirstName, ctxLastName, ctxContactName, ctxContactPhone, ctxMedicalCondition, ctxProfilePicture]);
+  }, [ctxFirstName, ctxLastName, ctxContactName, ctxContactPhone, ctxMedicalCondition]);
 
   const handleSave = async () => {
     if (!isEditing) return;
@@ -100,9 +88,7 @@ const EditProfileScreen = ({ onBack }) => {
     if (contactName.trim()) await setCtxContactName(contactName.trim());
     if (contactPhone.trim()) await setCtxContactPhone(contactPhone.trim());
     if (medicalCondition.trim()) await setCtxMedicalCondition(medicalCondition.trim());
-    if (profilePicture && typeof setCtxProfilePicture === 'function') {
-      await setCtxProfilePicture(profilePicture);
-    }
+    // Profile photo upload removed; we store names only
 
     Alert.alert('Saved', 'Your profile has been updated.');
     setIsEditing(false);
@@ -114,46 +100,12 @@ const EditProfileScreen = ({ onBack }) => {
     setContactName(ctxContactName || '');
     setContactPhone(ctxContactPhone || '');
     setMedicalCondition(ctxMedicalCondition || '');
-    setProfilePicture(ctxProfilePicture || null);
     setNickname(myNickname || ctxFirstName || '');
     setDeviceName(deviceNickname || '');
     setIsEditing(false);
   };
-
-  const handlePickImage = async () => {
-  if (!ImagePicker) {
-    Alert.alert(
-      'Photo picker unavailable',
-      'This build does not include the native image picker module. Reinstall the app as a fresh Expo dev build, then try again.'
-    );
-    return;
-  }
-
-  try {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Permission required', 'Please allow access to your photo library.');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
-    });
-
-    if (!result.canceled) {
-      setProfilePicture(result.assets[0].uri);
-    }
-  } catch (error) {
-    console.warn('Failed to launch image picker.', error);
-    Alert.alert(
-      'Photo picker error',
-      'Unable to open the photo picker in this build. Reinstall the app as a dev client and clear the Metro cache.'
-    );
-  }
-};
+  // derive initials dynamically from first/last name
+  const initials = `${(firstName && firstName[0] ? firstName[0] : '').toUpperCase()}${(lastName && lastName[0] ? lastName[0] : '').toUpperCase()}`;
   return (
     <ImageBackground 
       source={require('../../assets/dashboard_bg.png')} 
@@ -204,46 +156,19 @@ const EditProfileScreen = ({ onBack }) => {
 >
         <View style={{ alignItems: 'center', marginBottom: 20 }}>
           <View style={{ alignItems: 'center', marginBottom: 20 }}>
-            <TouchableOpacity onPress={handlePickImage} disabled={!isEditing}>
-              <View style={{ width: 100, height: 100 }}>
-                <View style={{
-                  width: 100,
-                  height: 100,
-                  borderRadius: 50,
-                  borderWidth: 2,
-                  borderColor: 'black',
-                  overflow: 'hidden',
-                }}>
-                  {profilePicture ? (
-                    <Image 
-                      source={{ uri: profilePicture }} 
-                      style={{ width: 100, height: 100 }}
-                    />
-                  ) : (
-                    <Image 
-                      source={require('../../assets/add_profile.jpg')} 
-                      style={{ width: 210, height: 210, position: 'absolute', top: -57, left: -57 }} 
-                    />
-                  )}
-                  </View>
-                    <View style={{
-                      position: 'absolute',
-                      bottom: 0,
-                      right: 0,
-                      backgroundColor: '#4CAF50',
-                      borderRadius: 12,
-                      width: 24,
-                      height: 24,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}>
-                    <Camera size={14} color="white" />
-                  </View>
-                </View>
-            </TouchableOpacity>
-            <TouchableOpacity style={{ marginTop: 1, opacity: isEditing ? 1 : 0.6 }} onPress={handlePickImage} disabled={!isEditing}>
-              <Text style={{ color: colors.primary, fontWeight: '700' }}>{isEditing ? 'PROFILE PHOTO' : 'PROFILE PHOTO (LOCKED)'}</Text>
-            </TouchableOpacity>
+            <View style={{
+              width: 100,
+              height: 100,
+              borderRadius: 50,
+              borderWidth: 2,
+              borderColor: colors.textDark || 'black',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: colors.primaryLight || '#eee',
+            }}>
+              <Text style={{ fontSize: 34, fontWeight: '800', color: colors.primary || '#156e05' }}>{initials || '??'}</Text>
+            </View>
+            <Text style={{ marginTop: 8, color: colors.primary, fontWeight: '700' }}>PROFILE NAME</Text>
           </View>
         </View>
         
