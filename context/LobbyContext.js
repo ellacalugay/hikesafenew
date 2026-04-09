@@ -616,8 +616,13 @@ export const LobbyProvider = ({ children }) => {
 
   // Get nickname for a device (returns deviceId if no nickname set)
   const getMemberNickname = useCallback((deviceId) => {
+    if (deviceId === null || deviceId === undefined) return '';
+    // Prefer our own stored nickname when asked for our device id
+    if (deviceId === myDeviceId && (myNickname || '').trim().length > 0) {
+      return myNickname;
+    }
     return memberNicknames[deviceId] || `Device ${deviceId}`;
-  }, [memberNicknames]);
+  }, [memberNicknames, myDeviceId, myNickname]);
 
   // Set your own nickname
   const setMyNickname = useCallback(async (nickname) => {
@@ -627,7 +632,18 @@ export const LobbyProvider = ({ children }) => {
     } catch (error) {
       console.error('Failed to save my nickname:', error);
     }
-  }, []);
+
+    // Also ensure our device id maps to the nickname in the member map
+    // so components using getMemberNickname() will show the correct name
+    if (myDeviceId !== null && myDeviceId !== undefined && (nickname || '').trim().length > 0) {
+      try {
+        // setMemberNickname persists into storage as well
+        setMemberNickname(myDeviceId, nickname);
+      } catch (e) {
+        // best-effort, ignore errors here
+      }
+    }
+  }, [myDeviceId, setMemberNickname]);
 
   // Set device nickname (local name for connected BLE device)
   const setDeviceNickname = useCallback(async (nickname) => {
