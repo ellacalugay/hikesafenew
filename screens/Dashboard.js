@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, ImageBackground, BackHandler } from 'react-native';
 import { Home, MapPin, MessageCircle, Compass, User, Check, CheckSquare, Square, AlertTriangle, X, Users, Radio } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS } from '../constants/theme';
 import { styles } from '../styles/styles';
 import { useTheme } from '../context/ThemeContext';
@@ -18,11 +19,20 @@ import HelpScreen from './tabs/HelpScreen';
 import ReportProblemScreen from './tabs/ReportProblemScreen';
 import MembersTab from './tabs/MembersTab';
 
-const TabIcon = ({ icon: Icon, active, onPress }) => (
-  <TouchableOpacity style={styles.tabItem} onPress={onPress} activeOpacity={0.85}>
-    <View style={[styles.tabIconWrap, active && styles.tabIconWrapActive]}>
-      <Icon size={23} color={active ? '#ffffff' : '#a5a09a'} strokeWidth={2.3} />
-    </View>
+const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
+  <TouchableOpacity style={styles.tabItem} onPress={onPress}>
+    {active ? (
+      <LinearGradient
+        colors={[colors.primaryLight, colors.primary]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.activeTabGradient}
+      >
+        <Icon size={24} color="#FFFFFF" />
+      </LinearGradient>
+    ) : (
+      <Icon size={24} color="#000000" />
+    )}
   </TouchableOpacity>
 );
 
@@ -177,7 +187,6 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
       case 'settings': return <SettingsScreen onBack={() => setActiveTab('profile')} onDeleteAccount={onDeleteAccount} />;
       case 'help': return <HelpScreen onBack={() => setActiveTab('profile')} />;
       case 'reportProblem': return <ReportProblemScreen onBack={() => setActiveTab('profile')} />;
-      case 'admin': return isHost ? <MembersTab /> : <HomeTab onChangeTab={setActiveTab} onLobbyPress={handleLobbyPress} />;
       case 'members': return isHost ? <MembersTab /> : <HomeTab onChangeTab={setActiveTab} onLobbyPress={handleLobbyPress} />;
       default: return <HomeTab />;
     }
@@ -193,14 +202,14 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
       
       {showBottomNav && (
         <View style={[styles.bottomNav, { backgroundColor: colors.surfaceBg, borderTopColor: colors.borderColor }]}>
-          <TabIcon icon={Home} active={activeTab === 'home'} onPress={() => setActiveTab('home')} />
-          <TabIcon icon={MapPin} active={activeTab === 'location'} onPress={() => setActiveTab('location')} />
-          <TabIcon icon={Compass} active={activeTab === 'compass'} onPress={() => setActiveTab('compass')} />
-          <TabIcon icon={MessageCircle} active={activeTab === 'message'} onPress={() => setActiveTab('message')} />
+          <TabIcon icon={Home} label="Home" active={activeTab === 'home'} onPress={() => setActiveTab('home')} colors={colors} />
+          <TabIcon icon={MapPin} label="Loc" active={activeTab === 'location'} onPress={() => setActiveTab('location')} colors={colors} />
+          <TabIcon icon={MessageCircle} label="Chat" active={activeTab === 'message'} onPress={() => setActiveTab('message')} colors={colors} />
           {isHost && (
-            <TabIcon icon={Users} active={activeTab === 'admin' || activeTab === 'members'} onPress={() => setActiveTab('admin')} />
+            <TabIcon icon={Users} label="Members" active={activeTab === 'members'} onPress={() => setActiveTab('members')} colors={colors} />
           )}
-          <TabIcon icon={User} active={activeTab === 'profile'} onPress={() => setActiveTab('profile')} />
+          <TabIcon icon={Compass} label="Comp" active={activeTab === 'compass'} onPress={() => setActiveTab('compass')} colors={colors} />
+          <TabIcon icon={User} label="Prof" active={activeTab === 'profile'} onPress={() => setActiveTab('profile')} colors={colors} />
         </View>
       )}
 
@@ -388,7 +397,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                         style={[styles.modalButton, { backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.primary, marginTop: 10 }]}
                         onPress={() => {
                           setShowLobbyModal(false);
-                          setActiveTab('admin');
+                          setActiveTab('members');
                         }}
                       >
                         <Text style={{ color: colors.primary, fontWeight: '600' }}>View Members</Text>
@@ -428,7 +437,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                 width: 64, 
                 height: 64, 
                 borderRadius: 20, 
-                backgroundColor: activeAlert?.type === 'OFFLINE' ? '#E0E0E0' : '#FDECEA',
+                // backgroundColor: activeAlert?.type === 'OFFLINE' ? '#E0E0E0' : '#FDECEA',
                 alignItems: 'center', 
                 justifyContent: 'center',
               }}>
