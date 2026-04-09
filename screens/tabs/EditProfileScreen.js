@@ -199,7 +199,7 @@ const EditProfileScreen = ({ onBack }) => {
         style={{ flex: 1, padding: 2, backgroundColor: 'transparent' }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 50, paddingHorizontal: 10 }}
+        contentContainerStyle={{ paddingTop: 12, paddingBottom: 80, paddingHorizontal: 10 }}
         
 >
         <View style={{ alignItems: 'center', marginBottom: 20 }}>
@@ -253,8 +253,8 @@ const EditProfileScreen = ({ onBack }) => {
           backgroundColor: colors.profileBg,
           borderRadius: 16,
           paddingHorizontal: 20,
-          paddingTop: 20,
-          paddingBottom: 20,
+          paddingTop: 24,
+          paddingBottom: 24,
           shadowColor: '#000',
           shadowOffset: { width: 0, height: 2 },
           shadowOpacity: 0.10,
