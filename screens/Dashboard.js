@@ -204,6 +204,12 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
     dismissAlert();
   };
 
+  const handleOnMyWay = async () => {
+    await sendCommand('ON_MY_WAY');
+    setShowSOSAlertModal(false);
+    dismissAlert();
+  };
+
   const handleOpenChat = (name) => {
     setChatName(name);
     setActiveTab('chat');
@@ -553,7 +559,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                 width: 64, 
                 height: 64, 
                 borderRadius: 20, 
-                backgroundColor: activeAlert?.type === 'OFFLINE' ? '#E0E0E0' : '#FDECEA',
+                // backgroundColor: activeAlert?.type === 'OFFLINE' ? '#E0E0E0' : '#FDECEA',
                 alignItems: 'center', 
                 justifyContent: 'center',
               }}>
@@ -598,31 +604,33 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
               </View>
             )}
             
-            <View style={{ flexDirection: 'row', marginTop: 20 }}>
+            {activeAlert?.localEmergency ? (
+              // SENDER: Show only "I am OK" button
               <TouchableOpacity 
-                style={[styles.modalButton, { backgroundColor: colors.inputBg, marginRight: 10, flex: 1 }]}
-                onPress={handleDismissSOSAlert}
-              >
-                <Text style={{ color: colors.textDark, fontWeight: '600' }}>Dismiss</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.modalButton, { backgroundColor: colors.primary, flex: 1 }]}
-                onPress={() => {
-                  handleDismissSOSAlert();
-                  handleLocationTabPress();
-                }}
-              >
-                <Text style={{ color: 'white', fontWeight: '600' }}>View Location</Text>
-              </TouchableOpacity>
-            </View>
-            
-            {isConnected && (
-              <TouchableOpacity 
-                style={[styles.modalButton, { backgroundColor: colors.primary, marginTop: 10, width: '100%' }]}
+                style={[styles.modalButton, { backgroundColor: colors.primary, marginTop: 20, width: '100%' }]}
                 onPress={handleRespondOK}
               >
-                <Text style={{ color: 'white', fontWeight: '600' }}>Send OK Response</Text>
+                <Text style={{ color: 'white', fontWeight: '600' }}>I am OK</Text>
               </TouchableOpacity>
+            ) : (
+              // RECEIVER: Show "I am on my way" and "View Location" buttons
+              <View style={{ flexDirection: 'row', marginTop: 20 }}>
+                <TouchableOpacity 
+                  style={[styles.modalButton, { backgroundColor: colors.inputBg, marginRight: 10, flex: 1 }]}
+                  onPress={handleOnMyWay}
+                >
+                  <Text style={{ color: colors.textDark, fontWeight: '600' }}>I am on my way</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.modalButton, { backgroundColor: colors.primary, flex: 1 }]}
+                  onPress={() => {
+                    handleDismissSOSAlert();
+                    handleLocationTabPress();
+                  }}
+                >
+                  <Text style={{ color: 'white', fontWeight: '600' }}>View Location</Text>
+                </TouchableOpacity>
+              </View>
             )}
           </View>
         </View>

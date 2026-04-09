@@ -118,6 +118,9 @@ bool isOffline = false;
 unsigned long lastSOSTime = 0;
 const unsigned long sosInterval = 10000;
 
+unsigned long lastECBroadcastTime = 0;
+const unsigned long ecBroadcastInterval = 45000;  // Refresh EC every 45 seconds
+
 uint32_t currentLobbyCode = 0;
 String myNickname = "Hiker";
 String myECName   = "None";
@@ -132,6 +135,7 @@ Preferences preferences;
 #define MSG_BEAT  5
 #define MSG_NICK  6
 #define MSG_EC    7
+#define MSG_ON_MY_WAY 8
 
 #define MAX_TEXT_LEN 50
 #define MAX_NICK_LEN 15
@@ -442,6 +446,18 @@ void loop() {
     if (millis() - lastSOSTime >= sosInterval) {
       lastSOSTime = millis();
       sendLoRaMessage(sosActive ? MSG_SOS : MSG_MORSE, 0);
+      // Rebroadcast EC with emergency for consistency
+      if (currentLobbyCode > 0) {
+        sendLoRaEmergencyContact();
+      }
+    }
+  }
+
+  // --- Periodic EC refresh (keep EC data fresh for all devices) ---
+  if (currentLobbyCode > 0 && !sosActive && !morseActive) {
+    if (millis() - lastECBroadcastTime >= ecBroadcastInterval) {
+      lastECBroadcastTime = millis();
+      sendLoRaEmergencyContact();
     }
   }
 
@@ -565,6 +581,12 @@ void triggerSOS() {
   // Also send from device itself
   sendLoRaMessage(MSG_SOS, 0);
   
+  // Immediately broadcast EC so receivers know who to contact
+  delay(100);
+  if (currentLobbyCode > 0) {
+    sendLoRaEmergencyContact();
+  }
+  
   lastSOSTime = millis();
 
   digitalWrite(SOS_LED, HIGH); delay(1000); digitalWrite(SOS_LED, LOW);
@@ -618,10 +640,20 @@ void checkBluetoothCommands() {
         } else {
           triggerOkay();
         }
+      } else if (cmd == "ON_MY_WAY") {
+        // Receiver is responding - send alert to SOS sender
+        sendLoRaMessage(MSG_ON_MY_WAY, 0);
+        sendToPhone("STATUS:ON_MY_WAY_SENT");
       } else if (cmd.startsWith("LOBBY:")) {
         currentLobbyCode = cmd.substring(6).toInt();
         preferences.putUInt("lobby_code", currentLobbyCode);
         sendToPhone("STATUS:LOBBY_SET," + String(currentLobbyCode));
+        // Broadcast own EC when joining a new lobby
+        if (currentLobbyCode > 0) {
+          delay(200);  // Small delay to ensure device is ready
+          sendLoRaEmergencyContact();
+          lastECBroadcastTime = millis();
+        }
         updateDisplay();
       } else if (cmd.startsWith("NICK:")) {
         myNickname = cmd.substring(5);
@@ -641,7 +673,11 @@ void checkBluetoothCommands() {
           preferences.putString("ec_name",  myECName);
           preferences.putString("ec_phone", myECPhone);
           sendToPhone("STATUS:EC_SET");
-          sendLoRaEmergencyContact();
+          // Immediately broadcast EC to all group members
+          if (currentLobbyCode > 0) {
+            sendLoRaEmergencyContact();
+            lastECBroadcastTime = millis();
+          }
           updateDisplay();
         }
       } else if (cmd.startsWith("MSG:")) {
@@ -812,6 +848,9 @@ void receiveLoRaMessage() {
       alert += "OK,";
       receivedSOS = receivedMorse = false;
       digitalWrite(GREEN_LED, HIGH); delay(500); digitalWrite(GREEN_LED, LOW);
+    } else if (msg.msgType == MSG_ON_MY_WAY) {
+      alert += "ON_MY_WAY,";
+      // Receiver is coming to help - keep SOS active but show different indicator
     } else if (msg.msgType == MSG_BEAT) {
       // Forward regular location updates to connected phone(s)
       // so the app can show live tracking even without SOS.
@@ -1044,6 +1083,12 @@ void checkMorseInput() {
     }
     // Also send from device itself
     sendLoRaMessage(MSG_MORSE, 0);
+    
+    // Immediately broadcast EC so receivers know who to contact
+    delay(100);
+    if (currentLobbyCode > 0) {
+      sendLoRaEmergencyContact();
+    }
     
     lastSOSTime = millis();
 
