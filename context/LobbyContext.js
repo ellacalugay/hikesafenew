@@ -487,6 +487,56 @@ export const LobbyProvider = ({ children }) => {
     console.log('Left lobby');
   }, [sendLobbyCommand]);
 
+  const clearAccount = useCallback(async () => {
+    // Best-effort: clear lobby filter on device
+    if (sendLobbyCommand) {
+      try {
+        await sendLobbyCommand('LOBBY:0');
+      } catch (e) {
+        console.log('Could not clear device lobby during account reset:', e);
+      }
+    }
+
+    setLobbyCodeState(null);
+    setLobbyName('');
+    setMaxMembers(10);
+    setIsHost(false);
+    setIsInLobby(false);
+    setHostDeviceId(null);
+    setMyDeviceIdState(null);
+    setLobbyMembers([]);
+    setMemberNicknames({});
+    setMyNicknameState('');
+    setDeviceNicknameState('');
+    setEmergencyContacts({});
+    setMyEmergencyContactState({ name: '', phone: '' });
+    setRememberEnabled(false);
+    setRememberedUsername('');
+    setRememberedJoinCode('');
+
+    try {
+      await Promise.all([
+        AsyncStorage.removeItem(LOBBY_CODE_KEY),
+        AsyncStorage.removeItem(LOBBY_NAME_KEY),
+        AsyncStorage.removeItem(LOBBY_ROLE_KEY),
+        AsyncStorage.removeItem(LOBBY_MAX_MEMBERS_KEY),
+        AsyncStorage.removeItem(MEMBER_NICKNAMES_KEY),
+        AsyncStorage.removeItem(MY_NICKNAME_KEY),
+        AsyncStorage.removeItem(DEVICE_NICKNAME_KEY),
+        AsyncStorage.removeItem(HOST_DEVICE_ID_KEY),
+        AsyncStorage.removeItem(MY_DEVICE_ID_KEY),
+        AsyncStorage.removeItem(EMERGENCY_CONTACTS_KEY),
+        AsyncStorage.removeItem(MY_EMERGENCY_CONTACT_KEY),
+        AsyncStorage.removeItem(REMEMBER_KEY),
+        AsyncStorage.removeItem(REMEMBER_USERNAME_KEY),
+        AsyncStorage.removeItem(REMEMBER_JOINCODE_KEY),
+        AsyncStorage.removeItem(REMEMBER_EXPIRY_KEY),
+      ]);
+    } catch (error) {
+      console.error('Failed to clear account lobby data:', error);
+    }
+  }, [sendLobbyCommand]);
+
   const setMyDeviceId = useCallback(async (deviceId) => {
     if (deviceId === null || deviceId === undefined || Number.isNaN(deviceId)) {
       return;
@@ -713,6 +763,7 @@ export const LobbyProvider = ({ children }) => {
     setRememberEnabled: setRememberEnabledFn,
     saveRememberData,
     clearRememberData,
+    clearAccount,
     generateLobbyCode,
   };
 

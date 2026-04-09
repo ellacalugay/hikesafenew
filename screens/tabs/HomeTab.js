@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ImageBackground, Image } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ImageBackground, Image, Pressable, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Trees, User, MessageCircle, MapPin, Compass, Radio, Users, AlertTriangle } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
@@ -26,9 +26,9 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
 };
 
 const ServiceItem = ({ icon: Icon, label, onPress, colors, bgColor, badge }) => (
-  <TouchableOpacity style={localStyles.serviceItem} onPress={onPress} activeOpacity={0.8}>
+  <TouchableOpacity style={localStyles.serviceCard} onPress={onPress} activeOpacity={0.8}>
     <View style={[localStyles.serviceIconBox, { backgroundColor: bgColor }]}>
-      <Icon size={26} color={colors.textDark} strokeWidth={2} />
+      <Icon size={28} color={colors.textDark} strokeWidth={2} />
       {badge > 0 && (
         <View style={localStyles.badge}>
           <Text style={localStyles.badgeText}>{badge}</Text>
@@ -41,7 +41,7 @@ const ServiceItem = ({ icon: Icon, label, onPress, colors, bgColor, badge }) => 
 
 const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
-  const { isConnected, isDeviceReachable, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, unreadCount } = useBluetoothDevice();
+  const { isConnected, isDeviceReachable, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, unreadCount, sendSOS } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isHost, myNickname } = useLobby();
   
   // Get signal quality from RSSI (LoRa typical ranges: -30 to -120 dBm)
@@ -74,6 +74,16 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
     return `${(meters / 1000).toFixed(1)} km`;
   };
 
+  const handleEmergencySOS = async () => {
+    if (!isConnected) {
+      Alert.alert('Not Connected', 'Please connect to your SOS device first via the Location tab.');
+      return;
+    }
+
+    await sendSOS();
+    Alert.alert('SOS Sent', 'Your SOS signal has been broadcasted to all group members.');
+  };
+
   // Dynamic badge counts
   const memberAlerts = (memberLocations || []).filter(m => m.alertType === 'SOS' || m.alertType === 'MORSE').length;
   const totalAlerts = (activeAlert ? 1 : 0) + memberAlerts;
@@ -86,7 +96,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
       imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
     >
       <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
-      <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={[styles.scrollContent, { backgroundColor: 'transparent', paddingBottom: 120 }]}>
+      <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={[styles.scrollContent, { backgroundColor: 'transparent', paddingBottom: 96 }]}>
         <View style={styles.headerRow}>
           <View>
             <Text style={[styles.welcomeText, { color: colors.textDark }, { fontWeight: 'bold' }]}>Hello!</Text>
@@ -171,55 +181,61 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
           </View>
         )}
 
-        <TouchableOpacity onPress={onLobbyPress} activeOpacity={0.8}>
-          <LinearGradient colors={[colors.primaryLight, colors.primary]} style={styles.lobbyCard}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={styles.lobbyLabel}>{lobbyName || 'GROUP STATUS'}</Text>
-              {isHost && (
-                <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
-                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }}>HOST</Text>
+        <TouchableOpacity onPress={onLobbyPress} activeOpacity={0.8} style={{ marginTop: -8 }}>
+          <LinearGradient colors={[colors.primaryLight, colors.primary]} style={localStyles.compactLobbyCard}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={localStyles.compactLobbyTitle}>{lobbyName || 'My Lobby'}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+                  <Users size={14} color="#fff" />
+                  <Text style={localStyles.compactLobbyCode}>{lobbyCode || '--'}</Text>
                 </View>
-              )}
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={localStyles.compactStatusLabel}>LOBBY CODE</Text>
+                <Text style={localStyles.compactStatusValue}>{lobbyCode || '----'}</Text>
+              </View>
             </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-              <Users size={18} color="#fff" style={{ marginRight: 8 }} />
-              <Text style={styles.lobbyCode}>
-                {lobbyCode ? `LOBBY: ${lobbyCode}` : (isConnected ? 'ACTIVE' : 'NO LOBBY')}
-              </Text>
-            </View>
-            
-            <View style={styles.statsRow}>
-              <View style={styles.statItem}>
-                <Text style={styles.statLabel}>MEMBERS</Text>
-                <Text style={styles.statValue}>{memberLocations.length}</Text>
-              </View>
-              <View style={styles.statItem}>
-                <Text style={styles.statLabel}>NEAREST</Text>
-                <Text style={styles.statValue}>{formatNearestDistance(nearestDistance)}</Text>
-              </View>
-              <View style={styles.statItem}>
-                <Text style={styles.statLabel}>SIGNAL</Text>
-                {loraSignalStrength ? (
-                  <Text style={[styles.statValue, { fontSize: 12 }]}>{loraSignalStrength} dBm</Text>
-                ) : (
-                  <View style={styles.signalIcon}>
-                    <View style={[styles.bar, {height: 6, backgroundColor: signalQuality >= 1 ? '#fff' : '#666'}]} />
-                    <View style={[styles.bar, {height: 10, backgroundColor: signalQuality >= 2 ? '#fff' : '#666'}]} />
-                    <View style={[styles.bar, {height: 14, backgroundColor: signalQuality >= 3 ? '#fff' : '#666'}]} />
-                  </View>
-                )}
-              </View>
+            <View style={{ borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.2)', marginTop: 8, paddingTop: 8, flexDirection: 'row', justifyContent: 'space-between' }}>
+              <Text style={localStyles.compactStatusLabel}>STATUS</Text>
+              <Text style={localStyles.compactStatusValue}>{isConnected ? '1 Active Now' : 'Offline'}</Text>
             </View>
           </LinearGradient>
         </TouchableOpacity>
 
-        <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Services</Text>
-          <View style={styles.servicesGrid}>
-            <ServiceItem icon={User}        label="Profile"   onPress={() => onChangeTab('profile')}   colors={colors} bgColor= {colors.profileBg} badge={0} />
-            <ServiceItem icon={MessageCircle} label="Message" onPress={() => onChangeTab('message')}   colors={colors} bgColor={colors.messageBg} badge={unreadMsgs} />
-            <ServiceItem icon={MapPin}      label="Location"  onPress={() => onChangeTab('location')}  colors={colors} bgColor={colors.locationBg} badge={totalAlerts} />
-            <ServiceItem icon={Compass}     label="Compass"   onPress={() => onChangeTab('compass')}   colors={colors} bgColor={colors.compassBg} badge={0} />
+        <Text style={[localStyles.sosTitle, { color: colors.textDark }]}>EMERGENCY SOS</Text>
+        <Text style={[localStyles.sosHint, { color: colors.gray }]}>PRESS AND HOLD FOR 2 SECONDS</Text>
+
+        <Pressable
+          onLongPress={handleEmergencySOS}
+          delayLongPress={2000}
+          style={({ pressed }) => [
+            localStyles.sosPressable,
+            !isConnected && localStyles.sosDisabled,
+            pressed && localStyles.sosPressed,
+          ]}
+        >
+          <View style={[localStyles.sosCard, { backgroundColor: isConnected ? '#D0312D' : '#8C4A4A' }]}>
+            <View style={localStyles.sosInnerFrame}>
+              <View style={localStyles.sosIconWrap}>
+                <AlertTriangle size={42} color="#fff" strokeWidth={2.6} />
+              </View>
+              <Text style={localStyles.sosLabel}>SOS</Text>
+              <Text style={localStyles.sosSubLabel}>HOLD TO ALERT</Text>
+            </View>
           </View>
+        </Pressable>
+
+        <View style={localStyles.servicesGrid2x2}>
+          <View style={localStyles.serviceRow}>
+            <ServiceItem icon={User}          label="PROFILE"   onPress={() => onChangeTab('profile')}   colors={colors} bgColor={colors.profileBg} badge={0} />
+            <ServiceItem icon={MessageCircle} label="MESSAGE"   onPress={() => onChangeTab('message')}   colors={colors} bgColor={colors.messageBg} badge={unreadMsgs} />
+          </View>
+          <View style={localStyles.serviceRow}>
+            <ServiceItem icon={MapPin}  label="LOCATION"  onPress={() => onChangeTab('location')}  colors={colors} bgColor={colors.locationBg} badge={totalAlerts} />
+            <ServiceItem icon={Compass} label="COMPASS"   onPress={() => onChangeTab('compass')}   colors={colors} bgColor={colors.compassBg} badge={0} />
+          </View>
+        </View>
 
       </ScrollView>
     </ImageBackground>
@@ -308,9 +324,141 @@ const localStyles = StyleSheet.create({
     fontWeight: '600',
   },
 
+  sosHint: {
+    fontSize: 12,
+    fontWeight: '500',
+    textAlign: 'center',
+    marginBottom: 12,
+    letterSpacing: 0.4,
+  },
+
+  sosTitle: {
+    fontSize: 24,
+    fontWeight: '900',
+    textAlign: 'center',
+    letterSpacing: 1,
+    marginTop: 6,
+  },
+
+  sosPressable: {
+    marginTop: 6,
+    alignSelf: 'stretch',
+  },
+
+  sosDisabled: {
+    opacity: 0.7,
+  },
+
+  sosPressed: {
+    transform: [{ scale: 0.985 }],
+  },
+
+  sosCard: {
+    borderRadius: 28,
+    padding: 16,
+    minHeight: 200,
+    shadowColor: '#D0312D',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.38,
+    shadowRadius: 18,
+    elevation: 13,
+  },
+
+  sosInnerFrame: {
+    flex: 1,
+    borderRadius: 24,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.26)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingVertical: 20,
+  },
+
+  sosIconWrap: {
+    width: 84,
+    height: 84,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    marginBottom: 14,
+  },
+
+  sosLabel: {
+    color: '#fff',
+    fontSize: 28,
+    fontWeight: '900',
+    letterSpacing: 6,
+  },
+
+  sosSubLabel: {
+    color: 'rgba(255,255,255,0.9)',
+    marginTop: 10,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 2,
+  },
+
+  compactLobbyCard: {
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
+  },
+
+  compactLobbyTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+
+  compactLobbyCode: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+
+  compactStatusLabel: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+
+  compactStatusValue: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+
+  servicesGrid2x2: {
+    marginTop: 12,
+  },
+
+  serviceRow: {
+    flexDirection: 'row',
+    marginBottom: 8,
+  },
+
   serviceItem: {
     alignItems: 'center',
-    width: '22%',
+    width: '23%',
+  },
+  serviceCard: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f5f5f5',
+    borderRadius: 16,
+    padding: 16,
+    margin: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
   },
   serviceIconBox: {
     width: 64,
@@ -318,7 +466,7 @@ const localStyles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08,
@@ -327,8 +475,9 @@ const localStyles = StyleSheet.create({
   },
   serviceText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
     textAlign: 'center',
+    letterSpacing: 0.5,
   },
   badge: {
     position: 'absolute',

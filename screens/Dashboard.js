@@ -36,9 +36,9 @@ const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
   </TouchableOpacity>
 );
 
-const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
+const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const { colors } = useTheme();
-  const { activeAlert, dismissAlert, sendSOS, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
+  const { activeAlert, dismissAlert, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isHost, leaveLobby, isInLobby, hostDeviceId, myDeviceId, getEmergencyContactForDevice, getMemberNickname } = useLobby();
   const [activeTab, setActiveTab] = useState('home');
   const [chatName, setChatName] = useState('');
@@ -125,24 +125,6 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
     dismissAlert();
   };
 
-  const handleSendSOSFromLobby = async () => {
-    if (!isConnected) {
-      Alert.alert('Not Connected', 'Please connect to your SOS device first via the Location tab.');
-      return;
-    }
-    await sendSOS();
-    Alert.alert('SOS Sent', 'Your SOS signal has been broadcasted to all group members.');
-  };
-
-  const handleSendOKFromLobby = async () => {
-    if (!isConnected) {
-      Alert.alert('Not Connected', 'Please connect to your SOS device first via the Location tab.');
-      return;
-    }
-    await sendOK();
-    Alert.alert('OK Sent', 'Your OK status has been broadcasted to all group members.');
-  };
-
   const handleOpenChat = (name) => {
     setChatName(name);
     setActiveTab('chat');
@@ -196,7 +178,7 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
       );
       case 'editProfile': return <EditProfileScreen onBack={() => setActiveTab('profile')} />;
       case 'chat': return <ChatScreen onBack={() => setActiveTab('message')} chatName={chatName} />;
-      case 'settings': return <SettingsScreen onBack={() => setActiveTab('profile')} />;
+      case 'settings': return <SettingsScreen onBack={() => setActiveTab('profile')} onDeleteAccount={onDeleteAccount} />;
       case 'help': return <HelpScreen onBack={() => setActiveTab('profile')} />;
       case 'reportProblem': return <ReportProblemScreen onBack={() => setActiveTab('profile')} />;
       case 'members': return isHost ? <MembersTab /> : <HomeTab onChangeTab={setActiveTab} onLobbyPress={handleLobbyPress} />;
@@ -328,7 +310,7 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
                 source={require('../assets/int bg 1.png')}
                 resizeMode="cover"
                 imageStyle={{ borderRadius: 20 }}
-                style={[styles.modalContent, { maxHeight: '80%', overflow: 'hidden', backgroundColor: 'transparent' }]}
+                style={[styles.modalContent, { maxHeight: '80%', overflow: 'hidden', backgroundColor: 'transparent', marginTop: -28 }]}
               >
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -366,44 +348,6 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
                         <Text style={{ color: colors.gray, fontSize: 12, fontWeight: '600' }}>CURRENT ADMIN</Text>
                         <Text style={{ color: colors.primary, fontWeight: '600' }}>{adminDisplay}</Text>
                       </View>
-                    </View>
-
-                    <View style={{ flexDirection: 'row', marginBottom: 12 }}>
-                      <TouchableOpacity
-                        style={{
-                          flex: 1,
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          paddingVertical: 16,
-                          borderRadius: 12,
-                          marginRight: 8,
-                          backgroundColor: isConnected ? colors.accent : colors.gray,
-                        }}
-                        onPress={handleSendSOSFromLobby}
-                        activeOpacity={0.8}
-                      >
-                        <AlertTriangle size={28} color="#fff" />
-                        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginLeft: 8 }}>SOS</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={{
-                          flex: 1,
-                          flexDirection: 'row',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          paddingVertical: 16,
-                          borderRadius: 12,
-                          marginLeft: 8,
-                          backgroundColor: isConnected ? colors.primary : colors.gray,
-                        }}
-                        onPress={handleSendOKFromLobby}
-                        activeOpacity={0.8}
-                      >
-                        <Check size={28} color="#fff" />
-                        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginLeft: 8 }}>I'm OK</Text>
-                      </TouchableOpacity>
                     </View>
 
                     <Text style={{ color: '#000', fontSize: 12, textAlign: 'center', marginBottom: 4, lineHeight: 18 }}>

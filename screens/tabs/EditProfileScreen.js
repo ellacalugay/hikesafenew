@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import * as ImagePicker from 'expo-image-picker';
 import { Image } from 'react-native';
 import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ImageBackground } from 'react-native';
 import { ArrowLeft, User, Radio, Camera } from 'lucide-react-native';
@@ -10,6 +9,13 @@ import { useTheme } from '../../context/ThemeContext';
 import { useLobby } from '../../context/LobbyContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
 import { useUser } from '../../context/UserContext';
+
+let ImagePicker = null;
+try {
+  ImagePicker = require('expo-image-picker');
+} catch (error) {
+  console.warn('expo-image-picker is not available in this runtime build.', error);
+}
 
 const EditProfileScreen = ({ onBack }) => {
   const { colors, isDarkMode, toggleDarkMode } = useTheme();
@@ -98,19 +104,37 @@ const EditProfileScreen = ({ onBack }) => {
   };
 
   const handlePickImage = async () => {
-  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!permission.granted) {
-    Alert.alert('Permission required', 'Please allow access to your photo library.');
+  if (!ImagePicker) {
+    Alert.alert(
+      'Photo picker unavailable',
+      'This build does not include the native image picker module. Reinstall the app as a fresh Expo dev build, then try again.'
+    );
     return;
   }
-  const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    allowsEditing: true,
-    aspect: [1, 1],
-    quality: 0.8,
-  });
-  if (!result.canceled) {
-    setProfilePicture(result.assets[0].uri);
+
+  try {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permission required', 'Please allow access to your photo library.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled) {
+      setProfilePicture(result.assets[0].uri);
+    }
+  } catch (error) {
+    console.warn('Failed to launch image picker.', error);
+    Alert.alert(
+      'Photo picker error',
+      'Unable to open the photo picker in this build. Reinstall the app as a dev client and clear the Metro cache.'
+    );
   }
 };
   return (

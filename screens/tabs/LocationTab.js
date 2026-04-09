@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Dimensions, ImageBackground, Alert } from 'react-native';
-import { User, MapPin, Radio, Bluetooth, Satellite, AlertTriangle, WifiOff, Map, Target, List, Users, Play, Pause, Trash2, Route } from 'lucide-react-native';
+import { User, MapPin, Radio, Satellite, AlertTriangle, WifiOff, Map, Target, List, Play, Pause, Trash2, Route } from 'lucide-react-native';
 import MapView, { Marker, Circle, PROVIDER_DEFAULT } from 'react-native-maps';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
@@ -578,7 +578,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
     clearBreadcrumbs,
     getTrailDistance,
   } = useBluetoothDevice();
-  const { lobbyCode, lobbyName, isInLobby, isHost, getMemberNickname, myNickname } = useLobby();
+  const { getMemberNickname } = useLobby();
   // Note: Map view disabled - requires Google Maps API key configuration
   // Use 'radar' (works offline) or 'list' view
   const [viewMode, setViewMode] = useState('radar'); // 'radar', 'list' (map disabled)
@@ -611,62 +611,30 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
       imageStyle={{ resizeMode: 'cover' }}
     >
       <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
-      <View style={{ backgroundColor: colors.primaryLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12, marginHorizontal: 16, marginTop: 16, marginBottom: 6, borderRadius: 12 }}>
-        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={[styles.headerTitle, { color: colors.textDark }]}>LOCATION</Text>
-        </View>
-      </View>
       
       <ScrollView style={{flex:1, backgroundColor: 'transparent'}} contentContainerStyle={{ padding: 16 }}>
-        {/* Device Connection Status */}
-        <TouchableOpacity 
-          style={[localStyles.connectionCard, { 
-            backgroundColor: isConnected ? colors.primaryLight : colors.cardBg,
-            borderColor: isConnected ? colors.primary : colors.borderColor 
-          }]}
-          onPress={onShowDeviceConnection}
-          activeOpacity={0.7}
-        >
-          <View style={localStyles.connectionHeader}>
-            {isConnected ? (
+        {/* Device Connection Status (only when connected) */}
+        {isConnected && (
+          <TouchableOpacity 
+            style={[localStyles.connectionCard, { 
+              backgroundColor: colors.primaryLight,
+              borderColor: colors.primary,
+            }]}
+            onPress={onShowDeviceConnection}
+            activeOpacity={0.7}
+          >
+            <View style={localStyles.connectionHeader}>
               <Radio size={24} color={colors.primary} />
-            ) : (
-              <Bluetooth size={24} color={colors.gray} />
-            )}
-            <View style={localStyles.connectionText}>
-              <Text style={[localStyles.connectionTitle, { color: colors.textDark }]}>
-                {isConnected ? connectedDevice?.name : 'No Device Connected'}
-              </Text>
-              <Text style={[localStyles.connectionSubtitle, { color: colors.gray }]}>
-                {isConnected ? 'Tap to manage connection' : 'Tap to connect your HikeSafe device'}
-              </Text>
-            </View>
-          </View>
-        </TouchableOpacity>
-
-        {/* Lobby Status Card */}
-        {isInLobby && (
-          <View style={[localStyles.lobbyCard, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
-            <View style={localStyles.lobbyHeader}>
-              <Users size={20} color={colors.primary} />
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <Text style={[localStyles.lobbyTitle, { color: colors.textDark }]}>
-                  {lobbyName || 'My Lobby'}
+              <View style={localStyles.connectionText}>
+                <Text style={[localStyles.connectionTitle, { color: colors.textDark }]}>
+                  {connectedDevice?.name}
                 </Text>
-                <Text style={[localStyles.lobbySubtitle, { color: colors.gray }]}>
-                  {isHost ? 'You are the host' : 'Member'}
-                </Text>
-              </View>
-              <View style={[localStyles.lobbyCodeBadge, { backgroundColor: colors.primary }]}>
-                <Text style={localStyles.lobbyCodeText}>
-                  {lobbyCode}
+                <Text style={[localStyles.connectionSubtitle, { color: colors.gray }]}>
+                  Tap to manage connection
                 </Text>
               </View>
             </View>
-            <Text style={[localStyles.lobbyMemberCount, { color: colors.gray }]}>
-              {memberLocations.length + 1} member{memberLocations.length !== 0 ? 's' : ''} in group
-            </Text>
-          </View>
+          </TouchableOpacity>
         )}
 
         {/* My GPS Location */}
@@ -901,11 +869,16 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
           </>
         )}
         
-        <Text style={{ textAlign: 'center', color: colors.gray, marginTop: 20, marginBottom: 40, fontSize: 12 }}>
-          {isConnected 
-            ? 'Locations update automatically via LoRa' 
-            : 'Connect to your HikeSafe device to enable GPS tracking'}
-        </Text>
+        <TouchableOpacity
+          activeOpacity={isConnected ? 1 : 0.7}
+          onPress={isConnected ? undefined : onShowDeviceConnection}
+        >
+          <Text style={{ textAlign: 'center', color: colors.gray, marginTop: 20, marginBottom: 40, fontSize: 12 }}>
+            {isConnected 
+              ? 'Locations update automatically via LoRa' 
+              : 'Connect to your HikeSafe device to enable GPS tracking'}
+          </Text>
+        </TouchableOpacity>
       </ScrollView>
     </ImageBackground>
   );
