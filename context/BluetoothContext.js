@@ -89,6 +89,12 @@ export const BluetoothProvider = ({ children }) => {
   // GPS and Location data
   const [myLocation, setMyLocation] = useState({ lat: 0, lng: 0, satellites: 0, valid: false });
   const [memberLocations, setMemberLocations] = useState([]);
+  // SOS-only trail sharing
+  const [isSosTrailSharingActive, setIsSosTrailSharingActive] = useState(false);
+  const memberLocationsRef = useRef([]);
+  const isSosTrailSharingActiveRef = useRef(false);
+  const lastSosTrailRequestRef = useRef({});
+  const lastSosTrailSnapshotSentRef = useRef({ ts: 0 });
   
   // Alerts
   const [activeAlert, setActiveAlert] = useState(null);
@@ -127,6 +133,105 @@ export const BluetoothProvider = ({ children }) => {
   const [breadcrumbs, setBreadcrumbs] = useState([]);
   const [isTrackingBreadcrumbs, setIsTrackingBreadcrumbs] = useState(false);
   const lastBreadcrumbRef = useRef(null);
+  const [breadcrumbSessionDay, setBreadcrumbSessionDay] = useState(null); // e.g. "2026-04-09"
+  const breadcrumbSessionDayRef = useRef(null);
+  const [remoteBreadcrumbs, setRemoteBreadcrumbs] = useState({}); // { [deviceId]: Array<{lat,lng,timestamp}> }
+  const lastBreadcrumbBroadcastRef = useRef({ ts: 0, lat: null, lng: null });
+
+  useEffect(() => {
+    memberLocationsRef.current = memberLocations;
+  }, [memberLocations]);
+
+  useEffect(() => {
+    isSosTrailSharingActiveRef.current = isSosTrailSharingActive;
+  }, [isSosTrailSharingActive]);
+
+  useEffect(() => {
+    breadcrumbSessionDayRef.current = breadcrumbSessionDay;
+  }, [breadcrumbSessionDay]);
+
+  const getLocalDayStamp = useCallback((ts = Date.now()) => {
+    try {
+      const d = new Date(ts);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    } catch (e) {
+      return null;
+    }
+  }, []);
+
+  const filterTrailToSessionDay = useCallback((points) => {
+    const sessionDay = breadcrumbSessionDayRef.current;
+    const arr = Array.isArray(points) ? points : [];
+    if (!sessionDay) return arr;
+    return arr.filter(p => p && typeof p.timestamp === 'number' && getLocalDayStamp(p.timestamp) === sessionDay);
+  }, [getLocalDayStamp]);
+
+  const isDeviceSosActive = useCallback((deviceId) => {
+    if (deviceId === null || deviceId === undefined) return false;
+    const list = memberLocationsRef.current;
+    if (!Array.isArray(list) || list.length === 0) return false;
+    const entry = list.find(m => m && m.deviceId === deviceId);
+    return !!(entry && entry.alertType === 'SOS');
+  }, []);
+
+  const requestSosTrailSnapshot = useCallback((deviceId) => {
+    if (!isConnected) return;
+    if (!isInLobby || !lobbyCode) return;
+    if (Number.isNaN(deviceId)) return;
+
+    const now = Date.now();
+    const lastTs = lastSosTrailRequestRef.current?.[deviceId] || 0;
+    // SOS is rebroadcast periodically from firmware; throttle requests.
+    if (now - lastTs < 30000) return;
+    lastSosTrailRequestRef.current = { ...(lastSosTrailRequestRef.current || {}), [deviceId]: now };
+
+    const nonce = `${now}`;
+    // Target the SOS device so only they receive the request.
+    sendCommand(`MSG:${deviceId},__TRAIL_REQ__:${nonce}`);
+
+    // A couple retries helps with LoRa loss.
+    setTimeout(() => {
+      const retryNow = Date.now();
+      const retryLast = lastSosTrailRequestRef.current?.[deviceId] || 0;
+      if (retryNow - retryLast < 5000) return;
+      lastSosTrailRequestRef.current = { ...(lastSosTrailRequestRef.current || {}), [deviceId]: retryNow };
+      sendCommand(`MSG:${deviceId},__TRAIL_REQ__:${nonce}`);
+    }, 5000);
+  }, [isConnected, isInLobby, lobbyCode, sendCommand]);
+
+  const sendSosTrailSnapshot = useCallback((nonce, toDeviceId = 0) => {
+    if (!isConnected) return;
+    if (!isInLobby || !lobbyCode) return;
+
+    // Firmware LoRaTextMessage payload is MAX_TEXT_LEN=50, so we must send one point per message.
+    // Cap high enough for an entire day hike (typical: <= ~2500 points at ~10m spacing).
+    const MAX_SNAPSHOT_POINTS = 2500;
+    const SEND_GAP_MS = 120;
+
+    const arr = filterTrailToSessionDay(breadcrumbs);
+    const points = arr.slice(-MAX_SNAPSHOT_POINTS);
+    if (points.length === 0) return;
+
+    // Avoid re-sending huge snapshots too frequently.
+    const now = Date.now();
+    const last = lastSosTrailSnapshotSentRef.current?.ts || 0;
+    if (now - last < 15000) return;
+    lastSosTrailSnapshotSentRef.current = { ts: now };
+
+    points.forEach((p, idx) => {
+      if (!p || !p.lat || !p.lng) return;
+      const latE5 = Math.round(p.lat * 1e5);
+      const lngE5 = Math.round(p.lng * 1e5);
+      const tsS = Math.floor((p.timestamp || Date.now()) / 1000);
+      const cmd = `MSG:${toDeviceId},__BREAD__:${latE5},${lngE5},${tsS}`;
+      setTimeout(() => {
+        sendCommand(cmd);
+      }, idx * SEND_GAP_MS);
+    });
+  }, [filterTrailToSessionDay, isConnected, isInLobby, lobbyCode, breadcrumbs, sendCommand]);
   
   // Vibration control
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
@@ -400,7 +505,14 @@ export const BluetoothProvider = ({ children }) => {
         const saved = await AsyncStorage.getItem(BREADCRUMBS_KEY);
         if (saved) {
           const parsed = JSON.parse(saved);
-          setBreadcrumbs(parsed.points || []);
+          const today = getLocalDayStamp(Date.now());
+          const savedDay = parsed.sessionDay || null;
+          const sessionDay = savedDay || today;
+          setBreadcrumbSessionDay(sessionDay);
+
+          const points = Array.isArray(parsed.points) ? parsed.points : [];
+          // If stored session is from a prior day, start fresh.
+          setBreadcrumbs(sessionDay === today ? points : []);
           setIsTrackingBreadcrumbs(parsed.isTracking || false);
           console.log(`Loaded ${parsed.points?.length || 0} breadcrumbs`);
         }
@@ -409,7 +521,7 @@ export const BluetoothProvider = ({ children }) => {
       }
     };
     loadBreadcrumbs();
-  }, []);
+  }, [getLocalDayStamp]);
   
   // Save breadcrumbs when they change
   const breadcrumbSaveRef = useRef(null);
@@ -422,9 +534,17 @@ export const BluetoothProvider = ({ children }) => {
     
     breadcrumbSaveRef.current = setTimeout(async () => {
       try {
+        const sessionDay = breadcrumbSessionDayRef.current || getLocalDayStamp(Date.now());
+        if (!breadcrumbSessionDayRef.current) {
+          setBreadcrumbSessionDay(sessionDay);
+        }
+
+        const MAX_POINTS_TO_STORE = 5000;
+        const pointsToSave = filterTrailToSessionDay(breadcrumbs).slice(-MAX_POINTS_TO_STORE);
         await AsyncStorage.setItem(BREADCRUMBS_KEY, JSON.stringify({
-          points: breadcrumbs.slice(-500), // Keep last 500 points
+          points: pointsToSave,
           isTracking: isTrackingBreadcrumbs,
+          sessionDay,
         }));
       } catch (error) {
         console.error('Failed to save breadcrumbs:', error);
@@ -436,12 +556,23 @@ export const BluetoothProvider = ({ children }) => {
         clearTimeout(breadcrumbSaveRef.current);
       }
     };
-  }, [breadcrumbs, isTrackingBreadcrumbs]);
+  }, [breadcrumbs, filterTrailToSessionDay, getLocalDayStamp, isTrackingBreadcrumbs]);
   
   // Add a breadcrumb point (call when location updates)
   const addBreadcrumb = useCallback((lat, lng, altitude = null) => {
     if (!isTrackingBreadcrumbs) return;
     if (!lat || !lng || lat === 0 || lng === 0) return;
+
+    const today = getLocalDayStamp(Date.now());
+    const sessionDay = breadcrumbSessionDayRef.current;
+    if (!sessionDay) {
+      setBreadcrumbSessionDay(today);
+    } else if (sessionDay !== today) {
+      // New day rollover: start a fresh trail.
+      setBreadcrumbSessionDay(today);
+      setBreadcrumbs([]);
+      lastBreadcrumbRef.current = null;
+    }
     
     // Check minimum distance from last point (10 meters)
     if (lastBreadcrumbRef.current) {
@@ -471,15 +602,20 @@ export const BluetoothProvider = ({ children }) => {
     };
     
     lastBreadcrumbRef.current = point;
-    setBreadcrumbs(prev => [...prev, point]);
-  }, [isTrackingBreadcrumbs]);
+    setBreadcrumbs(prev => {
+      const next = [...(Array.isArray(prev) ? prev : []), point];
+      const filtered = next.filter(p => p && typeof p.timestamp === 'number' && getLocalDayStamp(p.timestamp) === today);
+      return filtered.slice(-5000);
+    });
+  }, [getLocalDayStamp, isTrackingBreadcrumbs]);
   
   // Start tracking breadcrumbs
   const startBreadcrumbTracking = useCallback(() => {
     setIsTrackingBreadcrumbs(true);
     lastBreadcrumbRef.current = null;
+    setBreadcrumbSessionDay(getLocalDayStamp(Date.now()));
     console.log('Breadcrumb tracking started');
-  }, []);
+  }, [getLocalDayStamp]);
   
   // Stop tracking breadcrumbs
   const stopBreadcrumbTracking = useCallback(() => {
@@ -493,13 +629,14 @@ export const BluetoothProvider = ({ children }) => {
       await AsyncStorage.removeItem(BREADCRUMBS_KEY);
       setBreadcrumbs([]);
       lastBreadcrumbRef.current = null;
+      setBreadcrumbSessionDay(getLocalDayStamp(Date.now()));
       console.log('Breadcrumbs cleared');
       return true;
     } catch (error) {
       console.error('Failed to clear breadcrumbs:', error);
       return false;
     }
-  }, []);
+  }, [getLocalDayStamp]);
   
   // Calculate total trail distance
   const getTrailDistance = useCallback(() => {
@@ -917,6 +1054,20 @@ export const BluetoothProvider = ({ children }) => {
                 { cancelable: true }
               );
             }
+
+            // SOS-only: request their full trail snapshot so late joiners can catch up.
+            if (type === 'SOS') {
+              // Clear any prior stored trail so the snapshot is clean/full.
+              setRemoteBreadcrumbs(prev => {
+                if (!prev) return prev;
+                const key = String(deviceId);
+                if (!Object.prototype.hasOwnProperty.call(prev, key)) return prev;
+                const next = { ...prev };
+                delete next[key];
+                return next;
+              });
+              requestSosTrailSnapshot(deviceId);
+            }
           } else if (type === 'OK') {
             // OK received - clear any active alert from that device
             setActiveAlert(prev => {
@@ -937,6 +1088,17 @@ export const BluetoothProvider = ({ children }) => {
               }
               return prev;
             });
+
+            // Drop their remote trail once SOS is cleared.
+            setRemoteBreadcrumbs(prev => {
+              if (!prev) return prev;
+              const key = String(deviceId);
+              if (!Object.prototype.hasOwnProperty.call(prev, key)) return prev;
+              const next = { ...prev };
+              delete next[key];
+              return next;
+            });
+
             addActivity('ok', deviceId, `Device ${deviceId} cancelled alert`);
             // Show status message
             setStatusMessage(`Device ${deviceId} is OK`);
@@ -952,6 +1114,58 @@ export const BluetoothProvider = ({ children }) => {
               [{ text: 'Dismiss' }],
               { cancelable: true }
             );
+          }
+        }
+      }
+
+      // LOC:[ID],[LAT],[LON],[SATS],[RSSI] - Regular location heartbeat forwarded from LoRa
+      else if (trimmed.startsWith('LOC:')) {
+        const parts = trimmed.substring(4).split(',');
+        if (parts.length >= 3) {
+          const deviceId = parseInt(parts[0], 10);
+          const lat = parseFloat(parts[1]);
+          const lng = parseFloat(parts[2]);
+          const satellites = parts.length >= 4 ? parseInt(parts[3], 10) : 0;
+          const rssi = parts.length >= 5 ? parseInt(parts[4], 10) : null;
+
+          if (!Number.isNaN(deviceId)) {
+            // Track new member joins
+            const isNewMember = !knownMembersRef.current.has(deviceId);
+            if (isNewMember) {
+              knownMembersRef.current.add(deviceId);
+              addActivity('join', deviceId, `Device ${deviceId} joined the group`);
+            }
+            if (isInLobby) {
+              registerMemberSync(deviceId, Date.now(), { source: isNewMember ? 'first-location' : 'location-update' });
+            }
+
+            // Update RSSI if present
+            if (rssi !== null && !Number.isNaN(rssi) && rssi !== 0) {
+              setLoraSignalStrength(rssi);
+            }
+
+            const valid = (lat !== 0 || lng !== 0);
+            if (!valid) return;
+
+            setMemberLocations(prev => {
+              const existing = prev.findIndex(m => m.deviceId === deviceId);
+              const nextLoc = {
+                deviceId,
+                lat,
+                lng,
+                satellites: Number.isNaN(satellites) ? 0 : satellites,
+                lastUpdate: Date.now(),
+                alertType: null,
+                isOffline: false,
+              };
+
+              if (existing >= 0) {
+                const updated = [...prev];
+                updated[existing] = { ...updated[existing], ...nextLoc };
+                return updated;
+              }
+              return [...prev, nextLoc];
+            });
           }
         }
       }
@@ -1004,6 +1218,11 @@ export const BluetoothProvider = ({ children }) => {
           }
 
           setStatusMessage(`${emergencyType} active on ${deviceLabel}`);
+
+          // Only enable trail sharing for true SOS (not MORSE), per spec.
+          if (status === 'SENDING_SOS') {
+            setIsSosTrailSharingActive(true);
+          }
         } else if (status === 'SENDING_OK') {
           // Clear active emergency state for this connected device when OK is sent.
           setActiveAlert(prev => {
@@ -1015,6 +1234,7 @@ export const BluetoothProvider = ({ children }) => {
           });
           stopEmergencySignals();
           setStatusMessage('Emergency cleared (OK sent)');
+          setIsSosTrailSharingActive(false);
         } else {
           setStatusMessage(status);
         }
@@ -1109,6 +1329,54 @@ export const BluetoothProvider = ({ children }) => {
             }
             return;
           }
+
+          // Trail snapshot request (SOS-only) - do not show in chat.
+          if (text.startsWith('__TRAIL_REQ__:')) {
+            if (Number.isNaN(fromId)) return;
+
+            const nonce = text.substring('__TRAIL_REQ__:'.length).trim();
+            // Only respond when *we* are in SOS mode.
+            if (!isSosTrailSharingActiveRef.current) return;
+            sendSosTrailSnapshot(nonce || `${Date.now()}`, 0);
+            return;
+          }
+
+          // Shared breadcrumbs (trail) - do not show in chat.
+          if (text.startsWith('__BREAD__:')) {
+            if (Number.isNaN(fromId)) return;
+            // Only accept trails for devices currently in SOS.
+            if (!isDeviceSosActive(fromId)) return;
+            const payload = text.substring('__BREAD__:'.length).trim();
+            const parts = payload.split(',').map(p => p.trim());
+            if (parts.length < 2) return;
+
+            const latE5 = parseInt(parts[0], 10);
+            const lngE5 = parseInt(parts[1], 10);
+            const tsS = parts.length >= 3 ? parseInt(parts[2], 10) : null;
+            if (Number.isNaN(latE5) || Number.isNaN(lngE5)) return;
+
+            const lat = latE5 / 1e5;
+            const lng = lngE5 / 1e5;
+            const timestamp = tsS && !Number.isNaN(tsS) ? tsS * 1000 : Date.now();
+
+            setRemoteBreadcrumbs(prev => {
+              const key = String(fromId);
+              const existing = Array.isArray(prev?.[key]) ? prev[key] : [];
+              const last = existing.length > 0 ? existing[existing.length - 1] : null;
+              if (last && last.lat === lat && last.lng === lng && last.timestamp === timestamp) return prev;
+
+              const nextArr = [...existing, { lat, lng, timestamp }].slice(-5000);
+              return { ...(prev || {}), [key]: nextArr };
+            });
+            return;
+          }
+
+          // Batched trail points (snapshot) - do not show in chat.
+          if (text.startsWith('__BREADS__:')) {
+            // Legacy format was too long for firmware MAX_TEXT_LEN=50 and may arrive truncated.
+            // Ignore to avoid corrupt/partial points.
+            return;
+          }
           
           console.log(`Received MSG from Device ${fromId}${mobileId > 0 ? ` Mobile ${mobileId}` : ''}: ${text}`);
           
@@ -1137,6 +1405,18 @@ export const BluetoothProvider = ({ children }) => {
         if (firstComma > 9) {
           const deviceId = parseInt(trimmed.substring(9, firstComma), 10);
           const text = trimmed.substring(firstComma + 1);
+
+          // Don't surface internal control traffic as chat.
+          if (
+            text.startsWith('__LOBBY_VERIFY__:') ||
+            text.startsWith('__LOBBY_ACK__:') ||
+            text.startsWith('__BREAD__:') ||
+            text.startsWith('__BREADS__:') ||
+            text.startsWith('__TRAIL_REQ__:')
+          ) {
+            return;
+          }
+
           const now = Date.now();
           let shouldIncrementUnread = true;
 
@@ -1264,7 +1544,7 @@ export const BluetoothProvider = ({ children }) => {
         setTimeout(() => setStatusMessage(''), 2000);
       }
     });
-  }, [addActivity, connectedDevice, isInLobby, parseDeviceId, pushEmergencyNotification, registerMemberSync, setEmergencyContactForDevice, setMemberNickname, setMemberOffline, setMyDeviceId, shouldThrottleEmergency, startEmergencySignals, stopEmergencySignals, triggerVibration]);
+  }, [addActivity, connectedDevice, isDeviceSosActive, isInLobby, parseDeviceId, pushEmergencyNotification, registerMemberSync, requestSosTrailSnapshot, sendSosTrailSnapshot, setEmergencyContactForDevice, setMemberNickname, setMemberOffline, setMyDeviceId, shouldThrottleEmergency, startEmergencySignals, stopEmergencySignals, triggerVibration]);
 
   const sendMyNicknameToDevice = useCallback(async () => {
     if (!isConnected) return false;
@@ -1608,6 +1888,55 @@ export const BluetoothProvider = ({ children }) => {
     syncLobbyToDevice(sendCommand);
   }, [isConnected, lobbyCode, syncLobbyToDevice, sendCommand]);
 
+  // Clear remote trails when leaving/resetting lobby.
+  useEffect(() => {
+    if (isInLobby && lobbyCode) return;
+    setRemoteBreadcrumbs({});
+    lastBreadcrumbBroadcastRef.current = { ts: 0, lat: null, lng: null };
+    setIsSosTrailSharingActive(false);
+  }, [isInLobby, lobbyCode]);
+
+  // Broadcast breadcrumb points at a low rate so other members can see your trail.
+  // Throttles to reduce LoRa traffic.
+  useEffect(() => {
+    if (!isTrackingBreadcrumbs) return;
+    if (!isConnected) return;
+    if (!isInLobby || !lobbyCode) return;
+    // Only share trail points when SOS is active.
+    if (!isSosTrailSharingActive) return;
+    if (!myLocation.valid || myLocation.lat === 0) return;
+
+    const calcMetersBetween = (lat1, lng1, lat2, lng2) => {
+      if (lat1 === null || lat1 === undefined || lng1 === null || lng1 === undefined) return null;
+      if (lat2 === null || lat2 === undefined || lng2 === null || lng2 === undefined) return null;
+      const R = 6371e3;
+      const φ1 = lat1 * Math.PI / 180;
+      const φ2 = lat2 * Math.PI / 180;
+      const Δφ = (lat2 - lat1) * Math.PI / 180;
+      const Δλ = (lng2 - lng1) * Math.PI / 180;
+      const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+        Math.cos(φ1) * Math.cos(φ2) *
+        Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    };
+
+    const now = Date.now();
+    const last = lastBreadcrumbBroadcastRef.current || { ts: 0, lat: null, lng: null };
+    if (now - (last.ts || 0) < 60000) return; // 60s minimum interval
+
+    const moved = last.lat === null
+      ? 999999
+      : (calcMetersBetween(last.lat, last.lng, myLocation.lat, myLocation.lng) || 0);
+    if (moved < 25) return; // at least 25m from last broadcast
+
+    const latE5 = Math.round(myLocation.lat * 1e5);
+    const lngE5 = Math.round(myLocation.lng * 1e5);
+    const tsS = Math.floor(now / 1000);
+    sendCommand(`MSG:0,__BREAD__:${latE5},${lngE5},${tsS}`);
+    lastBreadcrumbBroadcastRef.current = { ts: now, lat: myLocation.lat, lng: myLocation.lng };
+  }, [isTrackingBreadcrumbs, isConnected, isInLobby, lobbyCode, isSosTrailSharingActive, myLocation, sendCommand]);
+
   // Auto-send our nickname after connection and when entering a lobby.
   useEffect(() => {
     if (!isConnected) return;
@@ -1770,6 +2099,7 @@ export const BluetoothProvider = ({ children }) => {
     
     // Breadcrumbs / Trail tracking
     breadcrumbs,
+    remoteBreadcrumbs,
     isTrackingBreadcrumbs,
     startBreadcrumbTracking,
     stopBreadcrumbTracking,

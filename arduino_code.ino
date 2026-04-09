@@ -813,6 +813,15 @@ void receiveLoRaMessage() {
       receivedSOS = receivedMorse = false;
       digitalWrite(GREEN_LED, HIGH); delay(500); digitalWrite(GREEN_LED, LOW);
     } else if (msg.msgType == MSG_BEAT) {
+      // Forward regular location updates to connected phone(s)
+      // so the app can show live tracking even without SOS.
+      String loc = "LOC:";
+      loc += String(msg.deviceID) + ",";
+      loc += String(msg.latitude, 6) + ",";
+      loc += String(msg.longitude, 6) + ",";
+      loc += String(msg.satellites) + ",";
+      loc += String(currentRssi);
+      sendToPhone(loc);
       updateDisplay();
       return;
     }

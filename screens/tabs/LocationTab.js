@@ -1,5 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Dimensions, ImageBackground, Alert } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
+import { Magnetometer } from 'expo-sensors';
 import { User, MapPin, Radio, Satellite, AlertTriangle, WifiOff, Map, Target, List, Play, Pause, Trash2, Route } from 'lucide-react-native';
 import MapView, { Marker, Circle, PROVIDER_DEFAULT } from 'react-native-maps';
 import { styles } from '../../styles/styles';
@@ -9,6 +12,8 @@ import { useLobby } from '../../context/LobbyContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const RADAR_SIZE = SCREEN_WIDTH - 64;
+
+const LOCATION_SERVICES_PREF_KEY = '@hikesafe_location_services_enabled';
 
 // Calculate distance between two GPS coordinates (Haversine formula)
 const calculateDistance = (lat1, lon1, lat2, lon2) => {
@@ -48,7 +53,13 @@ const formatDistance = (meters) => {
 };
 
 // Radar View Component - Works completely offline
-const RadarView = ({ myLocation, members, colors, onMemberPress }) => {
+const RadarView = ({ myLocation, members, colors, onMemberPress, headingDeg = null }) => {
+  const getCardinalDirection = (deg) => {
+    const val = Math.floor((deg / 45) + 0.5);
+    const arr = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+    return arr[(val % 8)];
+  };
+
   // Find max distance to scale the radar
   const maxDistance = Math.max(
     ...members.map(m => m.distance || 0).filter(d => d > 0),
@@ -64,30 +75,84 @@ const RadarView = ({ myLocation, members, colors, onMemberPress }) => {
         <Target size={20} color={colors.primary} />
         <Text style={[localStyles.radarTitle, { color: colors.textDark }]}>Radar View</Text>
         <Text style={[localStyles.radarRange, { color: colors.gray }]}>
-          Range: {formatDistance(maxDistance)}
+          Range: {formatDistance(maxDistance)}{headingDeg === null ? ' | Compass off' : ` | ${Math.round(headingDeg)}° ${getCardinalDirection(Math.round(headingDeg))}`}
         </Text>
       </View>
-      
-      <View style={[localStyles.radar, { width: RADAR_SIZE, height: RADAR_SIZE }]}>
+
+      <View
+        style={[
+          localStyles.radarDial,
+          {
+            width: RADAR_SIZE,
+            height: RADAR_SIZE,
+            borderRadius: RADAR_SIZE / 2,
+            borderColor: colors.borderColor,
+            backgroundColor: colors.background,
+          },
+        ]}
+      >
+        <View style={[localStyles.radar, { width: RADAR_SIZE, height: RADAR_SIZE }]}>
         {/* Radar circles */}
         <View style={[localStyles.radarCircle, { width: RADAR_SIZE - 60, height: RADAR_SIZE - 60, borderColor: colors.borderColor }]} />
         <View style={[localStyles.radarCircle, { width: (RADAR_SIZE - 60) * 0.66, height: (RADAR_SIZE - 60) * 0.66, borderColor: colors.borderColor }]} />
         <View style={[localStyles.radarCircle, { width: (RADAR_SIZE - 60) * 0.33, height: (RADAR_SIZE - 60) * 0.33, borderColor: colors.borderColor }]} />
         
-        {/* Cross lines */}
-        <View style={[localStyles.radarLineH, { backgroundColor: colors.borderColor }]} />
-        <View style={[localStyles.radarLineV, { backgroundColor: colors.borderColor }]} />
+        {/* Compass overlay: rotate cardinal labels + crosshair based on heading */}
+        <View
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            width: RADAR_SIZE,
+            height: RADAR_SIZE,
+            transform: [{ rotate: `${headingDeg === null ? 0 : -headingDeg}deg` }],
+          }}
+          pointerEvents="none"
+        >
+          <View style={[localStyles.radarLineH, { backgroundColor: colors.borderColor }]} />
+          <View style={[localStyles.radarLineV, { backgroundColor: colors.borderColor }]} />
+          <Text
+            style={[
+              localStyles.dirLabel,
+              localStyles.dirN,
+              { color: colors.gray, transform: [{ rotate: `${headingDeg === null ? 0 : headingDeg}deg` }] },
+            ]}
+          >
+            N
+          </Text>
+          <Text
+            style={[
+              localStyles.dirLabel,
+              localStyles.dirS,
+              { color: colors.gray, transform: [{ rotate: `${headingDeg === null ? 0 : headingDeg}deg` }] },
+            ]}
+          >
+            S
+          </Text>
+          <Text
+            style={[
+              localStyles.dirLabel,
+              localStyles.dirE,
+              { color: colors.gray, transform: [{ rotate: `${headingDeg === null ? 0 : headingDeg}deg` }] },
+            ]}
+          >
+            E
+          </Text>
+          <Text
+            style={[
+              localStyles.dirLabel,
+              localStyles.dirW,
+              { color: colors.gray, transform: [{ rotate: `${headingDeg === null ? 0 : headingDeg}deg` }] },
+            ]}
+          >
+            W
+          </Text>
+        </View>
         
         {/* Center point (You) */}
         <View style={[localStyles.centerDot, { backgroundColor: colors.primary }]}>
           <Text style={localStyles.centerLabel}>YOU</Text>
         </View>
-        
-        {/* Direction labels */}
-        <Text style={[localStyles.dirLabel, localStyles.dirN, { color: colors.gray }]}>N</Text>
-        <Text style={[localStyles.dirLabel, localStyles.dirS, { color: colors.gray }]}>S</Text>
-        <Text style={[localStyles.dirLabel, localStyles.dirE, { color: colors.gray }]}>E</Text>
-        <Text style={[localStyles.dirLabel, localStyles.dirW, { color: colors.gray }]}>W</Text>
         
         {/* Device and Mobile dots */}
         {members.map((member) => {
@@ -95,12 +160,15 @@ const RadarView = ({ myLocation, members, colors, onMemberPress }) => {
           
           const distance = member.distance || 0;
           const bearing = calculateBearing(myLocation.lat, myLocation.lng, member.lat, member.lng);
+          const adjustedBearing = headingDeg === null
+            ? bearing
+            : (bearing - headingDeg + 360) % 360;
           
           // Scale distance to radar
           const scaledDistance = Math.min((distance / maxDistance) * radarRadius, radarRadius);
           
           // Convert bearing to x,y (bearing 0 = North = top)
-          const angleRad = (bearing - 90) * Math.PI / 180;
+          const angleRad = (adjustedBearing - 90) * Math.PI / 180;
           const x = Math.cos(angleRad) * scaledDistance;
           const y = Math.sin(angleRad) * scaledDistance;
           
@@ -134,9 +202,12 @@ const RadarView = ({ myLocation, members, colors, onMemberPress }) => {
             
             const distance = calculateDistance(myLocation.lat, myLocation.lng, mobile.lat, mobile.lng);
             const bearing = calculateBearing(myLocation.lat, myLocation.lng, mobile.lat, mobile.lng);
+            const adjustedBearing = headingDeg === null
+              ? bearing
+              : (bearing - headingDeg + 360) % 360;
             const scaledDistance = Math.min((distance / maxDistance) * radarRadius, radarRadius);
             
-            const angleRad = (bearing - 90) * Math.PI / 180;
+            const angleRad = (adjustedBearing - 90) * Math.PI / 180;
             const x = Math.cos(angleRad) * scaledDistance;
             const y = Math.sin(angleRad) * scaledDistance;
             
@@ -166,6 +237,8 @@ const RadarView = ({ myLocation, members, colors, onMemberPress }) => {
             );
           });
         })}
+
+        </View>
       </View>
       
       {!myLocation.valid && (
@@ -179,12 +252,25 @@ const RadarView = ({ myLocation, members, colors, onMemberPress }) => {
 
 // Map View Component
 // Offline Grid Map Component - Works without internet
-const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumbs = [] }) => {
+const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumbs = [], remoteBreadcrumbsByDevice = {} }) => {
   // Find the bounds to fit all members
+  const remotePoints = [];
+  try {
+    Object.values(remoteBreadcrumbsByDevice || {}).forEach(arr => {
+      if (!Array.isArray(arr)) return;
+      arr.forEach(p => {
+        if (p && p.lat && p.lng) remotePoints.push({ lat: p.lat, lng: p.lng });
+      });
+    });
+  } catch (e) {
+    // ignore
+  }
+
   const allPoints = [
     ...(myLocation.valid ? [{ lat: myLocation.lat, lng: myLocation.lng }] : []),
     ...members.filter(m => m.lat && m.lng),
-    ...breadcrumbs.filter(b => b.lat && b.lng)
+    ...breadcrumbs.filter(b => b.lat && b.lng),
+    ...remotePoints,
   ];
   
   if (allPoints.length === 0 || !myLocation.valid) {
@@ -326,6 +412,42 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
                 }}
               />
             );
+          })}
+
+          {/* Remote breadcrumb trails (other members) */}
+          {Object.entries(remoteBreadcrumbsByDevice || {}).map(([deviceId, points]) => {
+            if (!Array.isArray(points) || points.length < 2) return null;
+
+            return points.map((point, index) => {
+              if (index === 0) return null;
+              const prevPoint = points[index - 1];
+              if (!prevPoint?.lat || !prevPoint?.lng || !point?.lat || !point?.lng) return null;
+
+              const pos1 = gpsToScreen(prevPoint.lat, prevPoint.lng);
+              const pos2 = gpsToScreen(point.lat, point.lng);
+              const dx = pos2.x - pos1.x;
+              const dy = pos2.y - pos1.y;
+              const length = Math.sqrt(dx * dx + dy * dy);
+              const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+
+              return (
+                <View
+                  key={`rtrail-${deviceId}-${index}`}
+                  style={{
+                    position: 'absolute',
+                    left: pos1.x,
+                    top: pos1.y - 1,
+                    width: length,
+                    height: 2,
+                    backgroundColor: '#3498DB',
+                    opacity: 0.35,
+                    transform: [{ rotate: `${angle}deg` }],
+                    transformOrigin: 'left center',
+                    borderRadius: 1,
+                  }}
+                />
+              );
+            });
           })}
           
           {/* Breadcrumb dots (every few points) */}
@@ -572,6 +694,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
     myLocation, 
     memberLocations,
     breadcrumbs,
+    remoteBreadcrumbs,
     isTrackingBreadcrumbs,
     startBreadcrumbTracking,
     stopBreadcrumbTracking,
@@ -582,15 +705,132 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
   // Note: Map view disabled - requires Google Maps API key configuration
   // Use 'radar' (works offline) or 'list' view
   const [viewMode, setViewMode] = useState('radar'); // 'radar', 'list' (map disabled)
+
+  const [locationServicesEnabled, setLocationServicesEnabled] = useState(true);
+  const [headingDeg, setHeadingDeg] = useState(null);
+  const magnetometerSubRef = useRef(null);
+  const headingSmoothRef = useRef(null);
+  const headingLastUpdateRef = useRef(0);
+
+  const computeHeading = useCallback((mag) => {
+    if (!mag) return null;
+    const { x, y } = mag;
+    const raw = Math.atan2(y, x) * (180 / Math.PI);
+    const normalized = raw >= 0 ? raw : raw + 360;
+    if (!Number.isFinite(normalized)) return null;
+    return normalized;
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem(LOCATION_SERVICES_PREF_KEY);
+        if (!alive) return;
+        if (saved === null) {
+          setLocationServicesEnabled(true);
+        } else {
+          setLocationServicesEnabled(saved === 'true');
+        }
+      } catch (e) {
+        // default to enabled
+        if (alive) setLocationServicesEnabled(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const cleanup = () => {
+      if (magnetometerSubRef.current) {
+        try { magnetometerSubRef.current.remove(); } catch (e) {}
+        magnetometerSubRef.current = null;
+      }
+    };
+
+    (async () => {
+      cleanup();
+      setHeadingDeg(null);
+      headingSmoothRef.current = null;
+      headingLastUpdateRef.current = 0;
+
+      if (!locationServicesEnabled) return;
+      if (viewMode !== 'radar') return;
+
+      try {
+        const perm = await Location.getForegroundPermissionsAsync();
+        if (cancelled) return;
+        if (perm?.status !== 'granted') {
+          setHeadingDeg(null);
+          return;
+        }
+      } catch (e) {
+        // If we can't read permission state, keep compass off.
+        setHeadingDeg(null);
+        return;
+      }
+
+      // Keep this responsive but avoid excessive re-renders.
+      Magnetometer.setUpdateInterval(100);
+      magnetometerSubRef.current = Magnetometer.addListener((data) => {
+        if (cancelled) return;
+
+        const rawHeading = computeHeading(data);
+        if (rawHeading === null) return;
+
+        const now = Date.now();
+        if (now - headingLastUpdateRef.current < 100) return;
+        headingLastUpdateRef.current = now;
+
+        const prev = headingSmoothRef.current;
+        if (prev === null || prev === undefined) {
+          headingSmoothRef.current = rawHeading;
+          setHeadingDeg(rawHeading);
+          return;
+        }
+
+        // Smooth using shortest angular distance.
+        const delta = ((rawHeading - prev + 540) % 360) - 180; // [-180, 180]
+        const next = (prev + 0.25 * delta + 360) % 360;
+
+        // Skip tiny updates to reduce UI churn.
+        if (Math.abs(delta) < 0.5) return;
+
+        headingSmoothRef.current = next;
+        setHeadingDeg(next);
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      cleanup();
+    };
+  }, [computeHeading, locationServicesEnabled, viewMode]);
   
   // Combine member locations with distance calculation
-  const membersWithDistance = memberLocations.map(member => ({
-    ...member,
-    name: getMemberNickname ? getMemberNickname(member.deviceId) : `Device ${member.deviceId}`,
-    distance: myLocation.valid && member.lat && member.lng
-      ? calculateDistance(myLocation.lat, myLocation.lng, member.lat, member.lng)
-      : null,
-  }));
+  const membersWithDistance = useMemo(() => {
+    return (memberLocations || []).map(member => ({
+      ...member,
+      name: getMemberNickname ? getMemberNickname(member.deviceId) : `Device ${member.deviceId}`,
+      distance: myLocation.valid && member.lat && member.lng
+        ? calculateDistance(myLocation.lat, myLocation.lng, member.lat, member.lng)
+        : null,
+    }));
+  }, [getMemberNickname, memberLocations, myLocation.lat, myLocation.lng, myLocation.valid]);
+
+  // Only show other members' trails when that member has sent an SOS.
+  const sosRemoteBreadcrumbs = useMemo(() => {
+    const sosSet = new Set(
+      (membersWithDistance || [])
+        .filter(m => m && m.alertType === 'SOS')
+        .map(m => String(m.deviceId))
+    );
+
+    const entries = Object.entries(remoteBreadcrumbs || {}).filter(([deviceId]) => sosSet.has(String(deviceId)));
+    return Object.fromEntries(entries);
+  }, [membersWithDistance, remoteBreadcrumbs]);
 
   const handleMemberPress = (member) => {
     onLocationPress && onLocationPress({
@@ -777,6 +1017,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
             colors={colors}
             onMemberPress={handleMemberPress}
             breadcrumbs={breadcrumbs}
+            remoteBreadcrumbsByDevice={sosRemoteBreadcrumbs}
           />
         )}
 
@@ -787,6 +1028,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
             members={membersWithDistance}
             colors={colors}
             onMemberPress={handleMemberPress}
+            headingDeg={headingDeg}
           />
         )}
 
@@ -1017,6 +1259,11 @@ const localStyles = StyleSheet.create({
     overflow: 'hidden',
     marginBottom: 16,
   },
+  radarDial: {
+    alignSelf: 'center',
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
   map: {
     flex: 1,
   },
@@ -1105,11 +1352,13 @@ const localStyles = StyleSheet.create({
     position: 'absolute',
     fontSize: 12,
     fontWeight: '600',
+    width: 18,
+    textAlign: 'center',
   },
-  dirN: { top: 5 },
-  dirS: { bottom: 5 },
-  dirE: { right: 10 },
-  dirW: { left: 10 },
+  dirN: { top: 8, left: '50%', marginLeft: -9 },
+  dirS: { bottom: 8, left: '50%', marginLeft: -9 },
+  dirE: { right: 10, top: '50%', marginTop: -8 },
+  dirW: { left: 10, top: '50%', marginTop: -8 },
   memberDot: {
     position: 'absolute',
     width: 30,
