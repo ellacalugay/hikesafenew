@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Image } from 'react-native';
-import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ImageBackground } from 'react-native';
-import { ArrowLeft, User, Radio, Camera } from 'lucide-react-native';
+import { View, Text, ScrollView, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ImageBackground, TextInput } from 'react-native';
+import { ArrowLeft, User, Radio, Camera, Phone } from 'lucide-react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
-import { InputField, MainButton } from '../../components/shared';
+import { MainButton } from '../../components/shared';
 import { useTheme } from '../../context/ThemeContext';
 import { useLobby } from '../../context/LobbyContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
@@ -44,17 +44,20 @@ const EditProfileScreen = ({ onBack }) => {
   const [contactPhone, setContactPhone] = useState('');
   const [medicalCondition, setMedicalCondition] = useState('');
   const [profilePicture, setProfilePicture] = useState(null);
+  const [isEditing, setIsEditing] = useState(false);
 
   // Load saved nickname on mount
   useEffect(() => {
     if (myNickname) {
       setNickname(myNickname);
+    } else if (ctxFirstName) {
+      setNickname(ctxFirstName);
     }
     if (deviceNickname) {
       setDeviceName(deviceNickname);
     }
   }
-    , [myNickname, deviceNickname]);
+    , [myNickname, deviceNickname, ctxFirstName]);
 
   useEffect(() => {
     if (ctxFirstName) {
@@ -80,6 +83,8 @@ const EditProfileScreen = ({ onBack }) => {
   }, [ctxFirstName, ctxLastName, ctxContactName, ctxContactPhone, ctxMedicalCondition, ctxProfilePicture]);
 
   const handleSave = async () => {
+    if (!isEditing) return;
+
     // Save nickname to LobbyContext
     if (nickname.trim()) {
       await setMyNickname(nickname.trim());
@@ -100,7 +105,19 @@ const EditProfileScreen = ({ onBack }) => {
     }
 
     Alert.alert('Saved', 'Your profile has been updated.');
-    if (typeof onBack === 'function') onBack();
+    setIsEditing(false);
+  };
+
+  const handleCloseEdit = () => {
+    setFirstName(ctxFirstName || '');
+    setLastName(ctxLastName || '');
+    setContactName(ctxContactName || '');
+    setContactPhone(ctxContactPhone || '');
+    setMedicalCondition(ctxMedicalCondition || '');
+    setProfilePicture(ctxProfilePicture || null);
+    setNickname(myNickname || ctxFirstName || '');
+    setDeviceName(deviceNickname || '');
+    setIsEditing(false);
   };
 
   const handlePickImage = async () => {
@@ -182,12 +199,12 @@ const EditProfileScreen = ({ onBack }) => {
         style={{ flex: 1, padding: 2, backgroundColor: 'transparent' }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 50 }}
+        contentContainerStyle={{ paddingBottom: 50, paddingHorizontal: 10 }}
         
 >
         <View style={{ alignItems: 'center', marginBottom: 20 }}>
           <View style={{ alignItems: 'center', marginBottom: 20 }}>
-            <TouchableOpacity onPress={handlePickImage}>
+            <TouchableOpacity onPress={handlePickImage} disabled={!isEditing}>
               <View style={{ width: 100, height: 100 }}>
                 <View style={{
                   width: 100,
@@ -224,8 +241,8 @@ const EditProfileScreen = ({ onBack }) => {
                   </View>
                 </View>
             </TouchableOpacity>
-            <TouchableOpacity style={{ marginTop: 1}} onPress={handlePickImage}>
-              <Text style={{ color: colors.primary, fontWeight: '700' }}>PROFILE PHOTO</Text>
+            <TouchableOpacity style={{ marginTop: 1, opacity: isEditing ? 1 : 0.6 }} onPress={handlePickImage} disabled={!isEditing}>
+              <Text style={{ color: colors.primary, fontWeight: '700' }}>{isEditing ? 'PROFILE PHOTO' : 'PROFILE PHOTO (LOCKED)'}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -244,28 +261,168 @@ const EditProfileScreen = ({ onBack }) => {
           shadowRadius: 8,
           elevation: 4,
           marginBottom: 24,
+          marginHorizontal: 2,
         }}>
-          <Text style={[styles.sectionHeader, { marginTop: 0, color: colors.textDark }]}>Personal Information</Text>
-          <InputField label="First Name" placeholder="Enter first name" value={firstName} onChangeText={setFirstName} />
-          <InputField label="Last Name" placeholder="Enter last name" value={lastName} onChangeText={setLastName} />
-          <InputField label="Nickname" placeholder="Your display name in the app" value={nickname} onChangeText={setNickname} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 18 }}>
+            <User size={18} color={colors.primary} />
+            <Text style={{ marginLeft: 10, color: colors.primary, fontSize: 20, fontWeight: '800' }}>Personal Details</Text>
+          </View>
 
-          <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Device Settings</Text>
-          <InputField label="Device Nickname" placeholder={connectedDevice?.name || "Your HikeSafe device name"} value={deviceName} onChangeText={setDeviceName} />
+          <Text style={{ color: colors.textDark, fontSize: 11.5, fontWeight: '800', letterSpacing: 1.9, marginBottom: 8 }}>FIRST NAME</Text>
+          <TextInput
+            style={{
+              backgroundColor: colors.inputBg,
+              borderRadius: 12,
+              minHeight: 60,
+              paddingHorizontal: 18,
+              fontSize: 16,
+              fontWeight: '600',
+              color: colors.textDark,
+              marginBottom: 18,
+              opacity: isEditing ? 1 : 0.72,
+            }}
+            placeholder="Enter first name"
+            placeholderTextColor={colors.gray}
+            value={firstName}
+            onChangeText={setFirstName}
+            editable={isEditing}
+          />
+
+          <Text style={{ color: colors.textDark, fontSize: 11.5, fontWeight: '800', letterSpacing: 1.9, marginBottom: 8 }}>LAST NAME</Text>
+          <TextInput
+            style={{
+              backgroundColor: colors.inputBg,
+              borderRadius: 12,
+              minHeight: 60,
+              paddingHorizontal: 18,
+              fontSize: 16,
+              fontWeight: '600',
+              color: colors.textDark,
+              marginBottom: 18,
+              opacity: isEditing ? 1 : 0.72,
+            }}
+            placeholder="Enter last name"
+            placeholderTextColor={colors.gray}
+            value={lastName}
+            onChangeText={setLastName}
+            editable={isEditing}
+          />
+
+          <Text style={{ color: colors.textDark, fontSize: 11.5, fontWeight: '800', letterSpacing: 1.9, marginBottom: 8 }}>NICKNAME</Text>
+          <TextInput
+            style={{
+              backgroundColor: colors.inputBg,
+              borderRadius: 12,
+              minHeight: 60,
+              paddingHorizontal: 18,
+              fontSize: 16,
+              fontWeight: '600',
+              color: colors.textDark,
+              marginBottom: 18,
+              opacity: isEditing ? 1 : 0.72,
+            }}
+            placeholder="Enter nickname"
+            placeholderTextColor={colors.gray}
+            value={nickname}
+            onChangeText={setNickname}
+            editable={isEditing}
+          />
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+            <Radio size={18} color={colors.primary} />
+            <Text style={{ marginLeft: 10, color: colors.primary, fontSize: 20, fontWeight: '800' }}>Device Settings</Text>
+          </View>
+
+          <Text style={{ color: colors.textDark, fontSize: 11.5, fontWeight: '800', letterSpacing: 1.9, marginBottom: 8 }}>DEVICE NICKNAME</Text>
+          <TextInput
+            style={{
+              backgroundColor: colors.inputBg,
+              borderRadius: 12,
+              minHeight: 60,
+              paddingHorizontal: 18,
+              fontSize: 16,
+              fontWeight: '600',
+              color: colors.textDark,
+              marginBottom: 18,
+              opacity: isEditing ? 1 : 0.72,
+            }}
+            placeholder={connectedDevice?.name || 'Your HikeSafe device name'}
+            placeholderTextColor={colors.gray}
+            value={deviceName}
+            onChangeText={setDeviceName}
+            editable={isEditing}
+          />
+
           <Text style={{ color: colors.gray, fontSize: 12, marginTop: -8, marginBottom: 16, paddingHorizontal: 4 }}>
             {isConnected ? `Connected to: ${connectedDevice?.name || 'HikeSafe Device'}` : 'Connect a device to customize its name'}
           </Text>
 
-          <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Emergency Contact</Text>
-          <InputField label="Contact Name" placeholder="Emergency contact name" value={contactName} onChangeText={setContactName} />
-          <InputField label="Contact Phone" placeholder="Emergency contact phone" value={contactPhone} onChangeText={setContactPhone} keyboardType="phone-pad" />
-
-          <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Medical Information</Text>
-          <InputField label="Medical Condition" placeholder="Any allergies or conditions?" value={medicalCondition} onChangeText={setMedicalCondition} />
-         
-          <View style={{ marginHorizontal: 50, marginTop: 20 }}>
-            <MainButton title="SAVE CHANGES" onPress={handleSave} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+            <Phone size={18} color={colors.primary} />
+            <Text style={{ marginLeft: 10, color: colors.primary, fontSize: 20, fontWeight: '800' }}>Emergency Contact</Text>
           </View>
+
+          <Text style={{ color: colors.textDark, fontSize: 11.5, fontWeight: '800', letterSpacing: 1.9, marginBottom: 8 }}>CONTACT NAME</Text>
+          <TextInput
+            style={{
+              backgroundColor: colors.inputBg,
+              borderRadius: 12,
+              minHeight: 60,
+              paddingHorizontal: 18,
+              fontSize: 16,
+              fontWeight: '600',
+              color: colors.textDark,
+              marginBottom: 18,
+              opacity: isEditing ? 1 : 0.72,
+            }}
+            placeholder="Emergency contact name"
+            placeholderTextColor={colors.gray}
+            value={contactName}
+            onChangeText={setContactName}
+            editable={isEditing}
+          />
+
+          <Text style={{ color: colors.textDark, fontSize: 11.5, fontWeight: '800', letterSpacing: 1.9, marginBottom: 8 }}>CONTACT PHONE</Text>
+          <TextInput
+            style={{
+              backgroundColor: colors.inputBg,
+              borderRadius: 12,
+              minHeight: 60,
+              paddingHorizontal: 18,
+              fontSize: 16,
+              fontWeight: '600',
+              color: colors.textDark,
+              marginBottom: 18,
+              opacity: isEditing ? 1 : 0.72,
+            }}
+            placeholder="Emergency contact phone"
+            placeholderTextColor={colors.gray}
+            value={contactPhone}
+            onChangeText={setContactPhone}
+            keyboardType="phone-pad"
+            editable={isEditing}
+          />
+         
+          {!isEditing ? (
+            <View style={{ marginHorizontal: 50, marginTop: 20 }}>
+              <MainButton title="UPDATE PROFILE" onPress={() => setIsEditing(true)} />
+            </View>
+          ) : (
+            <View style={{ flexDirection: 'row', marginTop: 20 }}>
+              <TouchableOpacity
+                style={[styles.button, { flex: 1, backgroundColor: colors.inputBg, borderWidth: 1, borderColor: colors.borderColor, marginRight: 5 }]}
+                onPress={handleCloseEdit}
+              >
+                <Text style={{ color: colors.textDark, fontWeight: '700' }}>CLOSE</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.button, styles.buttonPrimary, { flex: 1, marginLeft: 5 }]}
+                onPress={handleSave}
+              >
+                <Text style={[styles.buttonText, styles.buttonTextPrimary]}>SAVE</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
