@@ -681,17 +681,12 @@ const localStyles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderRadius: 18,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
   },
   bubbleMine: {
-    borderTopRightRadius: 6,
+    borderTopRightRadius: 14,
   },
   bubbleTheirs: {
-    borderTopLeftRadius: 6,
+    borderTopLeftRadius: 14,
   },
   bubbleText: {
     fontSize: 14,
@@ -818,6 +813,7 @@ const localStyles = StyleSheet.create({
     paddingHorizontal: 2,
     minHeight: 40,
     maxHeight: 96,
+    backgroundColor: 'transparent',
   },
   composeInput: {
     flex: 1,
@@ -827,6 +823,7 @@ const localStyles = StyleSheet.create({
     margin: 0,
     maxHeight: 90,
     fontFamily: 'PublicSans_600SemiBold',
+    backgroundColor: 'transparent',
   },
   sendBtn: {
     width: 44,
