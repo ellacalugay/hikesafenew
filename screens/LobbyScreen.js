@@ -10,7 +10,7 @@ import { useBluetoothDevice } from '../context/BluetoothContext';
 const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const { colors } = useTheme();
   const { createLobby, joinLobby, syncLobbyToDevice, lobbyCode, isInLobby, rememberEnabled, rememberedUsername, rememberedJoinCode, setRememberEnabled, saveRememberData, clearRememberData, myNickname } = useLobby();
-  const { sendCommand, isConnected, statusMessage, memberLocations, lastLobbyVerification } = useBluetoothDevice();
+  const { sendCommand, isConnected, statusMessage, memberLocations } = useBluetoothDevice();
   
   // For tracking lobby validation
   const [validationState, setValidationState] = useState(null); // null, 'syncing', 'waiting', 'confirmed'
@@ -62,7 +62,6 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const getJoinButtonText = () => {
     if (!isSubmitting) return 'Enter Lobby';
     if (validationState === 'syncing') return 'Syncing to device...';
-    if (validationState === 'verifying') return 'Verifying lobby...';
     if (validationState === 'confirmed') return 'Entering...';
     return 'Joining...';
   };
@@ -83,49 +82,12 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
         validationTimeoutRef.current = null;
       }
 
-      // Device confirmed lobby code set. Now verify that at least one other
-      // device is present on this lobby code via a LoRa handshake.
-      const nonce = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-      pendingJoinRef.current.nonce = nonce;
-      setValidationState('verifying');
-
-      // Broadcast verify ping. Any device in the same lobby should reply with __LOBBY_ACK__:<nonce>
-      sendCommand && sendCommand(`MSG:0,__LOBBY_VERIFY__:${nonce}`);
-
-      // If no ACK within 6 seconds, treat as lobby not found.
-      if (validationTimeoutRef.current) {
-        clearTimeout(validationTimeoutRef.current);
-      }
-      validationTimeoutRef.current = setTimeout(() => {
-        if (validationStateRef.current === 'verifying') {
-          setIsSubmitting(false);
-          setValidationState(null);
-          pendingJoinRef.current = null;
-          Alert.alert(
-            'Lobby Not Found',
-            'No devices responded for this lobby code. Make sure the host device is powered on and nearby, then try again.'
-          );
-        }
-      }, 6000);
-    }
-  }, [statusMessage, validationState]);
-
-  // Monitor for lobby verification ACK (__LOBBY_ACK__)
-  useEffect(() => {
-    if (validationState !== 'verifying') return;
-    if (!pendingJoinRef.current?.nonce) return;
-    if (!lastLobbyVerification?.nonce) return;
-
-    if (lastLobbyVerification.nonce === pendingJoinRef.current.nonce) {
-      if (validationTimeoutRef.current) {
-        clearTimeout(validationTimeoutRef.current);
-        validationTimeoutRef.current = null;
-      }
-
+      // Device confirmed lobby code set; that's sufficient for phone-to-device operation.
+      // Do not require a LoRa ACK from another device (multi-phone / single-device cases).
       setValidationState('confirmed');
       completeJoin(true);
     }
-  }, [lastLobbyVerification, validationState]);
+  }, [statusMessage, validationState]);
 
   const completeJoin = async (membersFound) => {
     if (!pendingJoinRef.current) return;

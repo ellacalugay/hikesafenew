@@ -55,6 +55,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const [showLobbyModal, setShowLobbyModal] = useState(false);
   const [showSOSAlertModal, setShowSOSAlertModal] = useState(false);
   const joinAnnounceKeyRef = useRef(null);
+  const wasConnectedRef = useRef(isConnected);
 
   const showLocationServicesBlocked = useCallback(() => {
     Alert.alert(
@@ -169,6 +170,21 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
       }
     }
   }, [activeAlert]);
+
+  // Auto-log out of the active session when the phone loses connection to the LoRa device (BLE link drops).
+  // This forces a reconnect flow instead of leaving the user in a stale lobby/dashboard state.
+  useEffect(() => {
+    const wasConnected = wasConnectedRef.current;
+    wasConnectedRef.current = isConnected;
+
+    if (wasConnected && !isConnected) {
+      setShowLogoutModal(false);
+      setShowLocationModal(false);
+      setShowLobbyModal(false);
+      setShowSOSAlertModal(false);
+      onRequireDeviceSetup && onRequireDeviceSetup();
+    }
+  }, [isConnected, onRequireDeviceSetup]);
 
   // Broadcast join timestamp once per connected-lobby session.
   // Lobby code sync is already handled in BluetoothContext.
@@ -486,13 +502,9 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                       <TouchableOpacity
                         style={[styles.modalButton, { backgroundColor: '#F44336', marginRight: 10, flex: 1 }]}
                         onPress={async () => {
-                          // Send LOBBY:0 to device to clear filter
-                          if (isConnected) {
-                            await sendCommand('LOBBY:0');
-                          }
                           await leaveLobby();
                           setShowLobbyModal(false);
-                          Alert.alert('Left Lobby', 'Your lobby code has been cleared. Device will now ignore/be ignored by your old group.');
+                          Alert.alert('Left Lobby', 'Lobby cleared for this phone. The device lobby was not changed (multi-phone safe).');
                         }}
                       >
                         <Text style={{ color: 'white', fontWeight: '600' }}>Leave</Text>
