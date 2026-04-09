@@ -215,7 +215,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
             pressed && localStyles.sosPressed,
           ]}
         >
-          <View style={[localStyles.sosCard, { backgroundColor: isConnected ? '#D0312D' : '#8C4A4A' }]}>
+          <View style={[localStyles.sosCard, { backgroundColor: isConnected ? '#8B0000' : '#5C2E2E' }]}>
             <View style={localStyles.sosInnerFrame}>
               <View style={localStyles.sosIconWrap}>
                 <AlertTriangle size={42} color="#fff" strokeWidth={2.6} />
@@ -357,7 +357,7 @@ const localStyles = StyleSheet.create({
     borderRadius: 28,
     padding: 16,
     minHeight: 200,
-    shadowColor: '#D0312D',
+    shadowColor: '#8B0000',
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.38,
     shadowRadius: 18,
