@@ -19,9 +19,9 @@ import LobbyScreen from './screens/LobbyScreen';
 import Dashboard from './screens/Dashboard';
 
 function AppContent() {
-  const { disconnect } = useBluetoothDevice();
-  const { firstName, lastName, isLoading: userLoading } = useUser();
-  const { myNickname, isLoading: lobbyLoading } = useLobby();
+  const { disconnect, clearChatHistory, clearBreadcrumbs } = useBluetoothDevice();
+  const { firstName, lastName, isLoading: userLoading, clearUser } = useUser();
+  const { myNickname, isLoading: lobbyLoading, clearAccount } = useLobby();
   const [screenStack, setScreenStack] = useState(['deviceSetup']);
   const screen = screenStack[screenStack.length - 1];
   const [transitioningOnboardingScreen, setTransitioningOnboardingScreen] = useState(null);
@@ -137,6 +137,29 @@ function AppContent() {
     setScreenStack(['deviceSetup']);
   };
 
+  const handleDeleteAccount = async () => {
+    // Wipe local account/profile state so onboarding runs again next launch.
+    try {
+      // Clear lobby/profile first (best-effort: clears device lobby filter while connected)
+      await clearAccount();
+
+      // Clear local app data
+      await Promise.all([
+        clearChatHistory?.(),
+        clearBreadcrumbs?.(),
+        clearUser(),
+      ]);
+    } catch (e) {
+      console.log('Delete account cleanup failed:', e?.message || e);
+    } finally {
+      await disconnect();
+      setResumeAfterReconnect(false);
+      setActiveTab('home');
+      setTabHistory(['home']);
+      setScreenStack(['deviceSetup']);
+    }
+  };
+
   const handleRequireDeviceSetup = () => {
     setResumeAfterReconnect(true);
     navigateTo('deviceSetup');
@@ -221,6 +244,7 @@ function AppContent() {
           {screen === 'dashboard' && (
             <Dashboard
               onLogout={handleLogout}
+              onDeleteAccount={handleDeleteAccount}
               onRequireDeviceSetup={handleRequireDeviceSetup}
               activeTab={activeTab}
               onTabChange={handleTabChange}

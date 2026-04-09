@@ -36,7 +36,7 @@ const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
   </TouchableOpacity>
 );
 
-const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
+const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const { colors } = useTheme();
   const { activeAlert, dismissAlert, sendSOS, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isHost, leaveLobby, isInLobby, hostDeviceId, myDeviceId, getEmergencyContactForDevice, getMemberNickname } = useLobby();
@@ -196,7 +196,7 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
       );
       case 'editProfile': return <EditProfileScreen onBack={() => setActiveTab('profile')} />;
       case 'chat': return <ChatScreen onBack={() => setActiveTab('message')} chatName={chatName} />;
-      case 'settings': return <SettingsScreen onBack={() => setActiveTab('profile')} />;
+      case 'settings': return <SettingsScreen onBack={() => setActiveTab('profile')} onDeleteAccount={onDeleteAccount} />;
       case 'help': return <HelpScreen onBack={() => setActiveTab('profile')} />;
       case 'reportProblem': return <ReportProblemScreen onBack={() => setActiveTab('profile')} />;
       case 'members': return isHost ? <MembersTab /> : <HomeTab onChangeTab={setActiveTab} onLobbyPress={handleLobbyPress} />;

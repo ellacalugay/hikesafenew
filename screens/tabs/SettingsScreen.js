@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Switch, Modal, Animated, ImageBackground } from 'react-native';
 import { Image } from 'react-native';
-import { ArrowLeft, Bell, Moon, MapPin, Shield, ChevronRight, X } from 'lucide-react-native';
+import { ArrowLeft, Bell, Moon, MapPin, Shield, ChevronRight, X, AlertTriangle } from 'lucide-react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
@@ -28,11 +28,12 @@ const SettingRow = ({ icon: Icon, label, hasToggle, value, onValueChange, onPres
   </TouchableOpacity>
 );
 
-const SettingsScreen = ({ onBack }) => {
+const SettingsScreen = ({ onBack, onDeleteAccount }) => {
   const { colors, isDarkMode, toggleDarkMode } = useTheme();
   const [notifications, setNotifications] = useState(true);
   const [locationTracking, setLocationTracking] = useState(true);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const themeTransitionAnim = useRef(new Animated.Value(1)).current;
 
   const handleDarkModeToggle = (value) => {
@@ -131,6 +132,14 @@ const SettingsScreen = ({ onBack }) => {
           <Text style={{ color: colors.textDark, fontWeight: '600' }}>HikeSafe</Text>
           <Text style={{ color: colors.gray, fontSize: 12, marginTop: 4 }}>Version 1.0.0</Text>
         </View>
+
+        <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Account</Text>
+        <SettingRow
+          icon={AlertTriangle}
+          label="Delete Account"
+          onPress={() => setShowDeleteModal(true)}
+          colors={colors}
+        />
       </ScrollView>
 
       {/* Privacy Policy Modal */}
@@ -199,6 +208,42 @@ const SettingsScreen = ({ onBack }) => {
               <Text style={{ color: 'white', fontWeight: '600' }}>I Understand</Text>
             </TouchableOpacity>
           </ScrollView>
+        </View>
+      </Modal>
+
+      {/* Delete Account Modal */}
+      <Modal
+        visible={showDeleteModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDeleteModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.modalBg }]}>
+            <Text style={[styles.modalTitle, { color: colors.textDark, textAlign: 'center' }]}>Delete Account</Text>
+            <Text style={[styles.modalText, { color: colors.textDark, textAlign: 'center', marginBottom: 16 }]}
+            >
+              Are you sure you want to delete your account on this device? You'll need to complete onboarding again next time.
+            </Text>
+
+            <View style={{ flexDirection: 'row' }}>
+              <TouchableOpacity
+                style={[styles.modalButton, { backgroundColor: colors.inputBg, marginRight: 10, flex: 1 }]}
+                onPress={() => setShowDeleteModal(false)}
+              >
+                <Text style={{ color: colors.textDark, fontWeight: '600' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, { backgroundColor: colors.primary, flex: 1 }]}
+                onPress={() => {
+                  setShowDeleteModal(false);
+                  onDeleteAccount && onDeleteAccount();
+                }}
+              >
+                <Text style={{ color: 'white', fontWeight: '600' }}>Yes</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
       </Modal>
       </View>

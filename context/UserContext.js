@@ -140,6 +140,10 @@ export const UserProvider = ({ children }) => {
     setContactPhoneState('');
     setMedicalConditionState('');
     setProfilePictureState(null);
+
+    // New session identity after deletion
+    const newId = uuidv4();
+    setMemberIdState(newId);
     try {
       await Promise.all([
         AsyncStorage.removeItem(FIRST_NAME_KEY),
@@ -148,7 +152,10 @@ export const UserProvider = ({ children }) => {
         AsyncStorage.removeItem(CONTACT_PHONE_KEY),
         AsyncStorage.removeItem(MEDICAL_CONDITION_KEY),
         AsyncStorage.removeItem(PROFILE_PICTURE_KEY),
+        AsyncStorage.removeItem(MEMBER_ID_KEY),
       ]);
+
+      await AsyncStorage.setItem(MEMBER_ID_KEY, newId);
     } catch (e) {
       console.error('Failed to clear user data:', e);
     }
