@@ -12,6 +12,7 @@ const MEMBER_NICKNAMES_KEY = '@hikesafe_member_nicknames';
 const MY_NICKNAME_KEY = '@hikesafe_my_nickname';
 const DEVICE_NICKNAME_KEY = '@hikesafe_device_nickname';
 const HOST_DEVICE_ID_KEY = '@hikesafe_host_device_id';
+const PREFERRED_HOST_DEVICE_ID_KEY = '@hikesafe_preferred_host_device_id';
 const MY_DEVICE_ID_KEY = '@hikesafe_my_device_id';
 const EMERGENCY_CONTACTS_KEY = '@hikesafe_emergency_contacts';
 const MY_EMERGENCY_CONTACT_KEY = '@hikesafe_my_emergency_contact';
@@ -47,6 +48,10 @@ export const LobbyProvider = ({ children }) => {
   const [myNickname, setMyNicknameState] = useState('');
   const [deviceNickname, setDeviceNicknameState] = useState(''); 
   const [hostDeviceId, setHostDeviceId] = useState(null);
+  // The "primary" admin/host we prefer whenever they're online.
+  // Auto-failover will temporarily pick another host, but when preferred rejoins,
+  // they reclaim admin automatically.
+  const [preferredHostDeviceId, setPreferredHostDeviceId] = useState(null);
   const [myDeviceId, setMyDeviceIdState] = useState(null);
   const [sendLobbyCommand, setSendLobbyCommand] = useState(null);
   const [emergencyContacts, setEmergencyContacts] = useState({});
@@ -98,6 +103,7 @@ export const LobbyProvider = ({ children }) => {
       const [
         savedCode, savedName, savedRole, savedMax, savedNicknames,
         savedMyNickname, savedDeviceNick, savedHostDeviceId, savedMyDeviceId,
+        savedPreferredHostDeviceId,
         savedEmergencyContacts, savedMyEmergencyContact,
         savedRemember, savedRememberName, savedRememberCode, savedRememberExpiry, 
       ] = await Promise.all([
@@ -110,6 +116,7 @@ export const LobbyProvider = ({ children }) => {
         AsyncStorage.getItem(DEVICE_NICKNAME_KEY),
         AsyncStorage.getItem(HOST_DEVICE_ID_KEY),
         AsyncStorage.getItem(MY_DEVICE_ID_KEY),
+        AsyncStorage.getItem(PREFERRED_HOST_DEVICE_ID_KEY),
         AsyncStorage.getItem(EMERGENCY_CONTACTS_KEY),
         AsyncStorage.getItem(MY_EMERGENCY_CONTACT_KEY),
         AsyncStorage.getItem(REMEMBER_KEY),
@@ -128,9 +135,17 @@ export const LobbyProvider = ({ children }) => {
 
       const parsedHostId = savedHostDeviceId ? parseInt(savedHostDeviceId, 10) : null;
       const parsedMyId = savedMyDeviceId ? parseInt(savedMyDeviceId, 10) : null;
+      const parsedPreferredHostId = savedPreferredHostDeviceId ? parseInt(savedPreferredHostDeviceId, 10) : null;
 
       if (!isNaN(parsedHostId) && parsedHostId !== null) {
         setHostDeviceId(parsedHostId);
+      }
+
+      if (!isNaN(parsedPreferredHostId) && parsedPreferredHostId !== null) {
+        setPreferredHostDeviceId(parsedPreferredHostId);
+      } else if (!isNaN(parsedHostId) && parsedHostId !== null) {
+        // Back-compat: if we only had a host stored, treat it as the preferred host.
+        setPreferredHostDeviceId(parsedHostId);
       }
 
       if (!isNaN(parsedMyId) && parsedMyId !== null) {
@@ -259,6 +274,7 @@ export const LobbyProvider = ({ children }) => {
         AsyncStorage.removeItem(LOBBY_ROLE_KEY),
         AsyncStorage.removeItem(LOBBY_MAX_MEMBERS_KEY),
         AsyncStorage.removeItem(HOST_DEVICE_ID_KEY),
+        AsyncStorage.removeItem(PREFERRED_HOST_DEVICE_ID_KEY),
         AsyncStorage.removeItem(MY_DEVICE_ID_KEY),
         AsyncStorage.removeItem(REMEMBER_KEY),
         AsyncStorage.removeItem(REMEMBER_USERNAME_KEY),
@@ -286,6 +302,18 @@ export const LobbyProvider = ({ children }) => {
       }
     } catch (error) {
       console.error('Failed to persist host device id:', error);
+    }
+  }, []);
+
+  const persistPreferredHostDeviceId = useCallback(async (deviceId) => {
+    try {
+      if (deviceId === null || deviceId === undefined) {
+        await AsyncStorage.removeItem(PREFERRED_HOST_DEVICE_ID_KEY);
+      } else {
+        await AsyncStorage.setItem(PREFERRED_HOST_DEVICE_ID_KEY, String(deviceId));
+      }
+    } catch (error) {
+      console.error('Failed to persist preferred host device id:', error);
     }
   }, []);
 
@@ -357,11 +385,20 @@ export const LobbyProvider = ({ children }) => {
     return candidates.length > 0 ? candidates[0].deviceId : null;
   };
 
-  const transferHostToFirstJoined = useCallback(async (excludedDeviceId = null) => {
+  const recalculateHost = useCallback(async (preferredId = null, excludedDeviceId = null) => {
     let nextHostId = null;
+    let shouldPersistPreferred = false;
 
     setLobbyMembers(prev => {
-      nextHostId = getNextHostCandidate(prev, excludedDeviceId);
+      const preferredOnline = preferredId !== null && preferredId !== undefined
+        ? prev.some(m => m && m.deviceId === preferredId && !m.isOffline && m.deviceId !== excludedDeviceId)
+        : false;
+
+      nextHostId = preferredOnline ? preferredId : getNextHostCandidate(prev, excludedDeviceId);
+
+      // If we don't yet have a preferred host, lock to the first host we can determine.
+      shouldPersistPreferred = (preferredId === null || preferredId === undefined) && nextHostId !== null;
+
       return prev.map(member => ({
         ...member,
         isHost: nextHostId !== null && member.deviceId === nextHostId,
@@ -380,8 +417,30 @@ export const LobbyProvider = ({ children }) => {
     }
 
     await persistHostDeviceId(nextHostId);
+
+    if (shouldPersistPreferred) {
+      setPreferredHostDeviceId(nextHostId);
+      await persistPreferredHostDeviceId(nextHostId);
+    }
+
     return nextHostId;
-  }, [myDeviceId, persistHostDeviceId, persistRole]);
+  }, [myDeviceId, persistHostDeviceId, persistPreferredHostDeviceId, persistRole]);
+
+  const transferHostToFirstJoined = useCallback(async (excludedDeviceId = null) => {
+    return recalculateHost(preferredHostDeviceId, excludedDeviceId);
+  }, [preferredHostDeviceId, recalculateHost]);
+
+  const electNewHost = useCallback(async (deviceId) => {
+    if (!isHost) return false;
+    if (deviceId === null || deviceId === undefined || Number.isNaN(deviceId)) return false;
+
+    setPreferredHostDeviceId(deviceId);
+    await persistPreferredHostDeviceId(deviceId);
+
+    // Recalculate immediately using the new preference so the new admin takes effect.
+    await recalculateHost(deviceId, null);
+    return true;
+  }, [isHost, persistPreferredHostDeviceId, recalculateHost]);
 
   // Create a new lobby (user becomes host)
   const createLobby = useCallback(async (name, maxMemberCount = 10) => {
@@ -399,11 +458,13 @@ export const LobbyProvider = ({ children }) => {
     if (myDeviceId !== null) {
       setHostDeviceId(myDeviceId);
       await persistHostDeviceId(myDeviceId);
+      setPreferredHostDeviceId(myDeviceId);
+      await persistPreferredHostDeviceId(myDeviceId);
     }
     
     console.log(`Created lobby: ${name} with code ${code}`);
     return code;
-  }, [myDeviceId, persistHostDeviceId]);
+  }, [myDeviceId, persistHostDeviceId, persistPreferredHostDeviceId]);
 
   // Join an existing lobby with code
   const joinLobby = useCallback(async (code, userName = 'Member') => {
@@ -421,13 +482,15 @@ export const LobbyProvider = ({ children }) => {
     setIsInLobby(true);
     setLobbyMembers([{ id: 'self', name: userName, isHost: false, isSelf: true, joinedAt: now, isOffline: false, deviceId: myDeviceId }]);
     setHostDeviceId(null);
+    setPreferredHostDeviceId(null);
     
     await persistLobbyData(numericCode, '', 'member', 10);
     await persistHostDeviceId(null);
+    await persistPreferredHostDeviceId(null);
     
     console.log(`Joined lobby with code ${numericCode}`);
     return numericCode;
-  }, [myDeviceId, persistHostDeviceId]);
+  }, [myDeviceId, persistHostDeviceId, persistPreferredHostDeviceId]);
 
   // Send lobby code to ESP32 device via BLE
   const syncLobbyToDevice = useCallback(async (bleCommandFn, targetCode = null) => {
@@ -474,6 +537,7 @@ export const LobbyProvider = ({ children }) => {
     setIsHost(false);
     setIsInLobby(false);
     setHostDeviceId(null);
+    setPreferredHostDeviceId(null);
     setMyDeviceIdState(null);
     setLobbyMembers([]);
     setMemberNicknames({});
@@ -503,6 +567,7 @@ export const LobbyProvider = ({ children }) => {
     setIsHost(false);
     setIsInLobby(false);
     setHostDeviceId(null);
+    setPreferredHostDeviceId(null);
     setMyDeviceIdState(null);
     setLobbyMembers([]);
     setMemberNicknames({});
@@ -524,6 +589,7 @@ export const LobbyProvider = ({ children }) => {
         AsyncStorage.removeItem(MY_NICKNAME_KEY),
         AsyncStorage.removeItem(DEVICE_NICKNAME_KEY),
         AsyncStorage.removeItem(HOST_DEVICE_ID_KEY),
+        AsyncStorage.removeItem(PREFERRED_HOST_DEVICE_ID_KEY),
         AsyncStorage.removeItem(MY_DEVICE_ID_KEY),
         AsyncStorage.removeItem(EMERGENCY_CONTACTS_KEY),
         AsyncStorage.removeItem(MY_EMERGENCY_CONTACT_KEY),
@@ -602,8 +668,11 @@ export const LobbyProvider = ({ children }) => {
 
     if (hostDeviceId === null || hostDeviceId === undefined) {
       await transferHostToFirstJoined();
+    } else if (preferredHostDeviceId !== null && preferredHostDeviceId !== undefined && deviceId === preferredHostDeviceId) {
+      // Preferred admin rejoined: reclaim admin.
+      await recalculateHost(preferredHostDeviceId, null);
     }
-  }, [hostDeviceId, setMyDeviceId, transferHostToFirstJoined]);
+  }, [hostDeviceId, preferredHostDeviceId, recalculateHost, setMyDeviceId, transferHostToFirstJoined]);
 
   const setMemberOffline = useCallback(async (deviceId, isOffline = true) => {
     if (deviceId === null || deviceId === undefined || Number.isNaN(deviceId)) {
@@ -618,8 +687,11 @@ export const LobbyProvider = ({ children }) => {
 
     if (isOffline && hostDeviceId === deviceId) {
       await transferHostToFirstJoined(deviceId);
+    } else if (!isOffline && preferredHostDeviceId !== null && preferredHostDeviceId !== undefined && deviceId === preferredHostDeviceId) {
+      // Preferred admin came back online: reclaim admin.
+      await recalculateHost(preferredHostDeviceId, null);
     }
-  }, [hostDeviceId, transferHostToFirstJoined]);
+  }, [hostDeviceId, preferredHostDeviceId, recalculateHost, transferHostToFirstJoined]);
 
   // Add a member to the lobby (called when receiving device data)
   const addMember = useCallback((member) => {
@@ -737,6 +809,7 @@ export const LobbyProvider = ({ children }) => {
     emergencyContacts,
     myEmergencyContact,
     hostDeviceId,
+    preferredHostDeviceId,
     myDeviceId,
     rememberEnabled,
     rememberedUsername,
@@ -752,6 +825,7 @@ export const LobbyProvider = ({ children }) => {
     registerMemberSync,
     setMemberOffline,
     transferHostToFirstJoined,
+    electNewHost,
     registerBleCommandSender,
     
     setMemberNickname,
