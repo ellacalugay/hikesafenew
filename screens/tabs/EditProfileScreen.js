@@ -104,8 +104,7 @@ const EditProfileScreen = ({ onBack }) => {
     setDeviceName(deviceNickname || '');
     setIsEditing(false);
   };
-  // derive initials dynamically from first/last name
-  const initials = `${(firstName && firstName[0] ? firstName[0] : '').toUpperCase()}${(lastName && lastName[0] ? lastName[0] : '').toUpperCase()}`;
+
   return (
     <ImageBackground 
       source={require('../../assets/dashboard_bg.png')} 
@@ -154,25 +153,6 @@ const EditProfileScreen = ({ onBack }) => {
         contentContainerStyle={{ paddingTop: 12, paddingBottom: 80, paddingHorizontal: 10 }}
         
 >
-        <View style={{ alignItems: 'center', marginBottom: 20 }}>
-          <View style={{ alignItems: 'center', marginBottom: 20 }}>
-            <View style={{
-              width: 100,
-              height: 100,
-              borderRadius: 50,
-              borderWidth: 2,
-              borderColor: colors.textDark || 'black',
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: colors.primaryLight || '#eee',
-            }}>
-              <Text style={{ fontSize: 34, fontWeight: '800', color: colors.primary || '#156e05' }}>{initials || '??'}</Text>
-            </View>
-            <Text style={{ marginTop: 8, color: colors.primary, fontWeight: '700' }}>PROFILE NAME</Text>
-          </View>
-        </View>
-        
-
         {/* ── All fields inside one white rounded card ── */}
         <View style={{
           backgroundColor: colors.profileBg,
