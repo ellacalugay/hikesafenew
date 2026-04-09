@@ -18,7 +18,9 @@ const MenuOption = ({ icon: Icon, label, onPress, colors }) => (
 const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProblem }) => {
   const { colors } = useTheme();
   const { myNickname, clearRememberData, leaveLobby } = useLobby();
-  const {profilePicture, memberId} = useUser();
+  const { firstName, lastName, memberId } = useUser();
+
+  const initials = `${(firstName && firstName[0] ? firstName[0].toUpperCase() : (myNickname && myNickname[0] ? myNickname[0].toUpperCase() : ''))}${(lastName && lastName[0] ? lastName[0].toUpperCase() : '')}`;
   
   const handleLogout = async () => {
     try {
@@ -84,18 +86,12 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
             borderColor: 'rgba(255,255,255,0.5)',
             overflow: 'hidden',
             marginTop: -25,
+            alignItems: 'center',
+            justifyContent: 'center',
           }}>
-            {profilePicture ? (
-              <Image
-                source={{ uri: profilePicture }}
-                style={{ width: '100%', height: '100%' }}
-                resizeMode="cover"
-              />
-            ) : (
-            <View style={{ flex: 1, backgroundColor: '#81c784', alignItems: 'center', justifyContent: 'center' }}>
-              <User size={36} color="rgba(255,255,255,0.7)" />
+            <View style={{ flex: 1, backgroundColor: colors.primary || '#81c784', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
+              <Text style={{ color: 'rgba(255,255,255,0.95)', fontSize: 36, fontWeight: '700' }}>{initials || 'HS'}</Text>
             </View>
-            )}
           </View>
         </LinearGradient>
 
