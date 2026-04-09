@@ -231,8 +231,8 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
             <ServiceItem icon={Compass}     label="Compass"   onPress={() => onChangeTab('compass')}   colors={colors} bgColor={colors.compassBg} badge={0} />
           </View>
 
-        <Text style={[styles.sectionHeader, { color: colors.textDark, marginTop: 26 }]}>Emergency SOS</Text>
-        <Text style={[localStyles.sosHint, { color: colors.gray }]}>Press and hold for 2 seconds to send an SOS alert to your group.</Text>
+        <Text style={[localStyles.sosTitle, { color: colors.textDark }]}>EMERGENCY SOS</Text>
+        <Text style={[localStyles.sosHint, { color: colors.gray }]}>PRESS AND HOLD FOR 2 SECONDS</Text>
 
         <Pressable
           onLongPress={handleEmergencySOS}
@@ -347,10 +347,19 @@ const localStyles = StyleSheet.create({
   },
 
   sosHint: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '500',
     textAlign: 'center',
-    marginBottom: 12,
+    marginBottom: 14,
+    letterSpacing: 0.4,
+  },
+
+  sosTitle: {
+    fontSize: 28,
+    fontWeight: '900',
+    textAlign: 'center',
+    letterSpacing: 1,
+    marginTop: 26,
   },
 
   sosPressable: {
@@ -368,8 +377,8 @@ const localStyles = StyleSheet.create({
 
   sosCard: {
     borderRadius: 28,
-    padding: 16,
-    minHeight: 250,
+    padding: 18,
+    minHeight: 230,
     shadowColor: '#B71C1C',
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.28,
@@ -385,12 +394,12 @@ const localStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.08)',
-    paddingVertical: 22,
+    paddingVertical: 24,
   },
 
   sosIconWrap: {
-    width: 96,
-    height: 96,
+    width: 100,
+    height: 100,
     borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
@@ -400,7 +409,7 @@ const localStyles = StyleSheet.create({
 
   sosLabel: {
     color: '#fff',
-    fontSize: 30,
+    fontSize: 32,
     fontWeight: '900',
     letterSpacing: 6,
   },
