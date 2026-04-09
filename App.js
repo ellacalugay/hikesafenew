@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Modal, Animated, BackHandler, ActivityIndicator, Easing } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useFonts, SpaceGrotesk_500Medium, SpaceGrotesk_700Bold } from '@expo-google-fonts/space-grotesk';
 import { PublicSans_400Regular, PublicSans_600SemiBold, PublicSans_700Bold } from '@expo-google-fonts/public-sans';
 import { ScreenContainer } from './components/shared';
@@ -339,8 +340,20 @@ function AppContent() {
       {/* Terms Modal */}
       <Modal visible={showTerms} transparent animationType="slide">
         <View style={[styles.modalOverlay, { justifyContent: 'center', alignItems: 'center' }]}>
-          <View style={{ width: '90%', height: '90%', backgroundColor: '#2E8B57', borderRadius: 20, padding: 20, flexDirection: 'column' }}>
-            <Text style={[styles.modalTitleWhite, {textAlign: 'center', marginBottom: 12}]}>Terms and Conditions</Text>
+          <LinearGradient
+            colors={['#46981D', '#3A8619', '#2F7315']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={{ width: '90%', height: '90%', borderRadius: 20, padding: 20, flexDirection: 'column' }}
+          >
+            <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}
+              style={[styles.modalTitleWhite, { textAlign: 'center', marginBottom: 12 }]}
+            >
+              Terms and Conditions
+            </Text>
             <ScrollView style={{flex: 1, marginBottom: 12}} showsVerticalScrollIndicator={false}>
               <View style={{ paddingRight: 8 }}>
                 <View style={{marginBottom: 12}}>
@@ -348,7 +361,7 @@ function AppContent() {
                     <Text style={styles.modalNumber}>1.</Text>
                     <Text style={styles.modalSectionTitle}>Acceptance of Terms</Text>
                   </View>
-                  <Text style={styles.modalParagraph}>
+                  <Text style={[styles.modalParagraph, { textAlign: 'justify' }]}>
                     By using the HikeSafe app, you agree to comply with these Terms and Conditions. Please read them carefully before using the app.
                   </Text>
                 </View>
@@ -452,7 +465,7 @@ function AppContent() {
             }}>
               <Text style={{ color: '#2E8B57', fontSize: 14, fontWeight: '700', textAlign: 'center' }}>I UNDERSTAND</Text>
             </TouchableOpacity>
-          </View>
+          </LinearGradient>
         </View>
       </Modal>
 
