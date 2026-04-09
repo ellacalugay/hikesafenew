@@ -509,6 +509,7 @@ export const styles = StyleSheet.create({
     fontSize: 14,
     color: 'white',
     lineHeight: 20,
+    textAlign: 'justify',
   },
   modalNumber: {
     width: 24,
@@ -525,7 +526,9 @@ export const styles = StyleSheet.create({
   modalParagraph: {
     color: 'white',
     lineHeight: 20,
-    marginLeft: 23,
+    alignSelf: 'stretch',
+    paddingLeft: 23,
+    paddingRight: 8,
     marginBottom: 8,
     fontSize: 13,
     textAlign: 'justify',

@@ -204,7 +204,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
           <View style={[localStyles.sosCard, { backgroundColor: isConnected ? '#9A0000' : '#ff0000' }]}>
             <View style={localStyles.sosInnerFrame}>
               <View style={localStyles.sosIconWrap}>
-                <AlertTriangle size={42} color="#fff" strokeWidth={2.6} />
+                <AlertTriangle size={52} color="#fff" strokeWidth={2.6} />
               </View>
               <Text style={localStyles.sosLabel}>SOS</Text>
               <Text style={localStyles.sosSubLabel}>HOLD TO ALERT</Text>
@@ -300,18 +300,18 @@ const localStyles = StyleSheet.create({
   },
 
   sosHint: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
     textAlign: 'center',
-    marginBottom: 12,
+    marginBottom: 14,
     letterSpacing: 0.4,
   },
 
   sosTitle: {
-    fontSize: 24,
+    fontSize: 30,
     fontWeight: '900',
     textAlign: 'center',
-    letterSpacing: 1,
+    letterSpacing: 1.2,
     marginTop: 6,
   },
 
@@ -330,8 +330,8 @@ const localStyles = StyleSheet.create({
 
   sosCard: {
     borderRadius: 28,
-    padding: 16,
-    minHeight: 200,
+    padding: 20,
+    minHeight: 240,
     borderWidth: 1,
     backgroundColor: '#9A0000',
     borderColor: 'rgba(255,255,255,0.18)',
@@ -354,26 +354,26 @@ const localStyles = StyleSheet.create({
   },
 
   sosIconWrap: {
-    width: 84,
-    height: 84,
-    borderRadius: 28,
+    width: 102,
+    height: 102,
+    borderRadius: 34,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.24)',
-    marginBottom: 14,
+    marginBottom: 16,
   },
 
   sosLabel: {
     color: '#fff',
-    fontSize: 28,
+    fontSize: 36,
     fontWeight: '900',
     letterSpacing: 6,
   },
 
   sosSubLabel: {
     color: 'rgba(255,255,255,0.9)',
-    marginTop: 10,
-    fontSize: 11,
+    marginTop: 12,
+    fontSize: 13,
     fontWeight: '700',
     letterSpacing: 2,
   },

@@ -65,9 +65,6 @@ const ProfileTab = ({ onLogout, onEditProfile, onSettings, onHelp, onReportProbl
           }}
         >
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 11.5, color: 'rgba(255, 255, 255, 0.84)', marginBottom: 2 }}>
-              "DESIGN HERE"
-            </Text>
             <Text style={{ fontSize: 23, color: colors.textDark, fontWeight: '600', marginTop: 20 }}>Hello!</Text>
             <Text style={{ fontSize: 30, color: colors.textDark, fontWeight: '700', lineHeight: 30 }}>
               {myNickname}
