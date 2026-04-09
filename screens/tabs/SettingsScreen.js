@@ -1,10 +1,15 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Switch, Modal, Animated, ImageBackground } from 'react-native';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, Switch, Modal, Animated, ImageBackground, Alert } from 'react-native';
 import { Image } from 'react-native';
 import { ArrowLeft, Bell, Moon, MapPin, Shield, ChevronRight, X, AlertTriangle } from 'lucide-react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
+
+const LOCATION_SERVICES_PREF_KEY = '@hikesafe_location_services_enabled';
+const LOCATION_SERVICES_PROMPTED_KEY = '@hikesafe_location_services_prompted';
 
 const SettingRow = ({ icon: Icon, label, hasToggle, value, onValueChange, onPress, colors }) => (
   <TouchableOpacity 
@@ -40,10 +45,58 @@ const SettingRow = ({ icon: Icon, label, hasToggle, value, onValueChange, onPres
 const SettingsScreen = ({ onBack, onDeleteAccount }) => {
   const { colors, isDarkMode, toggleDarkMode } = useTheme();
   const [notifications, setNotifications] = useState(true);
-  const [locationTracking, setLocationTracking] = useState(true);
+  const [locationServicesEnabled, setLocationServicesEnabled] = useState(true);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const themeTransitionAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem(LOCATION_SERVICES_PREF_KEY);
+        if (!alive) return;
+        if (saved === null) {
+          setLocationServicesEnabled(true);
+        } else {
+          setLocationServicesEnabled(saved === 'true');
+        }
+      } catch (e) {
+        if (alive) setLocationServicesEnabled(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const setLocationServicesPref = useCallback(async (enabled) => {
+    setLocationServicesEnabled(enabled);
+    try {
+      await AsyncStorage.setItem(LOCATION_SERVICES_PREF_KEY, enabled ? 'true' : 'false');
+      await AsyncStorage.setItem(LOCATION_SERVICES_PROMPTED_KEY, 'true');
+    } catch (e) {
+      // ignore
+    }
+  }, []);
+
+  const handleLocationServicesToggle = useCallback(async (enabled) => {
+    if (!enabled) {
+      await setLocationServicesPref(false);
+      return;
+    }
+
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Location permission is needed to use the compass in the Location tab.');
+        await setLocationServicesPref(false);
+        return;
+      }
+      await setLocationServicesPref(true);
+    } catch (e) {
+      Alert.alert('Permission Error', 'Could not request location permission.');
+      await setLocationServicesPref(false);
+    }
+  }, [setLocationServicesPref]);
 
   const handleDarkModeToggle = (value) => {
     // Fade out
@@ -123,10 +176,10 @@ const SettingsScreen = ({ onBack, onDeleteAccount }) => {
         <Text style={[styles.sectionHeader, { color: colors.textDark }]}>Privacy</Text>
         <SettingRow 
           icon={MapPin} 
-          label="Location Tracking" 
+          label="Location Services" 
           hasToggle 
-          value={locationTracking}
-          onValueChange={setLocationTracking}
+          value={locationServicesEnabled}
+          onValueChange={handleLocationServicesToggle}
           colors={colors}
         />
         <SettingRow 

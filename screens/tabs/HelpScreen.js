@@ -43,7 +43,7 @@ const HelpScreen = ({ onBack }) => {
     },
     {
       question: "How does the compass work?",
-      answer: "Enable Location Services in the Compass tab. The compass will show your heading direction and current location coordinates."
+      answer: "The Radar in the Location tab also works as a compass. Enable Location Services in Settings so the app can access the needed sensors/permissions."
     },
     {
       question: "How do I add an emergency contact?",

@@ -1,16 +1,17 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, ImageBackground, BackHandler } from 'react-native';
-import { Home, MapPin, MessageCircle, Compass, User, Check, CheckSquare, Square, AlertTriangle, X, Users, Radio } from 'lucide-react-native';
+import { Home, MapPin, MessageCircle, User, Check, CheckSquare, Square, AlertTriangle, X, Users, Radio } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS } from '../constants/theme';
 import { styles } from '../styles/styles';
 import { useTheme } from '../context/ThemeContext';
 import { useBluetoothDevice } from '../context/BluetoothContext';
 import { useLobby } from '../context/LobbyContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
 import HomeTab from './tabs/HomeTab';
 import LocationTab from './tabs/LocationTab';
 import MessageTab from './tabs/MessageTab';
-import CompassTab from './tabs/CompassTab';
 import ProfileTab from './tabs/ProfileTab';
 import EditProfileScreen from './tabs/EditProfileScreen';
 import ChatScreen from './tabs/ChatScreen';
@@ -18,6 +19,9 @@ import SettingsScreen from './tabs/SettingsScreen';
 import HelpScreen from './tabs/HelpScreen';
 import ReportProblemScreen from './tabs/ReportProblemScreen';
 import MembersTab from './tabs/MembersTab';
+
+const LOCATION_SERVICES_PREF_KEY = '@hikesafe_location_services_enabled';
+const LOCATION_SERVICES_PROMPTED_KEY = '@hikesafe_location_services_prompted';
 
 const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
   <TouchableOpacity style={styles.tabItem} onPress={onPress}>
@@ -47,9 +51,84 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const [skipLogoutConfirm, setSkipLogoutConfirm] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [showLocationModal, setShowLocationModal] = useState(false);
+  const [showLocationServicesPrompt, setShowLocationServicesPrompt] = useState(false);
   const [showLobbyModal, setShowLobbyModal] = useState(false);
   const [showSOSAlertModal, setShowSOSAlertModal] = useState(false);
   const joinAnnounceKeyRef = useRef(null);
+
+  const showLocationServicesBlocked = useCallback(() => {
+    Alert.alert(
+      'Location Services Off',
+      'Enable Location Services in Settings to access the Location tab.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Go to Settings', onPress: () => setActiveTab('settings') },
+      ]
+    );
+  }, []);
+
+  const goToLocationTab = useCallback(() => {
+    setActiveTab('location');
+  }, []);
+
+  const handleLocationTabPress = useCallback(async () => {
+    try {
+      const prompted = await AsyncStorage.getItem(LOCATION_SERVICES_PROMPTED_KEY);
+      if (!prompted) {
+        setShowLocationServicesPrompt(true);
+        return;
+      }
+    } catch (e) {
+      // If storage fails, fall through to location.
+    }
+
+    try {
+      const enabled = await AsyncStorage.getItem(LOCATION_SERVICES_PREF_KEY);
+      if (enabled === 'false') {
+        showLocationServicesBlocked();
+        return;
+      }
+    } catch (e) {
+      // If storage fails, fall through.
+    }
+
+    goToLocationTab();
+  }, [goToLocationTab, showLocationServicesBlocked]);
+
+  const handleLocationServicesDecision = useCallback(async (enable) => {
+    setShowLocationServicesPrompt(false);
+
+    try {
+      await AsyncStorage.setItem(LOCATION_SERVICES_PROMPTED_KEY, 'true');
+    } catch (e) {
+      // ignore
+    }
+
+    if (enable) {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        const granted = status === 'granted';
+        try {
+          await AsyncStorage.setItem(LOCATION_SERVICES_PREF_KEY, granted ? 'true' : 'false');
+        } catch (e) {}
+        if (!granted) {
+          Alert.alert('Permission Required', 'Location permission is needed to use the compass in the Location tab.');
+          showLocationServicesBlocked();
+          return;
+        }
+      } catch (e) {
+        try { await AsyncStorage.setItem(LOCATION_SERVICES_PREF_KEY, 'false'); } catch (e2) {}
+        showLocationServicesBlocked();
+        return;
+      }
+    } else {
+      try { await AsyncStorage.setItem(LOCATION_SERVICES_PREF_KEY, 'false'); } catch (e) {}
+      showLocationServicesBlocked();
+      return;
+    }
+
+    goToLocationTab();
+  }, [goToLocationTab, showLocationServicesBlocked]);
 
   // Handle hardware back button inside Dashboard: close modals first,
   // if on profile sub-screens go back to profile, otherwise go to home.
@@ -169,10 +248,21 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'home': return <HomeTab onChangeTab={setActiveTab} onLobbyPress={handleLobbyPress} />;
+      case 'home':
+        return (
+          <HomeTab
+            onChangeTab={(tab) => {
+              if (tab === 'location') {
+                handleLocationTabPress();
+              } else {
+                setActiveTab(tab);
+              }
+            }}
+            onLobbyPress={handleLobbyPress}
+          />
+        );
       case 'location': return <LocationTab onLocationPress={handleLocationPress} onShowDeviceConnection={onRequireDeviceSetup} />;
       case 'message': return <MessageTab onOpenChat={handleOpenChat} />;
-      case 'compass': return <CompassTab />;
       case 'profile': return (
         <ProfileTab 
           onLogout={handleLogoutPress} 
@@ -203,15 +293,47 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
       {showBottomNav && (
         <View style={[styles.bottomNav, { backgroundColor: colors.surfaceBg, borderTopColor: colors.borderColor }]}>
           <TabIcon icon={Home} label="Home" active={activeTab === 'home'} onPress={() => setActiveTab('home')} colors={colors} />
-          <TabIcon icon={MapPin} label="Loc" active={activeTab === 'location'} onPress={() => setActiveTab('location')} colors={colors} />
+          <TabIcon icon={MapPin} label="Loc" active={activeTab === 'location'} onPress={handleLocationTabPress} colors={colors} />
           <TabIcon icon={MessageCircle} label="Chat" active={activeTab === 'message'} onPress={() => setActiveTab('message')} colors={colors} />
           {isHost && (
             <TabIcon icon={Users} label="Members" active={activeTab === 'members'} onPress={() => setActiveTab('members')} colors={colors} />
           )}
-          <TabIcon icon={Compass} label="Comp" active={activeTab === 'compass'} onPress={() => setActiveTab('compass')} colors={colors} />
           <TabIcon icon={User} label="Prof" active={activeTab === 'profile'} onPress={() => setActiveTab('profile')} colors={colors} />
         </View>
       )}
+
+      {/* One-time Location Services prompt */}
+      <Modal
+        visible={showLocationServicesPrompt}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowLocationServicesPrompt(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.modalBg }]}>
+            <Text style={[styles.modalTitle, { color: colors.textDark, textAlign: 'center' }]}>Enable Location Services</Text>
+            <Text style={[styles.modalText, { color: colors.textDark, textAlign: 'center', marginBottom: 16 }]}
+            >
+              Location permission is needed to access the Location tab.
+            </Text>
+
+            <View style={{ flexDirection: 'row' }}>
+              <TouchableOpacity
+                style={[styles.modalButton, { backgroundColor: colors.inputBg, marginRight: 10, flex: 1 }]}
+                onPress={() => handleLocationServicesDecision(false)}
+              >
+                <Text style={{ color: colors.textDark, fontWeight: '600' }}>Not now</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, { backgroundColor: colors.primary, flex: 1 }]}
+                onPress={() => handleLocationServicesDecision(true)}
+              >
+                <Text style={{ color: 'white', fontWeight: '600' }}>Enable</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Logout Confirmation Modal */}
       <Modal
@@ -503,7 +625,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                   style={[styles.modalButton, { backgroundColor: colors.primary, flex: 1 }]}
                   onPress={() => {
                     handleDismissSOSAlert();
-                    setActiveTab('location');
+                    handleLocationTabPress();
                   }}
                 >
                   <Text style={{ color: 'white', fontWeight: '600' }}>View Location</Text>
