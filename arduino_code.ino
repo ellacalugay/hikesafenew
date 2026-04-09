@@ -852,6 +852,15 @@ void receiveLoRaMessage() {
       alert += "ON_MY_WAY,";
       // Receiver is coming to help - keep SOS active but show different indicator
     } else if (msg.msgType == MSG_BEAT) {
+      // Forward regular location updates to connected phone(s)
+      // so the app can show live tracking even without SOS.
+      String loc = "LOC:";
+      loc += String(msg.deviceID) + ",";
+      loc += String(msg.latitude, 6) + ",";
+      loc += String(msg.longitude, 6) + ",";
+      loc += String(msg.satellites) + ",";
+      loc += String(currentRssi);
+      sendToPhone(loc);
       updateDisplay();
       return;
     }
