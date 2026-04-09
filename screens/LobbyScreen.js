@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Image, ImageBackground, Alert, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, Keyboard, Image, ImageBackground, Alert, ActivityIndicator, StyleSheet } from 'react-native';
 // remember persistence moved to LobbyContext
 import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
@@ -9,8 +9,8 @@ import { useBluetoothDevice } from '../context/BluetoothContext';
 
 const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const { colors } = useTheme();
-  const { createLobby, joinLobby, syncLobbyToDevice, lobbyCode, isInLobby, rememberEnabled, rememberedUsername, rememberedJoinCode, setRememberEnabled, saveRememberData, clearRememberData } = useLobby();
-  const { sendCommand, isConnected, statusMessage, memberLocations } = useBluetoothDevice();
+  const { createLobby, joinLobby, syncLobbyToDevice, lobbyCode, isInLobby, rememberEnabled, rememberedUsername, rememberedJoinCode, setRememberEnabled, saveRememberData, clearRememberData, myNickname } = useLobby();
+  const { sendCommand, isConnected, statusMessage, memberLocations, lastLobbyVerification } = useBluetoothDevice();
   
   // For tracking lobby validation
   const [validationState, setValidationState] = useState(null); // null, 'syncing', 'waiting', 'confirmed'
@@ -35,13 +35,13 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const [username, setUsername] = useState('');
   const [joinCode, setJoinCode] = useState('');
 
-  // initialize local fields from remembered data
+  // Initialize local fields.
+  // Username is sourced from onboarding nickname and is not editable.
   useEffect(() => {
-    if (rememberEnabled) {
-      if (rememberedUsername) setUsername(rememberedUsername);
-      if (rememberedJoinCode) setJoinCode(rememberedJoinCode);
-    }
-  }, [rememberEnabled, rememberedUsername, rememberedJoinCode]);
+    const nextName = (myNickname || rememberedUsername || '').toString();
+    if (nextName && nextName !== username) setUsername(nextName);
+    if (rememberEnabled && rememberedJoinCode) setJoinCode(rememberedJoinCode);
+  }, [rememberEnabled, rememberedUsername, rememberedJoinCode, myNickname, username]);
 
   // Persist when username/joinCode change and remember is enabled
   useEffect(() => {
@@ -59,15 +59,73 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     };
   }, []);
 
+  const getJoinButtonText = () => {
+    if (!isSubmitting) return 'Enter Lobby';
+    if (validationState === 'syncing') return 'Syncing to device...';
+    if (validationState === 'verifying') return 'Verifying lobby...';
+    if (validationState === 'confirmed') return 'Entering...';
+    return 'Joining...';
+  };
+
   // Monitor for device confirmation (STATUS:LOBBY_SET)
   useEffect(() => {
-    if (validationState === 'syncing' && statusMessage && statusMessage.includes('Lobby') && statusMessage.includes('synced to device')) {
-      // Device confirmed the lobby code was set - enter immediately
-      // Note: Other members will appear when their heartbeats arrive (every ~30 seconds)
+    if (validationState !== 'syncing') return;
+    if (!statusMessage) return;
+    if (!pendingJoinRef.current) return;
+
+    const match = statusMessage.match(/Lobby\s(\d{4})\ssynced\sto\sdevice/i);
+    const confirmedCode = match ? parseInt(match[1], 10) : null;
+    const expectedCode = pendingJoinRef.current?.code;
+
+    if (confirmedCode && expectedCode && confirmedCode === expectedCode) {
+      if (validationTimeoutRef.current) {
+        clearTimeout(validationTimeoutRef.current);
+        validationTimeoutRef.current = null;
+      }
+
+      // Device confirmed lobby code set. Now verify that at least one other
+      // device is present on this lobby code via a LoRa handshake.
+      const nonce = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      pendingJoinRef.current.nonce = nonce;
+      setValidationState('verifying');
+
+      // Broadcast verify ping. Any device in the same lobby should reply with __LOBBY_ACK__:<nonce>
+      sendCommand && sendCommand(`MSG:0,__LOBBY_VERIFY__:${nonce}`);
+
+      // If no ACK within 6 seconds, treat as lobby not found.
+      if (validationTimeoutRef.current) {
+        clearTimeout(validationTimeoutRef.current);
+      }
+      validationTimeoutRef.current = setTimeout(() => {
+        if (validationStateRef.current === 'verifying') {
+          setIsSubmitting(false);
+          setValidationState(null);
+          pendingJoinRef.current = null;
+          Alert.alert(
+            'Lobby Not Found',
+            'No devices responded for this lobby code. Make sure the host device is powered on and nearby, then try again.'
+          );
+        }
+      }, 6000);
+    }
+  }, [statusMessage, validationState]);
+
+  // Monitor for lobby verification ACK (__LOBBY_ACK__)
+  useEffect(() => {
+    if (validationState !== 'verifying') return;
+    if (!pendingJoinRef.current?.nonce) return;
+    if (!lastLobbyVerification?.nonce) return;
+
+    if (lastLobbyVerification.nonce === pendingJoinRef.current.nonce) {
+      if (validationTimeoutRef.current) {
+        clearTimeout(validationTimeoutRef.current);
+        validationTimeoutRef.current = null;
+      }
+
       setValidationState('confirmed');
       completeJoin(true);
     }
-  }, [statusMessage, validationState]);
+  }, [lastLobbyVerification, validationState]);
 
   const completeJoin = async (membersFound) => {
     if (!pendingJoinRef.current) return;
@@ -148,16 +206,15 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       return;
     }
     
-    // Require device connection to join lobby
-    // TEMPORARILY BYPASSED FOR UI TESTING
-    // if (!isConnected) {
-    //   Alert.alert(
-    //     'Device Required',
-    //     'You must connect to your HikeSafe device before joining a lobby. The lobby code is synced to your device for LoRa communication.',
-    //     [{ text: 'OK' }]
-    //   );
-    //   return;
-    // }
+    // Require device connection to join lobby (device verifies code was set).
+    if (!isConnected) {
+      Alert.alert(
+        'Device Required',
+        'Connect to your HikeSafe device before joining. The lobby code must be synced to the device for LoRa communication.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
     
     // Start validation process
     performJoinLobby();
@@ -174,37 +231,32 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     };
     
     try {
-      // TEMPORARILY BYPASSED FOR UI TESTING
-      // Send lobby code to device first (skip if not connected)
-      if (isConnected) {
-        const parsedCode = parseInt(joinCode, 10);
-        const success = await syncLobbyToDevice(sendCommand, parsedCode);
-        if (!success) {
-          // Allow entering lobby even if BLE link briefly drops; sync can resume on reconnect.
-          setValidationState('confirmed');
-          completeJoin(false);
-          Alert.alert(
-            'Joined Lobby',
-            'Joined lobby, but device sync is pending. Reconnect Bluetooth to sync lobby code.'
-          );
-          return;
-        }
-        
-        // Wait for device confirmation via statusMessage effect
-        // If no confirmation within 5 seconds, fail
-        setTimeout(() => {
-          if (validationStateRef.current === 'syncing') {
-            setIsSubmitting(false);
-            setValidationState(null);
-            pendingJoinRef.current = null;
-            Alert.alert('Error', 'Device did not confirm lobby code. Please try again.');
-          }
-        }, 5000);
-      } else {
-        // No device - skip validation and join directly
-        setValidationState('confirmed');
-        completeJoin(true);
+      const parsedCode = parseInt(joinCode, 10);
+
+      // Send lobby code to device first.
+      const success = await syncLobbyToDevice(sendCommand, parsedCode);
+      if (!success) {
+        setIsSubmitting(false);
+        setValidationState(null);
+        pendingJoinRef.current = null;
+        Alert.alert('Error', 'Failed to sync lobby code to device. Please try again.');
+        return;
       }
+
+      // Wait for device confirmation via STATUS:LOBBY_SET,<code>
+      // If no confirmation within 5 seconds, fail.
+      if (validationTimeoutRef.current) {
+        clearTimeout(validationTimeoutRef.current);
+      }
+
+      validationTimeoutRef.current = setTimeout(() => {
+        if (validationStateRef.current === 'syncing') {
+          setIsSubmitting(false);
+          setValidationState(null);
+          pendingJoinRef.current = null;
+          Alert.alert('Error', 'Device did not confirm lobby code. Please try again.');
+        }
+      }, 5000);
       
     } catch (error) {
       Alert.alert('Error', 'Failed to join lobby: ' + error.message);
@@ -214,13 +266,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     }
   };
 
-  // Get appropriate button text based on validation state
-  const getJoinButtonText = () => {
-    if (!isSubmitting) return 'Enter Lobby';
-    if (validationState === 'syncing') return 'Syncing to device...';
-    if (validationState === 'confirmed') return 'Entering...';
-    return 'Joining...';
-  };
+  // (button text function moved above to support verify state)
 
   if (mode === 'create') {
     return (
@@ -298,7 +344,8 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       style={styles.lobbyCreateBg}
       resizeMode="cover"
     >
-      <View style={styles.contentContainer}>
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <View style={styles.contentContainer}>
           <View style={styles.logoSection}>
             <Image source={require('../assets/hike.png')} style={styles.logoImage} />
             <Text style={styles.tagline}>"Stay connected. Stay safe."</Text>
@@ -309,6 +356,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
             placeholder="Your Name" 
             value={username}
             onChangeText={setUsername}
+            editable={false}
           />
           <InputField 
             placeholder="Lobby Code (4 digits)" 
@@ -359,7 +407,8 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
             <Text style={{ color: 'white', fontWeight: 'bold' }}>Create Here.</Text>
           </Text>
         </TouchableOpacity>
-      </View>
+        </View>
+      </TouchableWithoutFeedback>
     </ImageBackground>
   );
 };
