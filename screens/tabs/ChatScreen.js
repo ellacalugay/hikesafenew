@@ -95,6 +95,14 @@ const ChatScreen = ({ onBack, chatName }) => {
     return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  // Detect system messages like __JOINED_TS__:... or __LEFT_TS__:...
+  const parseSystemMessage = (text) => {
+    if (typeof text !== 'string') return null;
+    if (text.startsWith('__JOINED_TS__:')) return { type: 'joined' };
+    if (text.startsWith('__LEFT_TS__:')) return { type: 'left' };
+    return null;
+  };
+
   const isOffline = !isConnected || !isDeviceReachable;
 
   // Match mock's red offline indicator without changing global theme.
@@ -343,92 +351,113 @@ const ChatScreen = ({ onBack, chatName }) => {
               </View>
             </View>
           ) : (
-            messages.map((msg) => (
-              <View 
-                key={msg.id} 
-                style={{
-                  alignSelf: msg.isMine ? 'flex-end' : 'flex-start',
-                  maxWidth: '80%',
-                  marginBottom: 14,
-                }}
-              >
-                {!msg.isMine && (
-                  <View style={localStyles.incomingHeader}>
-                    <View style={[localStyles.avatar, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}> 
-                      <Radio size={12} color={colors.primary} />
-                    </View>
-                    <Text style={[localStyles.incomingMeta, { color: colors.gray }]}>
-                      {getMemberNickname(msg.from)}{msg.mobileId > 0 ? ` (Mobile ${msg.mobileId})` : ''}
+            messages.map((msg) => {
+              // ── System message (join / leave) ──────────────────────────
+              const sys = parseSystemMessage(msg.text);
+              if (sys) {
+                const senderName = getMemberNickname(msg.from) || `Device ${msg.from}`;
+                const label = sys.type === 'joined'
+                  ? `${senderName} joined the group.`
+                  : `${senderName} left the group.`;
+                return (
+                  <View key={msg.id} style={localStyles.systemEventRow}>
+                    <View style={[localStyles.systemEventLine, { backgroundColor: ui.outlineVariant }]} />
+                    <Text style={[localStyles.systemEventText, { color: ui.onSurfaceVariant }]}>
+                      {label}
                     </Text>
+                    <View style={[localStyles.systemEventLine, { backgroundColor: ui.outlineVariant }]} />
                   </View>
-                )}
+                );
+              }
 
-                {/* Bubble variants (match mock): sent=primary, pending/failed=outlined light */}
-                {msg.isMine ? (
-                  <View
-                    style={[
-                      localStyles.bubble,
-                      msg.pending || msg.failed
-                        ? { backgroundColor: ui.surfaceContainerHighest, borderColor: msg.failed ? errorColor : ui.primary, borderWidth: 1 }
-                        : { backgroundColor: ui.primary },
-                      localStyles.bubbleMine,
-                    ]}
-                  >
-                    <Text
+              // ── Regular message ────────────────────────────────────────
+              return (
+                <View 
+                  key={msg.id} 
+                  style={{
+                    alignSelf: msg.isMine ? 'flex-end' : 'flex-start',
+                    maxWidth: '80%',
+                    marginBottom: 14,
+                  }}
+                >
+                  {!msg.isMine && (
+                    <View style={localStyles.incomingHeader}>
+                      <View style={[localStyles.avatar, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}> 
+                        <Radio size={12} color={colors.primary} />
+                      </View>
+                      <Text style={[localStyles.incomingMeta, { color: colors.gray }]}>
+                        {getMemberNickname(msg.from)}{msg.mobileId > 0 ? ` (Mobile ${msg.mobileId})` : ''}
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Bubble variants (match mock): sent=primary, pending/failed=outlined light */}
+                  {msg.isMine ? (
+                    <View
                       style={[
-                        localStyles.bubbleText,
-                        msg.pending ? localStyles.pendingText : null,
-                        { color: msg.pending || msg.failed ? ui.onSurface : ui.onPrimary },
+                        localStyles.bubble,
+                        msg.pending || msg.failed
+                          ? { backgroundColor: ui.surfaceContainerHighest, borderColor: msg.failed ? errorColor : ui.primary, borderWidth: 1 }
+                          : { backgroundColor: ui.primary },
+                        localStyles.bubbleMine,
                       ]}
                     >
-                      {msg.text}
-                    </Text>
-                  </View>
-                ) : (
-                  <View
-                    style={[
-                      localStyles.bubble,
-                      { backgroundColor: ui.surfaceContainerHighest, borderColor: ui.outlineVariant, borderWidth: 1 },
-                      localStyles.bubbleTheirs,
-                    ]}
-                  >
-                    <Text style={[localStyles.bubbleText, { color: ui.onSurface }]}>{msg.text}</Text>
-                  </View>
-                )}
-
-                <View style={[localStyles.deliveryRow, { justifyContent: msg.isMine ? 'flex-end' : 'flex-start' }]}>
-                  {msg.isMine ? (
-                    <>
                       <Text
                         style={[
-                          localStyles.deliveryText,
-                          {
-                            color: msg.failed ? errorColor : msg.pending ? ui.onSurfaceVariant : ui.primary,
-                          },
+                          localStyles.bubbleText,
+                          msg.pending ? localStyles.pendingText : null,
+                          { color: msg.pending || msg.failed ? ui.onSurface : ui.onPrimary },
                         ]}
                       >
-                        {formatTime(msg.timestamp)} · {msg.pending ? 'PENDING SYNC' : msg.failed ? 'FAILED TO SEND' : 'SENT'}
+                        {msg.text}
                       </Text>
-                      {!msg.pending && !msg.failed && <CheckCircle size={14} color={ui.primary} />}
-                      {msg.pending && <Clock size={14} color={ui.onSurfaceVariant} />}
-                      {msg.failed && <AlertCircle size={14} color={errorColor} />}
-                    </>
+                    </View>
                   ) : (
-                    <Text style={[localStyles.deliveryText, { color: ui.onSurfaceVariant }]}>{formatTime(msg.timestamp)}</Text>
+                    <View
+                      style={[
+                        localStyles.bubble,
+                        { backgroundColor: ui.surfaceContainerHighest, borderColor: ui.outlineVariant, borderWidth: 1 },
+                        localStyles.bubbleTheirs,
+                      ]}
+                    >
+                      <Text style={[localStyles.bubbleText, { color: ui.onSurface }]}>{msg.text}</Text>
+                    </View>
+                  )}
+
+                  <View style={[localStyles.deliveryRow, { justifyContent: msg.isMine ? 'flex-end' : 'flex-start' }]}>
+                    {msg.isMine ? (
+                      <>
+                        <Text
+                          style={[
+                            localStyles.deliveryText,
+                            {
+                              color: msg.failed ? errorColor : msg.pending ? ui.onSurfaceVariant : ui.primary,
+                            },
+                          ]}
+                        >
+                          {formatTime(msg.timestamp)} · {msg.pending ? 'PENDING SYNC' : msg.failed ? 'FAILED TO SEND' : 'SENT'}
+                        </Text>
+                        {!msg.pending && !msg.failed && <CheckCircle size={14} color={ui.primary} />}
+                        {msg.pending && <Clock size={14} color={ui.onSurfaceVariant} />}
+                        {msg.failed && <AlertCircle size={14} color={errorColor} />}
+                      </>
+                    ) : (
+                      <Text style={[localStyles.deliveryText, { color: ui.onSurfaceVariant }]}>{formatTime(msg.timestamp)}</Text>
+                    )}
+                  </View>
+
+                  {msg.isMine && msg.failed && (
+                    <TouchableOpacity
+                      onPress={() => handleRetry(msg)}
+                      style={localStyles.retryBtn}
+                      disabled={!isConnected}
+                    >
+                      <Text style={[localStyles.retryText, { color: ui.primary }]}>RETRY TRANSMISSION</Text>
+                    </TouchableOpacity>
                   )}
                 </View>
-
-                {msg.isMine && msg.failed && (
-                  <TouchableOpacity
-                    onPress={() => handleRetry(msg)}
-                    style={localStyles.retryBtn}
-                    disabled={!isConnected}
-                  >
-                    <Text style={[localStyles.retryText, { color: ui.primary }]}>RETRY TRANSMISSION</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            ))
+              );
+            })
           )}
         </ScrollView>
 
@@ -730,6 +759,29 @@ const localStyles = StyleSheet.create({
     fontWeight: '900',
     marginTop: 2,
     fontFamily: 'SpaceGrotesk_700Bold',
+  },
+  // Join/leave event row
+  systemEventRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    marginVertical: 12,
+    paddingHorizontal: 8,
+    gap: 10,
+    width: '100%',
+  },
+  systemEventLine: {
+    flex: 1,
+    height: 1,
+    opacity: 0.5,
+  },
+  systemEventText: {
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+    fontFamily: 'PublicSans_400Regular',
+    fontStyle: 'italic',
+    flexShrink: 1,
   },
   composeWrap: {
     position: 'absolute',
