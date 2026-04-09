@@ -166,7 +166,7 @@ const EditProfileScreen = ({ onBack }) => {
               justifyContent: 'center',
               backgroundColor: colors.primaryLight || '#eee',
             }}>
-              <Text style={{ fontSize: 34, fontWeight: '800', color: colors.primary || '#156e05' }}>{initials || '??'}</Text>
+              <Text style={{ fontSize: 34, fontWeight: '800', color: colors.textLight }}>{initials || '??'}</Text>
             </View>
             <Text style={{ marginTop: 8, color: colors.primary, fontWeight: '700' }}>PROFILE NAME</Text>
           </View>

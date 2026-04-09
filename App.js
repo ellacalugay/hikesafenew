@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, Modal, Animated, BackHandler, ActivityIndicator, Easing } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, Modal, Animated, BackHandler, ActivityIndicator, Easing, Alert } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useFonts, SpaceGrotesk_500Medium, SpaceGrotesk_700Bold } from '@expo-google-fonts/space-grotesk';
-import { PublicSans_400Regular, PublicSans_600SemiBold, PublicSans_700Bold } from '@expo-google-fonts/public-sans';
+import { useFonts } from 'expo-font';
 import { ScreenContainer } from './components/shared';
 import { styles } from './styles/styles';
 import { ThemeProvider } from './context/ThemeContext';
@@ -18,6 +17,9 @@ import OnboardingName from './screens/OnboardingName';
 import OnboardingDetails from './screens/OnboardingDetails';
 import LobbyScreen from './screens/LobbyScreen';
 import Dashboard from './screens/Dashboard';
+
+// TEMP (easy to remove): set to false or delete to restore normal Lobby gating.
+const TEMP_BYPASS_LOBBY_TO_DASHBOARD = true;
 
 function AppContent() {
   const { disconnect, clearChatHistory, clearBreadcrumbs } = useBluetoothDevice();
@@ -99,6 +101,12 @@ function AppContent() {
       navigateTo('dashboard');
       return;
     }
+
+    if (TEMP_BYPASS_LOBBY_TO_DASHBOARD) {
+      navigateTo('dashboard');
+      return;
+    }
+
     // Nickname is required for lobby identity. Only skip onboarding if we have it.
     // This also handles older installs where first/last name existed but nickname was never collected.
     if (!userLoading && !lobbyLoading && (myNickname || '').trim().length > 0) {
@@ -114,7 +122,7 @@ function AppContent() {
   
   const handleAcceptTerms = () => {
     setShowReminder(false);
-    navigateTo('lobby');
+    navigateTo(TEMP_BYPASS_LOBBY_TO_DASHBOARD ? 'dashboard' : 'lobby');
   };
 
   const handleCreateLobbySuccess = (data) => {
@@ -501,12 +509,79 @@ function AppContent() {
 }
 
 export default function App() {
+  // Crash-guard: capture uncaught JS errors and unhandled promise rejections.
+  // This helps prevent release builds from hard-crashing on transient errors (e.g., fetch/network hiccups).
+  useEffect(() => {
+    const ErrorUtilsRef = globalThis?.ErrorUtils;
+    const canSetHandler = !!(ErrorUtilsRef && typeof ErrorUtilsRef.setGlobalHandler === 'function');
+    const prevHandler = canSetHandler && typeof ErrorUtilsRef.getGlobalHandler === 'function'
+      ? ErrorUtilsRef.getGlobalHandler()
+      : null;
+
+    const handler = (err, isFatal) => {
+      try {
+        const message = err?.message || String(err);
+        console.log('GlobalError:', message);
+
+        if (!__DEV__ && isFatal) {
+          Alert.alert(
+            'Something went wrong',
+            'HikeSafe hit an unexpected error. Please reopen the app.\n\nIf it keeps happening, try turning Bluetooth off/on and reconnect.',
+            [{ text: 'OK' }]
+          );
+        }
+      } catch {
+        // ignore
+      }
+
+      // Preserve default behavior in dev so errors are still visible.
+      if (__DEV__ && typeof prevHandler === 'function') {
+        prevHandler(err, isFatal);
+      }
+    };
+
+    if (canSetHandler) {
+      ErrorUtilsRef.setGlobalHandler(handler);
+    }
+
+    const prevUnhandled = globalThis.onunhandledrejection;
+    try {
+      globalThis.onunhandledrejection = (event) => {
+        try {
+          const reason = event?.reason;
+          const msg = reason?.message || String(reason);
+          console.log('UnhandledPromiseRejection:', msg);
+        } catch {
+          // ignore
+        }
+        // Let any existing handler run too.
+        if (typeof prevUnhandled === 'function') {
+          try { prevUnhandled(event); } catch { /* ignore */ }
+        }
+      };
+    } catch {
+      // ignore
+    }
+
+    return () => {
+      try {
+        if (canSetHandler && typeof prevHandler === 'function') {
+          ErrorUtilsRef.setGlobalHandler(prevHandler);
+        }
+        globalThis.onunhandledrejection = prevUnhandled;
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
+
   const [fontsLoaded] = useFonts({
-    SpaceGrotesk_500Medium,
-    SpaceGrotesk_700Bold,
-    PublicSans_400Regular,
-    PublicSans_600SemiBold,
-    PublicSans_700Bold,
+    // Keep font family names the same as existing style usage.
+    SpaceGrotesk_500Medium: require('./assets/fonts/SpaceGrotesk_500Medium.ttf'),
+    SpaceGrotesk_700Bold: require('./assets/fonts/SpaceGrotesk_700Bold.ttf'),
+    PublicSans_400Regular: require('./assets/fonts/PublicSans_400Regular.ttf'),
+    PublicSans_600SemiBold: require('./assets/fonts/PublicSans_600SemiBold.ttf'),
+    PublicSans_700Bold: require('./assets/fonts/PublicSans_700Bold.ttf'),
   });
 
   if (!fontsLoaded) {

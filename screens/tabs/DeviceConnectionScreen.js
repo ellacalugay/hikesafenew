@@ -182,13 +182,13 @@ const DeviceConnectionScreen = ({ onBack }) => {
       {isConnected && connectedDevicesList.length > 0 && (
         <View style={[styles.connectedCard, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
           <View style={styles.connectedHeader}>
-            <Radio size={20} color={colors.primary} />
+            <Radio size={20} color={colors.textLight} />
             <View style={{ flex: 1 }}>
-              <Text style={[styles.connectedTitle, { color: colors.primary }]}>
+              <Text style={[styles.connectedTitle, { color: colors.textLight }]}>
                 Connected to {connectedDevicesList.length} device{connectedDevicesList.length > 1 ? 's' : ''}
               </Text>
               {connectedDevicesCount > 0 && (
-                <Text style={[styles.multiDeviceText, { color: colors.primary }]}>
+                <Text style={[styles.multiDeviceText, { color: colors.textLight, opacity: 0.9 }]}>
                   {connectedDevicesCount} phone{connectedDevicesCount > 1 ? 's' : ''} on LoRa
                 </Text>
               )}
@@ -200,7 +200,7 @@ const DeviceConnectionScreen = ({ onBack }) => {
             {connectedDevicesList.map((device, idx) => (
               <View key={device.id} style={{ marginBottom: 8 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ color: colors.textDark, fontSize: 13 }}>
+                  <Text style={{ color: colors.textLight, fontSize: 13 }}>
                     {device.name || 'Device'}
                   </Text>
                   <TouchableOpacity
@@ -216,18 +216,18 @@ const DeviceConnectionScreen = ({ onBack }) => {
           
           {/* GPS Info from first connected device */}
           <View style={styles.gpsInfo}>
-            <Text style={[styles.gpsLabel, { color: colors.textDark }]}>GPS Status:</Text>
+            <Text style={[styles.gpsLabel, { color: colors.textLight }]}>GPS Status:</Text>
             {myLocation.valid ? (
               <View>
-                <Text style={[styles.gpsValue, { color: colors.primary }]}>
+                <Text style={[styles.gpsValue, { color: colors.textLight }]}>
                   {myLocation.lat.toFixed(6)}, {myLocation.lng.toFixed(6)}
                 </Text>
-                <Text style={[styles.gpsValue, { color: colors.gray }]}>
+                <Text style={[styles.gpsValue, { color: colors.textLight, opacity: 0.9 }]}>
                   Satellites: {myLocation.satellites}
                 </Text>
               </View>
             ) : (
-              <Text style={[styles.gpsValue, { color: colors.gray }]}>
+              <Text style={[styles.gpsValue, { color: colors.textLight, opacity: 0.9 }]}>
                 Waiting for GPS fix... ({myLocation.satellites} sats)
               </Text>
             )}

@@ -52,16 +52,16 @@ const MessageTab = ({ onOpenChat }) => {
       <View style={{ backgroundColor: colors.primaryLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 10, marginHorizontal: 16, marginTop: 16, marginBottom: 6, borderRadius: 12 }}>
         {isSearching ? (
           <TextInput
-            style={{ flex: 1, fontSize: 16, color: colors.textDark, paddingVertical: 0 }}
+            style={{ flex: 1, fontSize: 16, color: colors.textLight, paddingVertical: 0 }}
             placeholder="Search messages..."
-            placeholderTextColor={colors.black}
+            placeholderTextColor={colors.textLight}
             value={searchQuery}
             onChangeText={setSearchQuery}
             autoFocus
           />
         ) : (
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text style={[styles.headerTitle, { color: colors.textDark }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 10}}>
+            <Text style={[styles.headerTitle, { color: colors.textLight }]}>
               Messages</Text>
           </View>
         )}
@@ -75,9 +75,9 @@ const MessageTab = ({ onOpenChat }) => {
           }}
         >
           {isSearching ? (
-            <X size={22} color={colors.textDark} />
+            <X size={22} color={colors.textLight} />
           ) : (
-            <Search size={22} color={colors.textDark} />
+            <Search size={22} color={colors.textLight} />
           )}
         </TouchableOpacity>
       </View>
@@ -90,11 +90,11 @@ const MessageTab = ({ onOpenChat }) => {
             onPress={() => onOpenChat({ type: 'broadcast', name: 'Group Chat', deviceId: 0 })}
           >
             <View style={[localStyles.groupIcon, { backgroundColor: colors.primary }]}>
-              <Users size={18} color="#000000" />
+              <Users size={18} color={colors.textLight} />
             </View>
             <View style={localStyles.chatInfo}>
-              <Text style={[styles.chatName, { color: colors.textDark }]}>Group Chat (Broadcast)</Text>
-              <Text style={[localStyles.chatPreview, { color: colors.black }]}>Send to all devices</Text>
+              <Text style={[styles.chatName, { color: colors.textLight }]}>Group Chat (Broadcast)</Text>
+              <Text style={[localStyles.chatPreview, { color: colors.textLight, opacity: 0.9 }]}>Send to all devices</Text>
             </View>
             <View style={localStyles.rightStatusRow}>
               {unreadCount > 0 && (

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Dimensions, ImageBackground, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Dimensions, ImageBackground, Alert, Animated, Easing } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import { Magnetometer } from 'expo-sensors';
@@ -54,6 +54,29 @@ const formatDistance = (meters) => {
 
 // Radar View Component - Works completely offline
 const RadarView = ({ myLocation, members, colors, onMemberPress, headingDeg = null }) => {
+  const radarPulseAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(radarPulseAnim, {
+        toValue: 1,
+        duration: 2200,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      })
+    );
+
+    loop.start();
+    return () => {
+      try {
+        loop.stop();
+      } catch {
+        // ignore
+      }
+      radarPulseAnim.setValue(0);
+    };
+  }, [radarPulseAnim]);
+
   const getCardinalDirection = (deg) => {
     const val = Math.floor((deg / 45) + 0.5);
     const arr = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
@@ -68,6 +91,13 @@ const RadarView = ({ myLocation, members, colors, onMemberPress, headingDeg = nu
   
   // Scale factor: radar radius represents maxDistance
   const radarRadius = RADAR_SIZE / 2 - 30;
+
+  const rippleBaseSize = RADAR_SIZE - 60;
+  const rippleScaleA = radarPulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.15, 1] });
+  const rippleOpacityA = radarPulseAnim.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0.35, 0.18, 0] });
+  const phaseB = Animated.modulo(Animated.add(radarPulseAnim, 0.5), 1);
+  const rippleScaleB = phaseB.interpolate({ inputRange: [0, 1], outputRange: [0.15, 1] });
+  const rippleOpacityB = phaseB.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0.28, 0.14, 0] });
   
   return (
     <View style={[localStyles.radarContainer, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
@@ -92,6 +122,36 @@ const RadarView = ({ myLocation, members, colors, onMemberPress, headingDeg = nu
         ]}
       >
         <View style={[localStyles.radar, { width: RADAR_SIZE, height: RADAR_SIZE }]}>
+        {/* Animated radar pulse (ripple) */}
+        <View style={localStyles.radarRipples} pointerEvents="none">
+          <Animated.View
+            style={[
+              localStyles.radarRipple,
+              {
+                width: rippleBaseSize,
+                height: rippleBaseSize,
+                borderRadius: rippleBaseSize / 2,
+                borderColor: colors.primary,
+                opacity: rippleOpacityA,
+                transform: [{ scale: rippleScaleA }],
+              },
+            ]}
+          />
+          <Animated.View
+            style={[
+              localStyles.radarRipple,
+              {
+                width: rippleBaseSize,
+                height: rippleBaseSize,
+                borderRadius: rippleBaseSize / 2,
+                borderColor: colors.primary,
+                opacity: rippleOpacityB,
+                transform: [{ scale: rippleScaleB }],
+              },
+            ]}
+          />
+        </View>
+
         {/* Radar circles */}
         <View style={[localStyles.radarCircle, { width: RADAR_SIZE - 60, height: RADAR_SIZE - 60, borderColor: colors.borderColor }]} />
         <View style={[localStyles.radarCircle, { width: (RADAR_SIZE - 60) * 0.66, height: (RADAR_SIZE - 60) * 0.66, borderColor: colors.borderColor }]} />
@@ -864,12 +924,12 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
             activeOpacity={0.7}
           >
             <View style={localStyles.connectionHeader}>
-              <Radio size={24} color={colors.primary} />
+              <Radio size={24} color={colors.textLight} />
               <View style={localStyles.connectionText}>
-                <Text style={[localStyles.connectionTitle, { color: colors.textDark }]}>
+                <Text style={[localStyles.connectionTitle, { color: colors.textLight }]}>
                   {connectedDevice?.name}
                 </Text>
-                <Text style={[localStyles.connectionSubtitle, { color: colors.gray }]}>
+                <Text style={[localStyles.connectionSubtitle, { color: colors.textLight, opacity: 0.9 }]}>
                   Tap to manage connection
                 </Text>
               </View>
@@ -1324,6 +1384,15 @@ const localStyles = StyleSheet.create({
     borderRadius: 9999,
     borderWidth: 1,
     borderStyle: 'dashed',
+  },
+  radarRipples: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radarRipple: {
+    position: 'absolute',
+    borderWidth: 2,
   },
   radarLineH: {
     position: 'absolute',

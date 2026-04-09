@@ -13,6 +13,9 @@ import { startBreadcrumbBackgroundUpdates, stopBreadcrumbBackgroundUpdates } fro
 const CHAT_HISTORY_KEY = '@hikesafe_chat_history';
 const BREADCRUMBS_KEY = '@hikesafe_breadcrumbs';
 
+// Keep runtime memory bounded (storage already caps at 200).
+const MAX_MESSAGES_IN_MEMORY = 300;
+
 // Vibration patterns (milliseconds)
 const VIBRATION_PATTERNS = {
   SOS: [0, 500, 200, 500, 200, 500, 400, 1000, 400, 1000, 400, 1000, 400, 500, 200, 500, 200, 500], // ...---...
@@ -856,19 +859,20 @@ export const BluetoothProvider = ({ children }) => {
   }, [isConnected, lastDataReceived]);
 
   const handleConnectionLost = useCallback(async () => {
+    // Legacy single-device disconnect handler; keep it safe under the multi-device model.
     setConnectionHealth('lost');
     setStatusMessage('Device disconnected');
-    
+
     if (subscriptionRef.current) {
       subscriptionRef.current.remove();
       subscriptionRef.current = null;
     }
-    
+
     if (disconnectSubscriptionRef.current) {
       disconnectSubscriptionRef.current.remove();
       disconnectSubscriptionRef.current = null;
     }
-    
+
     if (deviceRef.current) {
       try {
         await deviceRef.current.cancelConnection();
@@ -877,9 +881,9 @@ export const BluetoothProvider = ({ children }) => {
       }
       deviceRef.current = null;
     }
-    
-    setConnectedDevice(null);
-    setIsConnected(false);
+
+    // Multi-device: clear all connected devices and reset derived flags.
+    setConnectedDevicesList([]);
     setConnectedDevicesCount(0);
     setIsDeviceReachable(false);
     commandQueueRef.current = Promise.resolve();
@@ -887,7 +891,7 @@ export const BluetoothProvider = ({ children }) => {
     setMyLocation({ lat: 0, lng: 0, satellites: 0, valid: false });
     setLastDataReceived(null);
     setLoraSignalStrength(null);
-    
+
     setTimeout(() => setStatusMessage(''), 3000);
   }, [stopEmergencySignals]);
 
@@ -1018,13 +1022,14 @@ export const BluetoothProvider = ({ children }) => {
   // Parse incoming BLE data from device
   const parseBluetoothData = useCallback((data) => {
     if (!data) return;
-    
+
     setLastDataReceived(Date.now());
-    
+
     const lines = data.split('\n').filter(line => line.trim());
-    
+
     lines.forEach(line => {
-      const trimmed = line.trim();
+      try {
+        const trimmed = line.trim();
       
       // SELF:[LAT],[LON],[SATS],[RSSI],[CONN_DEVICES] - Own GPS location and LoRa signal from connected device
       if (trimmed.startsWith('SELF:')) {
@@ -1141,7 +1146,7 @@ export const BluetoothProvider = ({ children }) => {
               isMine: false,
               system: true,
             };
-            setMessages(prev => [...prev, joinMsg]);
+            setMessages(prev => [...prev, joinMsg].slice(-MAX_MESSAGES_IN_MEMORY));
             setUnreadCount(prev => prev + 1);
           }
           if (isInLobby) {
@@ -1566,7 +1571,7 @@ export const BluetoothProvider = ({ children }) => {
             rssi: rssiValue,
           };
           
-          setMessages(prev => [...prev, newMessage]);
+          setMessages(prev => [...prev, newMessage].slice(-MAX_MESSAGES_IN_MEMORY));
           setUnreadCount(prev => prev + 1);
           
           // Vibrate for incoming message (respects vibrationEnabled)
@@ -1727,10 +1732,13 @@ export const BluetoothProvider = ({ children }) => {
         }
       }
       
-      // MSG_SENT confirmation
-      else if (trimmed === 'MSG_SENT') {
-        setStatusMessage('Message sent via LoRa');
-        setTimeout(() => setStatusMessage(''), 2000);
+        // MSG_SENT confirmation
+        else if (trimmed === 'MSG_SENT') {
+          setStatusMessage('Message sent via LoRa');
+          setTimeout(() => setStatusMessage(''), 2000);
+        }
+      } catch (e) {
+        console.error('parseBluetoothData line error:', e);
       }
     });
   }, [addActivity, clearPendingDeviceLobbySync, connectedDevice, getMemberNickname, isDeviceSosActive, isInLobby, parseDeviceId, pendingDeviceLobbySyncCode, pushEmergencyNotification, pushMessageNotification, registerMemberSync, requestSosTrailSnapshot, sendSosTrailSnapshot, setEmergencyContactForDevice, setMemberNickname, setMemberOffline, setMyDeviceId, shouldThrottleEmergency, startEmergencySignals, stopEmergencySignals, triggerVibration]);
@@ -1803,22 +1811,27 @@ export const BluetoothProvider = ({ children }) => {
         NUS_SERVICE_UUID,
         NUS_TX_CHAR_UUID,
         (error, characteristic) => {
-          if (error) {
-            console.error('Notification error:', error);
-            if (error.message?.includes('disconnected') || error.message?.includes('cancel')) {
-              // Handle disconnection for this specific device
-              disconnectFromDevice(device.id);
+          try {
+            if (error) {
+              console.error('Notification error:', error);
+              const msg = error?.message || '';
+              if (msg.includes('disconnected') || msg.includes('cancel')) {
+                // Handle disconnection for this specific device
+                Promise.resolve(disconnectFromDevice(device.id)).catch(() => {});
+              }
+              return;
             }
-            return;
-          }
-          
-          if (characteristic?.value) {
-            try {
-              const decoded = Buffer.from(characteristic.value, 'base64').toString('utf-8');
-              parseBluetoothData(decoded);
-            } catch (e) {
-              console.error('Decode error:', e);
+
+            if (characteristic?.value) {
+              try {
+                const decoded = Buffer.from(characteristic.value, 'base64').toString('utf-8');
+                parseBluetoothData(decoded);
+              } catch (e) {
+                console.error('Decode error:', e);
+              }
             }
+          } catch (e) {
+            console.error('BLE notify handler crashed:', e);
           }
         }
       );
@@ -2167,7 +2180,7 @@ export const BluetoothProvider = ({ children }) => {
       pending: true,
     };
     
-    setMessages(prev => [...prev, newMessage]);
+    setMessages(prev => [...prev, newMessage].slice(-MAX_MESSAGES_IN_MEMORY));
     
     const success = await sendCommand(command);
     

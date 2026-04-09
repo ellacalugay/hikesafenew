@@ -470,7 +470,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                   <ScrollView showsVerticalScrollIndicator={false}>
                     <View style={{ backgroundColor: colors.primaryLight, padding: 15, borderRadius: 12, alignItems: 'center', marginBottom: 12 }}>
                       <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', letterSpacing: 1 }}>LOBBY CODE</Text>
-                      <Text style={{ color: '#0B1F16', fontSize: 36, fontWeight: 'bold', letterSpacing: 6, marginTop: 4 }}>{lobbyCode}</Text>
+                      <Text style={{ color: colors.textLight, fontSize: 36, fontWeight: 'bold', letterSpacing: 6, marginTop: 4 }}>{lobbyCode}</Text>
                     </View>
 
                     <View style={{ backgroundColor: colors.inputBg, borderRadius: 12, padding: 14, marginBottom: 10 }}>

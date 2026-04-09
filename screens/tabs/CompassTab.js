@@ -129,7 +129,7 @@ const CompassTab = () => {
       <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
       <View style={{ backgroundColor: colors.primaryLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12, marginHorizontal: 16, marginTop: 16, marginBottom: 6, borderRadius: 12 }}>
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={[styles.headerTitle, { color: colors.textDark }]}>COMPASS</Text>
+          <Text style={[styles.headerTitle, { color: colors.textLight }]}>COMPASS</Text>
         </View>
       </View>
       
@@ -177,8 +177,8 @@ const CompassTab = () => {
       </View>
 
       <View style={[styles.distanceBar, { bottom: 70, backgroundColor: colors.primaryLight }]}>
-         <Text style={styles.distanceLabel}>DISTANCE:</Text>
-         <Text style={styles.distanceValue}>{location ? '0 m' : '--'}</Text>
+        <Text style={[styles.distanceLabel, { color: colors.textLight }]}>DISTANCE:</Text>
+        <Text style={[styles.distanceValue, { color: colors.textLight }]}>{location ? '0 m' : '--'}</Text>
       </View>
     </ImageBackground>
   );

@@ -201,15 +201,15 @@ const ConnectedPhonesScreen = ({ onBack }) => {
 
         {isConnected ? (
           <View style={[styles.connectedStatus, { backgroundColor: colors.primaryLight }]}>
-            <Radio size={16} color={colors.primary} />
-            <Text style={[styles.statusText, { color: colors.primary }]} >
+            <Radio size={16} color={colors.textLight} />
+            <Text style={[styles.statusText, { color: colors.textLight }]} >
               Device Connected
             </Text>
           </View>
         ) : (
           <View style={[styles.connectedStatus, { backgroundColor: colors.primaryLight }]}>
-            <Radio size={16} color={colors.accent} />
-            <Text style={[styles.statusText, { color: colors.accent }]}>
+            <Radio size={16} color={colors.textLight} />
+            <Text style={[styles.statusText, { color: colors.textLight }]}>
               Device Disconnected
             </Text>
           </View>

@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ImageBackground, Image, Pressable, Alert } from 'react-native';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ImageBackground, Image, Pressable, Alert, Animated, Easing } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Trees, User, MessageCircle, MapPin, Radio, Users, AlertTriangle } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
@@ -29,6 +29,51 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
   const { isConnected, isDeviceReachable, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, unreadCount, sendSOS } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isHost, myNickname } = useLobby();
+
+  // SOS button pulse/blink (subtle) when connected.
+  const sosPulseAnim = useRef(new Animated.Value(0)).current;
+  const sosPulseLoopRef = useRef(null);
+
+  useEffect(() => {
+    // Stop pulse when not connected.
+    if (!isConnected) {
+      try {
+        sosPulseLoopRef.current?.stop?.();
+      } catch {
+        // ignore
+      }
+      sosPulseLoopRef.current = null;
+      sosPulseAnim.setValue(0);
+      return;
+    }
+
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(sosPulseAnim, {
+          toValue: 1,
+          duration: 700,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(sosPulseAnim, {
+          toValue: 0,
+          duration: 700,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    sosPulseLoopRef.current = loop;
+    loop.start();
+
+    return () => {
+      try {
+        loop.stop();
+      } catch {
+        // ignore
+      }
+    };
+  }, [isConnected, sosPulseAnim]);
   
   // Get signal quality from RSSI (LoRa typical ranges: -30 to -120 dBm)
   const getSignalQuality = (rssi) => {
@@ -121,7 +166,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
         {/* Status Message */}
         {statusMessage && (
           <View style={[localStyles.statusBanner, { backgroundColor: colors.primaryLight }]}>
-            <Text style={[localStyles.statusText, { color: colors.primary }]}>
+            <Text style={[localStyles.statusText, { color: colors.textLight }]}>
               {statusMessage.replace(/_/g, ' ')}
             </Text>
           </View>
@@ -195,21 +240,65 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
         <Pressable
           onLongPress={handleEmergencySOS}
           delayLongPress={2000}
-          style={({ pressed }) => [
-            localStyles.sosPressable,
-            !isConnected && localStyles.sosDisabled,
-            pressed && localStyles.sosPressed,
-          ]}
+          style={[localStyles.sosPressable, !isConnected && localStyles.sosDisabled]}
         >
-          <View style={[localStyles.sosCard, { backgroundColor: isConnected ? '#9A0000' : '#ff0000' }]}>
-            <View style={localStyles.sosInnerFrame}>
-              <View style={localStyles.sosIconWrap}>
-                <AlertTriangle size={52} color="#fff" strokeWidth={2.6} />
+          {({ pressed }) => {
+            const sosSize = 300; // ~15% bigger than 260
+            const pulseOpacity = sosPulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.86] });
+            const pulseScale = sosPulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.05] });
+
+            const haloOpacity = sosPulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.22, 0] });
+            const haloScale = sosPulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.28] });
+
+            return (
+              <View style={{ alignSelf: 'center' }}>
+                {isConnected && (
+                  <Animated.View
+                    pointerEvents="none"
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                      width: sosSize,
+                      height: sosSize,
+                      borderRadius: sosSize / 2,
+                      backgroundColor: '#9A0000',
+                      opacity: haloOpacity,
+                      transform: [{ scale: haloScale }],
+                    }}
+                  />
+                )}
+
+                <Animated.View
+                  style={{
+                    opacity: isConnected ? pulseOpacity : 1,
+                    transform: [{ scale: pressed ? 0.975 : (isConnected ? pulseScale : 1) }],
+                  }}
+                >
+                  <View
+                    style={[
+                      localStyles.sosCard,
+                      {
+                        backgroundColor: isConnected ? '#9A0000' : '#ff0000',
+                        width: sosSize,
+                        height: sosSize,
+                        borderRadius: sosSize / 2,
+                        alignSelf: 'center',
+                      },
+                    ]}
+                  >
+                    <View style={localStyles.sosInnerFrame}>
+                      <View style={localStyles.sosIconWrap}>
+                        <AlertTriangle size={52} color="#fff" strokeWidth={2.6} />
+                      </View>
+                      <Text style={localStyles.sosLabel}>SOS</Text>
+                      <Text style={localStyles.sosSubLabel}>HOLD TO ALERT</Text>
+                    </View>
+                  </View>
+                </Animated.View>
               </View>
-              <Text style={localStyles.sosLabel}>SOS</Text>
-              <Text style={localStyles.sosSubLabel}>HOLD TO ALERT</Text>
-            </View>
-          </View>
+            );
+          }}
         </Pressable>
 
       </ScrollView>
@@ -300,7 +389,7 @@ const localStyles = StyleSheet.create({
   },
 
   sosHint: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '500',
     textAlign: 'center',
     marginBottom: 14,
@@ -308,15 +397,15 @@ const localStyles = StyleSheet.create({
   },
 
   sosTitle: {
-    fontSize: 30,
+    fontSize: 25,
     fontWeight: '900',
     textAlign: 'center',
     letterSpacing: 1.2,
-    marginTop: 6,
+    marginTop: 28,
   },
 
   sosPressable: {
-    marginTop: 6,
+    marginTop: 0,
     alignSelf: 'stretch',
   },
 
@@ -324,14 +413,9 @@ const localStyles = StyleSheet.create({
     opacity: 0.7,
   },
 
-  sosPressed: {
-    transform: [{ scale: 0.985 }],
-  },
-
   sosCard: {
     borderRadius: 28,
     padding: 20,
-    minHeight: 240,
     borderWidth: 1,
     backgroundColor: '#9A0000',
     borderColor: 'rgba(255,255,255,0.18)',
@@ -344,7 +428,7 @@ const localStyles = StyleSheet.create({
 
   sosInnerFrame: {
     flex: 1,
-    borderRadius: 24,
+    borderRadius: 9999,
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.30)',
     alignItems: 'center',
