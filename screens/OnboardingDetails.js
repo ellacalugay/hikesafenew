@@ -1,13 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Modal, KeyboardAvoidingView, ScrollView, Platform, ImageBackground, Animated } from 'react-native';
-import { ChevronRight } from 'lucide-react-native';
+import { View, Text, TouchableOpacity, Modal, Keyboard, KeyboardAvoidingView, ScrollView, Platform, ImageBackground, Animated } from 'react-native';
+import { ChevronDown, ChevronLeft, User, Phone, Plus } from 'lucide-react-native';
 import { styles } from '../styles/styles';
 import { InputField, MainButton } from '../components/shared';
 import { useTheme } from '../context/ThemeContext';
 import { useLobby } from '../context/LobbyContext';
 import { useUser } from '../context/UserContext';
 
-const OnboardingDetails = ({ next, onShowReminder }) => {
+const OnboardingDetails = ({ next, onShowReminder, onBack, disableMountAnimation = false }) => {
   const { colors } = useTheme();
   const { setMyEmergencyContact } = useLobby();
   const {
@@ -15,14 +15,16 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
     setContactPhone: setCtxContactPhone,
     setMedicalCondition: setCtxMedicalCondition,
   } = useUser();
-  const titleOpacity = useRef(new Animated.Value(0)).current;
-  const titleTranslateY = useRef(new Animated.Value(-20)).current;
-  const formOpacity = useRef(new Animated.Value(0)).current;
-  const formTranslateY = useRef(new Animated.Value(20)).current;
-  const buttonOpacity = useRef(new Animated.Value(0)).current;
-  const buttonScale = useRef(new Animated.Value(0.9)).current;
+  const titleOpacity = useRef(new Animated.Value(disableMountAnimation ? 1 : 0)).current;
+  const titleTranslateY = useRef(new Animated.Value(disableMountAnimation ? 0 : -20)).current;
+  const formOpacity = useRef(new Animated.Value(disableMountAnimation ? 1 : 0)).current;
+  const formTranslateY = useRef(new Animated.Value(disableMountAnimation ? 0 : 20)).current;
+  const buttonOpacity = useRef(new Animated.Value(disableMountAnimation ? 1 : 0)).current;
+  const buttonScale = useRef(new Animated.Value(disableMountAnimation ? 1 : 0.9)).current;
 
   useEffect(() => {
+    if (disableMountAnimation) return;
+
     Animated.stagger(150, [
       Animated.parallel([
         Animated.timing(titleOpacity, {
@@ -91,6 +93,7 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
   };
 
   const handleAccept = () => {
+    Keyboard.dismiss();
     const errPhone = validatePhone(contactPhone);
     const errName = validateName(contactName);
 
@@ -140,63 +143,92 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
         style={{ flex: 1 }} 
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <ScrollView 
-          contentContainerStyle={{ flexGrow: 1, paddingBottom: 32 }}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          bounces={false}
-        >
-          <View style={[styles.contentContainer, { justifyContent: 'center' }]}>
-            <Animated.Text style={[styles.titleLarge, styles.detailTitle, { color: colors.textDark, top: 0, marginTop: 0, marginBottom: 16 }, {
-              opacity: titleOpacity,
-              transform: [{ translateY: titleTranslateY }],
-            }]}>Get ready with the trail!</Animated.Text>
-
-            <Animated.View style={[styles.detailForm, { top: 0, marginTop: 12, marginBottom: 8 }, {
-              opacity: formOpacity,
-              transform: [{ translateY: formTranslateY }],
-            }]}>
-              <InputField
-                label="Contact Name"
-                placeholder="Emergency Contact Name"
-                value={contactName}
-                onChangeText={(t) => { setContactName(t); if (contactNameError) setContactNameError(''); }}
-                error={contactNameError}
-              />
-              <InputField
-                label="Contact Phone"
-                placeholder="Emergency Contact Phone"
-                value={contactPhone}
-                onChangeText={(t) => { 
-                  if (t.length <= 11) {
-                    setContactPhone(t); 
-                    if (contactPhoneError) setContactPhoneError(''); 
-                  }
+        <View style={styles.onboardingPage}>
+            <View style={styles.onboardingHeader}>
+              <TouchableOpacity
+                onPress={() => {
+                  Keyboard.dismiss();
+                  onBack && onBack();
                 }}
-                keyboardType="phone-pad"
-                error={contactPhoneError}
-                maxLength={11}
-              />
-              <InputField
-                label="Medical Condition"
-                placeholder="Any allergies or conditions?"
-                value={medicalCondition}
-                onChangeText={setMedicalCondition}
-              />
-
-              <Text style={[styles.inputLabel, { color: colors.textDark }]}>Hiking Experience level</Text>
-              <TouchableOpacity style={[styles.inputBox, { backgroundColor: colors.inputBg, borderColor: colors.borderColor }]} onPress={() => setDropdownOpen(true)}>
-                <Text style={{color: colors.textDark}}>{experience}</Text>
-                <ChevronRight size={20} color={colors.gray} />
+                style={styles.onboardingBackBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Back to previous step"
+              >
+                <ChevronLeft size={20} color={colors.textDark} />
               </TouchableOpacity>
-            </Animated.View>
+              <View style={styles.onboardingProgress}>
+                <Text style={[styles.onboardingProgressText, { color: colors.gray, marginRight: 8 }]}>2 of 2</Text>
+                <View style={styles.onboardingDots}>
+                  <View style={[styles.onboardingDot, { backgroundColor: 'transparent', borderColor: colors.borderColor }]} />
+                  <View style={[styles.onboardingDot, { backgroundColor: colors.primary, borderColor: colors.primary }]} />
+                </View>
+              </View>
+            </View>
 
-            <Animated.View style={[{
-              opacity: buttonOpacity,
-              transform: [{ scale: buttonScale }],
-            }]}>
-              <MainButton title="ACCEPT AND CONTINUE" onPress={handleAccept} style={{ marginTop: 14, marginBottom: 16 }} />
-            </Animated.View>
+            <View style={styles.onboardingBody}>
+              <View style={{ marginTop: 10 }}>
+                <Animated.Text style={[styles.titleLarge, styles.detailTitle, { color: colors.textDark, top: 0, marginTop: 25, marginBottom: 12, textAlign: 'left', fontSize: 48, lineHeight: 50 }, {
+                  opacity: titleOpacity,
+                  transform: [{ translateY: titleTranslateY }],
+                }]}>Get ready with the trail!</Animated.Text>
+
+                <Animated.View style={[styles.onboardingForm, {
+                  opacity: formOpacity,
+                  transform: [{ translateY: formTranslateY }],
+                  marginTop: 10,
+                }]}>
+                  <InputField
+                    label="Contact Name"
+                    placeholder="Emergency Contact Name"
+                    value={contactName}
+                    onChangeText={(t) => { setContactName(t); if (contactNameError) setContactNameError(''); }}
+                    error={contactNameError}
+                    icon={<User size={16} color={colors.gray} />}
+                    containerStyle={styles.onboardingFieldGap}
+                  />
+                  <InputField
+                    label="Contact Phone"
+                    placeholder="Emergency Contact Phone"
+                    value={contactPhone}
+                    onChangeText={(t) => {
+                      if (t.length <= 11) {
+                        setContactPhone(t);
+                        if (contactPhoneError) setContactPhoneError('');
+                      }
+                    }}
+                    keyboardType="phone-pad"
+                    error={contactPhoneError}
+                    maxLength={11}
+                    icon={<Phone size={16} color={colors.gray} />}
+                    containerStyle={styles.onboardingFieldGap}
+                  />
+                  <InputField
+                    label="Medical Condition"
+                    placeholder="Any allergies or conditions?"
+                    value={medicalCondition}
+                    onChangeText={setMedicalCondition}
+                    icon={<Plus size={16} color={colors.gray} />}
+                    containerStyle={styles.onboardingFieldGap}
+                  />
+
+                  <Text style={[styles.inputLabel, { color: colors.textDark, marginBottom: 6, marginTop: 2 }]}>Hiking Experience level</Text>
+                  <TouchableOpacity
+                    style={[styles.inputBox, { backgroundColor: colors.inputBg, borderColor: colors.borderColor, paddingVertical: 14, paddingHorizontal: 16 }]}
+                    onPress={() => setDropdownOpen(true)}
+                  >
+                    <Text style={{ color: colors.textDark, fontWeight: '600' }}>{experience}</Text>
+                    <ChevronDown size={18} color={colors.gray} />
+                  </TouchableOpacity>
+                </Animated.View>
+              </View>
+
+              <Animated.View style={[styles.onboardingFooter, {
+                opacity: buttonOpacity,
+                transform: [{ scale: buttonScale }],
+              }]}>
+                <MainButton title="ACCEPT AND CONTINUE" onPress={handleAccept} style={{ marginTop: 8, marginBottom: 12 }} />
+              </Animated.View>
+            </View>
 
             <Modal visible={dropdownOpen} transparent animationType="fade">
               <TouchableOpacity style={styles.dropdownModalOverlay} activeOpacity={1} onPress={() => setDropdownOpen(false)}>
@@ -213,8 +245,7 @@ const OnboardingDetails = ({ next, onShowReminder }) => {
                 </View>
               </TouchableOpacity>
             </Modal>
-          </View>
-        </ScrollView>
+        </View>
       </KeyboardAvoidingView>
     </ImageBackground>
   );
