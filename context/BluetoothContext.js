@@ -81,7 +81,6 @@ export const BluetoothProvider = ({ children }) => {
     getMemberNickname,
     myEmergencyContact,
     setEmergencyContactForDevice,
-    getMemberNickname,
   } = useLobby();
 
   // Connection state - MULTI-DEVICE SUPPORT

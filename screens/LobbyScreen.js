@@ -13,7 +13,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const { sendCommand, isConnected, statusMessage, memberLocations } = useBluetoothDevice();
   
   // For tracking lobby validation
-  const [validationState, setValidationState] = useState(null); // null, 'syncing', 'waiting', 'confirmed'
+  const [validationState, setValidationState] = useState(null); // null, 'syncing', 'verifying', 'confirmed'
   const pendingJoinRef = useRef(null);
   const validationTimeoutRef = useRef(null);
   const validationStateRef = useRef(null); // Ref to track current state for timeout callbacks
@@ -62,6 +62,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const getJoinButtonText = () => {
     if (!isSubmitting) return 'Enter Lobby';
     if (validationState === 'syncing') return 'Syncing to device...';
+    if (validationState === 'verifying') return 'Verifying lobby...';
     if (validationState === 'confirmed') return 'Entering...';
     return 'Joining...';
   };
@@ -82,8 +83,52 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
         validationTimeoutRef.current = null;
       }
 
-      // Device confirmed lobby code set; that's sufficient for phone-to-device operation.
-      // Do not require a LoRa ACK from another device (multi-phone / single-device cases).
+      // Ask the LoRa device to verify the lobby exists.
+      // Firmware supports:
+      // - local host confirm (multi-phone on one device): STATUS:LOBBY_VERIFIED,...,LOCAL
+      // - LoRa confirm (multi-device lobby): STATUS:LOBBY_VERIFIED,...,LORA
+      const nonce = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      pendingJoinRef.current.nonce = nonce;
+      setValidationState('verifying');
+
+      // Device will either confirm locally (if hosting) or broadcast LoRa verify and confirm on ACK.
+      sendCommand && sendCommand(`VERIFY_LOBBY:${expectedCode},${nonce}`);
+
+      // If no ACK within 6 seconds, treat as lobby not found.
+      validationTimeoutRef.current = setTimeout(() => {
+        if (validationStateRef.current === 'verifying') {
+          setIsSubmitting(false);
+          setValidationState(null);
+          pendingJoinRef.current = null;
+          Alert.alert(
+            'Lobby Not Found',
+            'No devices responded for this lobby code. Make sure the host device is powered on and nearby, then try again.'
+          );
+        }
+      }, 6000);
+    }
+  }, [statusMessage, validationState]);
+
+  // Monitor for device-side verification success (STATUS:LOBBY_VERIFIED,...)
+  useEffect(() => {
+    if (validationState !== 'verifying') return;
+    if (!statusMessage) return;
+    if (!pendingJoinRef.current?.nonce) return;
+
+    const parts = statusMessage.split(',');
+    if (parts.length < 3) return;
+    if (parts[0] !== 'LOBBY_VERIFIED') return;
+
+    const verifiedCode = parseInt(parts[1], 10);
+    const verifiedNonce = (parts[2] || '').trim();
+    const expectedCode = pendingJoinRef.current?.code;
+
+    if (!Number.isNaN(verifiedCode) && expectedCode && verifiedCode === expectedCode && verifiedNonce === pendingJoinRef.current.nonce) {
+      if (validationTimeoutRef.current) {
+        clearTimeout(validationTimeoutRef.current);
+        validationTimeoutRef.current = null;
+      }
+
       setValidationState('confirmed');
       completeJoin(true);
     }
@@ -113,16 +158,15 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       return;
     }
 
-    // Require device connection to create lobby
-    // TEMPORARILY BYPASSED FOR UI TESTING
-    // if (!isConnected) {
-    //   Alert.alert(
-    //     'Device Required',
-    //     'You must connect to your HikeSafe device before creating a lobby. The lobby code is synced to your device for LoRa communication.',
-    //     [{ text: 'OK' }]
-    //   );
-    //   return;
-    // }
+    // Require device connection to create lobby (lobby code must be synced to the LoRa device).
+    if (!isConnected) {
+      Alert.alert(
+        'Device Required',
+        'You must connect to your HikeSafe device before creating a lobby. The lobby code is synced to your device for LoRa communication.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
     
     setIsSubmitting(true);
     try {
@@ -130,7 +174,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       
       // Try syncing lobby code to device, but do not hard-fail lobby creation on temporary BLE drops.
       if (isConnected) {
-        const success = await syncLobbyToDevice(sendCommand, code);
+        const success = await syncLobbyToDevice(sendCommand, code, { asHost: true });
         if (!success) {
           Alert.alert(
             'Lobby Created',
@@ -174,6 +218,20 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
         'Device Required',
         'Connect to your HikeSafe device before joining. The lobby code must be synced to the device for LoRa communication.',
         [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    // Multi-phone safety: if this phone is already in a lobby, joining a different code
+    // will change the shared LoRa device lobby for everyone using that device.
+    if (isInLobby && lobbyCode && lobbyCode !== code) {
+      Alert.alert(
+        'Change Lobby?',
+        `You are currently in lobby ${lobbyCode}. Joining lobby ${code} will change the lobby on your connected LoRa device and may affect other phones sharing it.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Change Lobby', style: 'destructive', onPress: () => performJoinLobby() },
+        ]
       );
       return;
     }

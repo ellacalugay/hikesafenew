@@ -122,6 +122,9 @@ unsigned long lastECBroadcastTime = 0;
 const unsigned long ecBroadcastInterval = 45000;  // Refresh EC every 45 seconds
 
 uint32_t currentLobbyCode = 0;
+bool lobbyHostActive = false;                 // True if this device is hosting the current lobby
+String pendingLobbyVerifyNonce = "";          // Nonce for an in-flight VERIFY_LOBBY request
+uint32_t pendingLobbyVerifyCode = 0;
 String myNickname = "Hiker";
 String myECName   = "None";
 String myECPhone  = "0000000000";
@@ -347,9 +350,15 @@ void setup() {
   sosActive        = preferences.getBool("sos_state", false);
   morseActive      = preferences.getBool("morse_state", false);
   currentLobbyCode = preferences.getUInt("lobby_code", 0);
+  lobbyHostActive  = preferences.getBool("lobby_host", false);
   myNickname       = preferences.getString("nickname", "Hiker");
   myECName         = preferences.getString("ec_name", "None");
   myECPhone        = preferences.getString("ec_phone", "0000000000");
+
+  if (currentLobbyCode == 0) {
+    lobbyHostActive = false;
+    preferences.putBool("lobby_host", false);
+  }
 
   if (sosActive || morseActive) {
     display.clearDisplay();
@@ -645,7 +654,14 @@ void checkBluetoothCommands() {
         sendLoRaMessage(MSG_ON_MY_WAY, 0);
         sendToPhone("STATUS:ON_MY_WAY_SENT");
       } else if (cmd.startsWith("LOBBY:")) {
-        currentLobbyCode = cmd.substring(6).toInt();
+        uint32_t nextCode = cmd.substring(6).toInt();
+        // Multi-phone on one device: if we're already hosting this same lobby,
+        // don't clear host mode just because another phone re-sent LOBBY:####.
+        if (nextCode != currentLobbyCode) {
+          lobbyHostActive = false;
+          preferences.putBool("lobby_host", false);
+        }
+        currentLobbyCode = nextCode;
         preferences.putUInt("lobby_code", currentLobbyCode);
         sendToPhone("STATUS:LOBBY_SET," + String(currentLobbyCode));
         // Broadcast own EC when joining a new lobby
@@ -655,6 +671,42 @@ void checkBluetoothCommands() {
           lastECBroadcastTime = millis();
         }
         updateDisplay();
+      } else if (cmd.startsWith("HOSTLOBBY:")) {
+        // Host creates/owns the lobby on this device.
+        currentLobbyCode = cmd.substring(10).toInt();
+        preferences.putUInt("lobby_code", currentLobbyCode);
+        lobbyHostActive = (currentLobbyCode > 0);
+        preferences.putBool("lobby_host", lobbyHostActive);
+        sendToPhone("STATUS:LOBBY_SET," + String(currentLobbyCode));
+
+        if (currentLobbyCode > 0) {
+          delay(200);
+          sendLoRaEmergencyContact();
+          lastECBroadcastTime = millis();
+        }
+        updateDisplay();
+      } else if (cmd.startsWith("VERIFY_LOBBY:")) {
+        // App asks device to verify that the lobby exists.
+        // Format: VERIFY_LOBBY:<code>,<nonce>
+        String payload = cmd.substring(12);
+        int commaIdx = payload.indexOf(',');
+        if (commaIdx > 0) {
+          uint32_t code = payload.substring(0, commaIdx).toInt();
+          String nonce = payload.substring(commaIdx + 1);
+          nonce.trim();
+
+          if (nonce.length() > 0 && code > 0 && code == currentLobbyCode) {
+            if (lobbyHostActive) {
+              // Local host confirmation for multi-phone-on-one-device.
+              sendToPhone("STATUS:LOBBY_VERIFIED," + String(code) + "," + nonce + ",LOCAL");
+            } else {
+              // Try LoRa verification: broadcast __LOBBY_VERIFY__ and wait for __LOBBY_ACK__.
+              pendingLobbyVerifyNonce = nonce;
+              pendingLobbyVerifyCode = code;
+              sendLoRaTextMessage(0, "__LOBBY_VERIFY__:" + nonce, 0);
+            }
+          }
+        }
       } else if (cmd.startsWith("NICK:")) {
         myNickname = cmd.substring(5);
         if (myNickname.length() >= MAX_NICK_LEN)
@@ -906,6 +958,18 @@ void receiveLoRaMessage() {
         sendLoRaTextMessage(txtMsg.deviceID, "__LOBBY_ACK__:" + nonce, 0);
       }
       // Don't forward verification pings to phones as chat messages.
+      return;
+    }
+
+    // If we're verifying a lobby via LoRa, capture the ACK and inform the phone.
+    if (text.startsWith("__LOBBY_ACK__:")) {
+      const String nonce = text.substring(String("__LOBBY_ACK__:").length());
+      if (pendingLobbyVerifyNonce.length() > 0 && nonce == pendingLobbyVerifyNonce && pendingLobbyVerifyCode == currentLobbyCode) {
+        sendToPhone("STATUS:LOBBY_VERIFIED," + String(currentLobbyCode) + "," + nonce + ",LORA");
+        pendingLobbyVerifyNonce = "";
+        pendingLobbyVerifyCode = 0;
+      }
+      // Don't forward ACKs to phones as chat messages.
       return;
     }
 

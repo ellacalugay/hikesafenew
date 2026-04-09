@@ -463,8 +463,11 @@ export const LobbyProvider = ({ children }) => {
   }, [myDeviceId, persistHostDeviceId]);
 
   // Send lobby code to ESP32 device via BLE
-  const syncLobbyToDevice = useCallback(async (bleCommandFn, targetCode = null) => {
+  // - `LOBBY:####` sets the device lobby (join)
+  // - `HOSTLOBBY:####` sets the device lobby and marks this device as hosting (create)
+  const syncLobbyToDevice = useCallback(async (bleCommandFn, targetCode = null, options = null) => {
     const codeToSync = targetCode ?? lobbyCode;
+    const asHost = !!options?.asHost;
 
     if (!codeToSync) {
       console.log('No lobby code to sync');
@@ -478,8 +481,9 @@ export const LobbyProvider = ({ children }) => {
     }
     
     try {
-      // Send LOBBY:XXXX command to ESP32
-      const success = await commandFn(`LOBBY:${codeToSync}`);
+      // Send command to ESP32
+      const cmd = asHost ? `HOSTLOBBY:${codeToSync}` : `LOBBY:${codeToSync}`;
+      const success = await commandFn(cmd);
       if (success) {
         console.log(`Synced lobby code ${codeToSync} to device`);
         await clearPendingDeviceLobbySync();
