@@ -233,12 +233,15 @@ const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname
 const MembersTab = ({ onNavigateToLocation }) => {
   const { colors } = useTheme();
   const { myLocation, memberLocations, isConnected, removeMemberLocation } = useBluetoothDevice();
-  const { lobbyCode, lobbyName, isHost, lobbyMembers, getMemberNickname, setMemberNickname, myNickname } = useLobby();
+  const { lobbyCode, lobbyName, isHost, lobbyMembers, getMemberNickname, setMemberNickname, myNickname, preferredHostDeviceId, electNewHost } = useLobby();
   
   // Nickname editing state
   const [showNicknameModal, setShowNicknameModal] = useState(false);
   const [editingDeviceId, setEditingDeviceId] = useState(null);
   const [editingNickname, setEditingNickname] = useState('');
+
+  // Admin re-election state (host only)
+  const [showReelectModal, setShowReelectModal] = useState(false);
 
   const handleEditNickname = (deviceId, currentNickname) => {
     setEditingDeviceId(deviceId);
@@ -266,6 +269,38 @@ const MembersTab = ({ onNavigateToLocation }) => {
           style: 'destructive',
           onPress: () => removeMemberLocation(deviceId)
         }
+      ]
+    );
+  };
+
+  const reelectCandidates = useMemo(() => {
+    // Only show online, non-self members as eligible admins
+    return (lobbyMembers || [])
+      .filter(m => m && !m.isSelf)
+      .filter(m => m.deviceId !== null && m.deviceId !== undefined)
+      .filter(m => !m.isOffline)
+      .sort((a, b) => (a.joinedAt || Number.MAX_SAFE_INTEGER) - (b.joinedAt || Number.MAX_SAFE_INTEGER));
+  }, [lobbyMembers]);
+
+  const handleElectNewAdmin = (deviceId) => {
+    const name = getMemberNickname(deviceId);
+    Alert.alert(
+      'Re-elect Admin',
+      `Make ${name} the new admin?\n\nThey will become the preferred admin and will automatically reclaim admin when they reconnect.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          style: 'default',
+          onPress: async () => {
+            const ok = await electNewHost(deviceId);
+            if (!ok) {
+              Alert.alert('Unable to re-elect', 'Only the current admin can re-elect a new admin.');
+              return;
+            }
+            setShowReelectModal(false);
+          },
+        },
       ]
     );
   };
@@ -402,9 +437,21 @@ const MembersTab = ({ onNavigateToLocation }) => {
               {lobbyName || 'Your Lobby'} • Code: {lobbyCode}
             </Text>
           </View>
-          <View style={localStyles.hostBadge}>
-            <Crown size={14} color={colors.primary} />
-            <Text style={[localStyles.hostBadgeText, { color: colors.primary }]}>HOST</Text>
+          <View style={{ alignItems: 'flex-end', gap: 8 }}>
+            <View style={localStyles.hostBadge}>
+              <Crown size={14} color={colors.primary} />
+              <Text style={[localStyles.hostBadgeText, { color: colors.primary }]}>HOST</Text>
+            </View>
+
+            <TouchableOpacity
+              onPress={() => setShowReelectModal(true)}
+              style={[localStyles.reelectBtn, { borderColor: 'rgba(255,255,255,0.45)' }]}
+              disabled={reelectCandidates.length === 0}
+            >
+              <Text style={[localStyles.reelectText, { color: '#fff', opacity: reelectCandidates.length === 0 ? 0.6 : 1 }]}>
+                RE-ELECT ADMIN
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
         
@@ -537,6 +584,58 @@ const MembersTab = ({ onNavigateToLocation }) => {
           </View>
         </View>
       </Modal>
+
+      {/* Re-elect Admin Modal */}
+      <Modal
+        visible={showReelectModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowReelectModal(false)}
+      >
+        <View style={localStyles.modalOverlay}>
+          <View style={[localStyles.modalContent, { backgroundColor: colors.modalBg }]}>
+            <View style={localStyles.modalHeader}>
+              <Text style={[localStyles.modalTitle, { color: colors.textDark }]}>Re-elect Admin</Text>
+              <TouchableOpacity onPress={() => setShowReelectModal(false)}>
+                <X size={24} color={colors.gray} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[localStyles.modalLabel, { color: colors.gray }]}>Select a new admin (online members only)</Text>
+
+            <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
+              {reelectCandidates.length === 0 ? (
+                <Text style={{ color: colors.gray, paddingVertical: 10 }}>
+                  No eligible members are online right now.
+                </Text>
+              ) : (
+                reelectCandidates.map((m) => {
+                  const deviceId = m.deviceId;
+                  const name = getMemberNickname(deviceId);
+                  const isPreferred = preferredHostDeviceId === deviceId;
+                  return (
+                    <TouchableOpacity
+                      key={String(deviceId)}
+                      onPress={() => handleElectNewAdmin(deviceId)}
+                      style={[localStyles.candidateRow, { borderColor: colors.borderColor }]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={[localStyles.candidateName, { color: colors.textDark }]}>
+                          {name}
+                        </Text>
+                        <Text style={[localStyles.candidateMeta, { color: colors.gray }]}>
+                          Device {deviceId}{isPreferred ? ' • Current preferred admin' : ''}
+                        </Text>
+                      </View>
+                      <Crown size={16} color={colors.primary} />
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -578,6 +677,18 @@ const localStyles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     marginLeft: 4,
+  },
+  reelectBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  reelectText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
   },
   statsRow: {
     flexDirection: 'row',
@@ -771,6 +882,23 @@ const localStyles = StyleSheet.create({
   modalButtons: {
     flexDirection: 'row',
     gap: 10,
+  },
+  candidateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 10,
+  },
+  candidateName: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  candidateMeta: {
+    fontSize: 12,
+    marginTop: 2,
   },
   modalButton: {
     flex: 1,
