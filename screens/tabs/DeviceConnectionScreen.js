@@ -7,23 +7,23 @@ import {
   ActivityIndicator,
   StyleSheet,
   Modal,
-  TextInput,
-  Alert
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Bluetooth, BluetoothOff, Radio, Check, RefreshCw, Edit2, X } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ArrowLeft, Bluetooth, BluetoothOff, Radio, Check, RefreshCw, X, Edit2 } from 'lucide-react-native';
+import { BlurView } from 'expo-blur';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
 import { useLobby } from '../../context/LobbyContext';
+import { MainButton, InputField } from '../../components/shared';
 
 const DeviceConnectionScreen = ({ onBack }) => {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const {
     isEnabled,
     isScanning,
     isConnecting,
     isConnected,
-    connectedDevice,
     connectedDevicesList,
     availableDevices,
     myLocation,
@@ -45,6 +45,12 @@ const DeviceConnectionScreen = ({ onBack }) => {
     }
   }, [isEnabled, connectedDevicesList.length, scanForDevices]);
 
+  useEffect(() => {
+    if (showNicknameModal) {
+      setNicknameInput(deviceNickname || '');
+    }
+  }, [showNicknameModal, deviceNickname]);
+
   const handleDevicePress = async (device) => {
     // Check if device is already connected
     const isAlreadyConnected = connectedDevicesList.some(d => d.id === device.id);
@@ -58,24 +64,11 @@ const DeviceConnectionScreen = ({ onBack }) => {
     }
   };
   
-  const handleEditNickname = () => {
-    setNicknameInput(deviceNickname || connectedDevice?.name || '');
-    setShowNicknameModal(true);
-  };
-  
   const handleSaveNickname = async () => {
     if (nicknameInput.trim()) {
       await setDeviceNickname(nicknameInput.trim());
     }
     setShowNicknameModal(false);
-  };
-  
-  // Get display name for connected device
-  const getDeviceDisplayName = () => {
-    if (deviceNickname) {
-      return deviceNickname;
-    }
-    return connectedDevice?.name || 'Unknown Device';
   };
 
   const renderDevice = ({ item }) => {
@@ -84,23 +77,25 @@ const DeviceConnectionScreen = ({ onBack }) => {
     return (
       <TouchableOpacity
         style={[
-          styles.deviceItem,
+          localStyles.deviceItem,
           { 
-            backgroundColor: colors.cardBg,
-            borderColor: isConnectedToDevice ? colors.primary : colors.borderColor,
+            borderColor: isConnectedToDevice ? colors.primary : colors.glassBorder,
             borderWidth: isConnectedToDevice ? 2 : 1,
           }
         ]}
         onPress={() => handleDevicePress(item)}
         disabled={isConnecting}
       >
-        <View style={styles.deviceInfo}>
+        <BlurView intensity={colors.glassIntensity} tint={colors.glassTint} style={StyleSheet.absoluteFillObject} />
+        <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+
+        <View style={localStyles.deviceInfo}>
           <Radio size={24} color={isConnectedToDevice ? colors.primary : colors.gray} />
-          <View style={styles.deviceText}>
-            <Text style={[styles.deviceName, { color: colors.textDark }]}>
+          <View style={localStyles.deviceText}>
+            <Text style={[localStyles.deviceName, { color: colors.textDark }]}>
               {item.name || 'Unknown Device'}
             </Text>
-            <Text style={[styles.deviceAddress, { color: colors.gray }]}>
+            <Text style={[localStyles.deviceAddress, { color: colors.gray }]}>
               {item.address || item.id}
             </Text>
           </View>
@@ -108,26 +103,14 @@ const DeviceConnectionScreen = ({ onBack }) => {
         
         {isConnecting && !isConnectedToDevice ? null : (
           isConnectedToDevice && isConnected ? (
-            <View style={[styles.connectedBadge, { backgroundColor: colors.primary }]}>
-              <Check size={16} color="#fff" />
-              <Text style={styles.connectedText}>Connected</Text>
+            <View style={[localStyles.connectedBadge, { backgroundColor: colors.primary }]}>
+              <Check size={14} color={colors.textLight} />
+              <Text style={[localStyles.connectedText, { color: colors.textLight }]}>Connected</Text>
             </View>
           ) : (
-            <Text style={[styles.tapToConnect, { color: colors.gray }]}>Tap to {isConnectedToDevice ? 'disconnect' : 'connect'}</Text>
-          )
-        )}
-      </TouchableOpacity>
-    );
-  };
-        
-        {isConnecting && !isCurrentDevice ? null : (
-          isCurrentDevice && isConnected ? (
-            <View style={[styles.connectedBadge, { backgroundColor: colors.primary }]}>
-              <Check size={16} color="#fff" />
-              <Text style={styles.connectedText}>Connected</Text>
-            </View>
-          ) : (
-            <Text style={[styles.tapToConnect, { color: colors.gray }]}>Tap to connect</Text>
+            <Text style={[localStyles.tapToConnect, { color: colors.textDark }]}>
+              Tap to {isConnectedToDevice ? 'disconnect' : 'connect'}
+            </Text>
           )
         )}
       </TouchableOpacity>
@@ -135,246 +118,250 @@ const DeviceConnectionScreen = ({ onBack }) => {
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Header */}
-      <View style={[styles.header, { backgroundColor: colors.headerBg, borderBottomColor: colors.borderColor }]}>
-        <TouchableOpacity onPress={onBack} style={styles.backButton}>
+    <View style={[localStyles.container, { backgroundColor: 'transparent' }]}>
+
+      <View
+        style={[
+          localStyles.headerBar,
+          {
+            backgroundColor: colors.headerBg,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 3 },
+            shadowOpacity: 0.15,
+            shadowRadius: 4,
+            elevation: 5,
+            zIndex: 10,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            paddingTop: insets.top + 10,
+            paddingBottom: 15,
+            height: insets.top + 60,
+            borderBottomColor: colors.glassBorder,
+          },
+        ]}
+      >
+        <TouchableOpacity onPress={onBack} style={{ position: 'absolute', left: 16, bottom: 12, padding: 4 }}>
           <ArrowLeft size={24} color={colors.textDark} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.textDark }]}>Device Connection</Text>
-        <TouchableOpacity 
-          onPress={scanForDevices} 
+
+        <Text style={[localStyles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 20, bottom: -4 }]}>
+          DEVICES
+        </Text>
+
+        <TouchableOpacity
+          onPress={scanForDevices}
           disabled={isScanning || !isEnabled}
-          style={styles.refreshButton}
+          style={{ position: 'absolute', right: 16, bottom: 12, padding: 4 }}
         >
           <RefreshCw size={22} color={isEnabled ? colors.primary : colors.gray} />
         </TouchableOpacity>
       </View>
 
-      {/* Bluetooth Status */}
-      <View style={[styles.statusCard, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
-        {isEnabled ? (
-          <Bluetooth size={32} color={colors.primary} />
-        ) : (
-          <BluetoothOff size={32} color={colors.gray} />
-        )}
-        <View style={styles.statusText}>
-          <Text style={[styles.statusTitle, { color: colors.textDark }]}>
-            Bluetooth {isEnabled ? 'Enabled' : 'Disabled'}
-          </Text>
-          <Text style={[styles.statusDesc, { color: colors.gray }]}>
-            {isEnabled 
-              ? 'Ready to connect to SOS devices' 
-              : 'Enable Bluetooth to connect to your device'}
-          </Text>
-        </View>
-        {!isEnabled && (
-          <TouchableOpacity
-            style={[styles.enableButton, { backgroundColor: colors.primary }]}
-            onPress={requestEnable}
-          >
-            <Text style={styles.enableButtonText}>Enable</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+      <View style={{ flex: 1, paddingTop: 16 }}>
+        <View style={[localStyles.statusCard, { borderColor: colors.glassBorder }]}>
+          <BlurView intensity={colors.glassIntensity} tint={colors.glassTint} style={StyleSheet.absoluteFillObject} />
+          <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
 
-      {/* Connected Devices Info - MULTI-DEVICE SUPPORT */}
-      {isConnected && connectedDevicesList.length > 0 && (
-        <View style={[styles.connectedCard, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
-          <View style={styles.connectedHeader}>
-            <Radio size={20} color={colors.primary} />
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.connectedTitle, { color: colors.primary }]}>
-                Connected to {connectedDevicesList.length} device{connectedDevicesList.length > 1 ? 's' : ''}
+          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+            {isEnabled ? <Bluetooth size={32} color={colors.primary} /> : <BluetoothOff size={32} color={colors.gray} />}
+            <View style={localStyles.statusText}>
+              <Text style={[localStyles.statusTitle, { color: colors.textDark }]}>Bluetooth {isEnabled ? 'Enabled' : 'Disabled'}</Text>
+              <Text style={[localStyles.statusDesc, { color: colors.gray }]}
+              >
+                {isEnabled ? 'Ready to connect to HikeSafe devices' : 'Enable Bluetooth to connect to your device'}
               </Text>
-              {connectedDevicesCount > 0 && (
-                <Text style={[styles.multiDeviceText, { color: colors.primary }]}>
-                  {connectedDevicesCount} phone{connectedDevicesCount > 1 ? 's' : ''} on LoRa
-                </Text>
-              )}
             </View>
           </View>
 
-          {/* List of connected devices */}
-          <View style={{ marginLeft: 28, marginBottom: 12 }}>
-            {connectedDevicesList.map((device, idx) => (
-              <View key={device.id} style={{ marginBottom: 8 }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ color: colors.textDark, fontSize: 13 }}>
-                    {device.name || 'Device'}
+          {!isEnabled && (
+            <MainButton
+              title="Enable"
+              onPress={requestEnable}
+              style={{ minWidth: 90, paddingVertical: 8, paddingHorizontal: 12, minHeight: 40 }}
+            />
+          )}
+        </View>
+
+        {isConnected && connectedDevicesList.length > 0 && (
+          <View style={[localStyles.connectedCard, { borderColor: colors.primary }]}>
+            <BlurView intensity={colors.glassIntensity} tint={colors.glassTint} style={StyleSheet.absoluteFillObject} />
+            <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: `${colors.primaryLight}20` }]} />
+
+            <View style={localStyles.connectedHeader}>
+              <Radio size={20} color={colors.primary} />
+              <View style={{ flex: 1, marginLeft: 8 }}>
+                <Text style={[localStyles.connectedTitle, { color: colors.textDark }]}>
+                  Connected to {connectedDevicesList.length} device{connectedDevicesList.length > 1 ? 's' : ''}
+                </Text>
+                {connectedDevicesCount > 0 && (
+                  <Text style={[localStyles.multiDeviceText, { color: colors.primary }]}>
+                    {connectedDevicesCount} phone{connectedDevicesCount > 1 ? 's' : ''} active on LoRa
                   </Text>
-                  <TouchableOpacity
-                    onPress={() => disconnectFromDevice(device.id)}
-                    style={{ padding: 4 }}
-                  >
-                    <X size={16} color={colors.accent} />
+                )}
+              </View>
+            </View>
+
+            <View style={{ marginLeft: 28, marginBottom: 16 }}>
+              {connectedDevicesList.map((device) => (
+                <View
+                  key={device.id}
+                  style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1, paddingRight: 12 }}>
+                    <Text
+                      style={{ color: colors.textDark, fontSize: 14, fontWeight: '600', marginRight: 8 }}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {deviceNickname || device.name || 'Device'}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setNicknameInput(deviceNickname || device.name || '');
+                        setShowNicknameModal(true);
+                      }}
+                      style={{ padding: 4 }}
+                    >
+                      <Edit2 size={14} color={colors.primary} />
+                    </TouchableOpacity>
+                  </View>
+                  <TouchableOpacity onPress={() => disconnectFromDevice(device.id)} style={{ padding: 4 }}>
+                    <X size={16} color={colors.danger} />
                   </TouchableOpacity>
                 </View>
-              </View>
-            ))}
-          </View>
-          
-          {/* GPS Info from first connected device */}
-          <View style={styles.gpsInfo}>
-            <Text style={[styles.gpsLabel, { color: colors.textDark }]}>GPS Status:</Text>
-            {myLocation.valid ? (
-              <View>
-                <Text style={[styles.gpsValue, { color: colors.primary }]}>
-                  {myLocation.lat.toFixed(6)}, {myLocation.lng.toFixed(6)}
-                </Text>
-                <Text style={[styles.gpsValue, { color: colors.gray }]}>
-                  Satellites: {myLocation.satellites}
-                </Text>
-              </View>
-            ) : (
-              <Text style={[styles.gpsValue, { color: colors.gray }]}>
-                Waiting for GPS fix... ({myLocation.satellites} sats)
-              </Text>
-            )}
-          </View>
-          
-          <TouchableOpacity
-            style={[styles.disconnectButton, { borderColor: colors.accent }]}
-            onPress={disconnect}
-          >
-            <Text style={[styles.disconnectText, { color: colors.accent }]}>Disconnect All</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+              ))}
+            </View>
 
-      {/* Device List */}
-      <View style={styles.listSection}>
-        <Text style={[styles.sectionTitle, { color: colors.textDark }]}>
-          Available Devices
-        </Text>
-        <Text style={[styles.sectionSubtitle, { color: colors.gray }]}>
-          HikeSafe devices within range will appear automatically
-        </Text>
-        
-        {isScanning ? (
-          <View style={styles.scanningContainer}>
-            <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={[styles.scanningText, { color: colors.gray }]}>
-              Scanning for devices...
-            </Text>
+            <View style={localStyles.gpsInfo}>
+              <Text style={[localStyles.gpsLabel, { color: colors.gray }]}>GPS Status:</Text>
+              {myLocation.valid ? (
+                <View>
+                  <Text style={[localStyles.gpsValue, { color: colors.textDark }]}>
+                    {myLocation.lat.toFixed(6)}, {myLocation.lng.toFixed(6)}
+                  </Text>
+                  <Text style={[localStyles.gpsValue, { color: colors.gray, marginTop: 2 }]}>Satellites: {myLocation.satellites}</Text>
+                </View>
+              ) : (
+                <Text style={[localStyles.gpsValue, { color: colors.gray }]}>Waiting for GPS fix... ({myLocation.satellites} sats)</Text>
+              )}
+            </View>
+
+            <MainButton
+              title="Disconnect All"
+              onPress={disconnect}
+              style={{ marginTop: 8, backgroundColor: colors.danger, borderColor: colors.danger }}
+            />
           </View>
-        ) : (
-          <FlatList
-            data={availableDevices}
-            renderItem={renderDevice}
-            keyExtractor={(item) => item.id || item.address}
-            ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <BluetoothOff size={48} color={colors.gray} />
-                <Text style={[styles.emptyText, { color: colors.gray }]}>
-                  No HikeSafe devices found
-                </Text>
-                <Text style={[styles.emptyHint, { color: colors.gray }]}>
-                  1. Power on your HikeSafe device{'\n'}
-                  2. Make sure you are within range{'\n'}
-                  3. Tap refresh to scan again
-                </Text>
-              </View>
-            }
-            contentContainerStyle={styles.listContent}
-          />
         )}
+
+        <View style={localStyles.listSection}>
+          <Text style={[localStyles.sectionTitle, { color: colors.textDark }]}>Available Devices</Text>
+          <Text style={[localStyles.sectionSubtitle, { color: colors.gray }]}>HikeSafe devices within range appear automatically</Text>
+
+          {isScanning ? (
+            <View style={localStyles.scanningContainer}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={[localStyles.scanningText, { color: colors.textDark }]}>Scanning for devices...</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={availableDevices}
+              renderItem={renderDevice}
+              keyExtractor={(item) => item.id || item.address}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={localStyles.listContent}
+              ListEmptyComponent={
+                <View style={[localStyles.emptyContainer, { borderColor: colors.glassBorder }]}>
+                  <BlurView intensity={colors.glassIntensity} tint={colors.glassTint} style={StyleSheet.absoluteFillObject} />
+                  <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+                  <BluetoothOff size={40} color={colors.gray} />
+                  <Text style={[localStyles.emptyText, { color: colors.textDark }]}>No devices found</Text>
+                  <Text style={[localStyles.emptyHint, { color: colors.gray }]}>
+                    1. Power on your HikeSafe device{'\n'}
+                    2. Make sure you are within range{'\n'}
+                    3. Tap refresh in the top right to scan again
+                  </Text>
+                </View>
+              }
+            />
+          )}
+        </View>
       </View>
 
-      {/* Connecting Overlay */}
       {isConnecting && (
-        <View style={styles.connectingOverlay}>
-          <View style={[styles.connectingModal, { backgroundColor: colors.modalBg }]}>
+        <View style={localStyles.connectingOverlay}>
+          <BlurView intensity={80} tint="dark" style={StyleSheet.absoluteFillObject} />
+          <View style={[localStyles.connectingModal, { backgroundColor: colors.modalBg }]}>
             <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={[styles.connectingText, { color: colors.textDark }]}>
-              Connecting to device...
-            </Text>
+            <Text style={[localStyles.connectingText, { color: colors.textDark }]}>Connecting to device...</Text>
           </View>
         </View>
       )}
-      
-      {/* Device Nickname Modal */}
+
       <Modal
         visible={showNicknameModal}
         transparent
         animationType="fade"
         onRequestClose={() => setShowNicknameModal(false)}
       >
-        <View style={styles.connectingOverlay}>
-          <View style={[styles.connectingModal, { backgroundColor: colors.modalBg, padding: 20 }]}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <Text style={{ color: colors.textDark, fontSize: 18, fontWeight: '600' }}>Device Nickname</Text>
+        <View style={localStyles.connectingOverlay}>
+          <View style={[localStyles.connectingModal, { backgroundColor: colors.modalBg, padding: 24, width: '85%' }]}>
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 16,
+                width: '100%',
+              }}
+            >
+              <Text style={{ color: colors.textDark, fontSize: 18, fontWeight: '700' }}>Device Nickname</Text>
               <TouchableOpacity onPress={() => setShowNicknameModal(false)}>
                 <X size={24} color={colors.gray} />
               </TouchableOpacity>
             </View>
-            <Text style={{ color: colors.gray, fontSize: 12, marginBottom: 12 }}>
+
+            <Text style={{ color: colors.gray, fontSize: 13, marginBottom: 20, textAlign: 'left', width: '100%', lineHeight: 18 }}>
               Give your device a friendly name. This is stored locally on your phone.
             </Text>
-            <TextInput
-              style={{
-                backgroundColor: colors.cardBg,
-                borderWidth: 1,
-                borderColor: colors.borderColor,
-                borderRadius: 8,
-                padding: 12,
-                color: colors.textDark,
-                fontSize: 16,
-                marginBottom: 16,
-              }}
+
+            <InputField
+              placeholder="Enter device nickname"
               value={nicknameInput}
               onChangeText={setNicknameInput}
-              placeholder="Enter device nickname"
-              placeholderTextColor={colors.gray}
               autoFocus
+              containerStyle={{ width: '100%', marginBottom: 24 }}
             />
-            <TouchableOpacity
-              style={{
-                backgroundColor: colors.primary,
-                padding: 14,
-                borderRadius: 8,
-                alignItems: 'center',
-              }}
-              onPress={handleSaveNickname}
-            >
-              <Text style={{ color: '#fff', fontWeight: '600' }}>Save</Text>
-            </TouchableOpacity>
+
+            <MainButton title="Save Name" onPress={handleSaveNickname} style={{ width: '100%' }} />
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 };
 
-const styles = StyleSheet.create({
+const localStyles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+  headerBar: {
+    width: '100%',
     borderBottomWidth: 1,
   },
-  backButton: {
-    padding: 8,
-  },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  refreshButton: {
-    padding: 8,
+    letterSpacing: 0.5,
   },
   statusCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    margin: 16,
+    marginHorizontal: 16,
+    marginBottom: 16,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
+    overflow: 'hidden',
   },
   statusText: {
     flex: 1,
@@ -382,63 +369,47 @@ const styles = StyleSheet.create({
   },
   statusTitle: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   statusDesc: {
     fontSize: 13,
     marginTop: 2,
-  },
-  enableButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  enableButtonText: {
-    color: '#fff',
-    fontWeight: '600',
+    fontWeight: '500',
   },
   connectedCard: {
-    margin: 16,
-    marginTop: 0,
+    marginHorizontal: 16,
+    marginBottom: 16,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
+    overflow: 'hidden',
   },
   connectedHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 16,
   },
   connectedTitle: {
     fontSize: 16,
-    fontWeight: '600',
-    marginLeft: 8,
+    fontWeight: '700',
   },
   multiDeviceText: {
-    fontSize: 12,
-    fontWeight: '500',
+    fontSize: 13,
+    fontWeight: '600',
     marginTop: 2,
-    marginLeft: 8,
   },
   gpsInfo: {
-    marginBottom: 12,
+    marginBottom: 16,
+    marginLeft: 28,
   },
   gpsLabel: {
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: 12,
+    fontWeight: '600',
     marginBottom: 4,
   },
   gpsValue: {
     fontSize: 13,
-  },
-  disconnectButton: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
-  disconnectText: {
-    fontWeight: '600',
+    fontWeight: '500',
   },
   listSection: {
     flex: 1,
@@ -446,23 +417,25 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
     marginBottom: 4,
   },
   sectionSubtitle: {
     fontSize: 13,
     marginBottom: 16,
+    fontWeight: '500',
   },
   listContent: {
-    paddingBottom: 20,
+    paddingBottom: 24,
   },
   deviceItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 16,
     marginBottom: 12,
+    overflow: 'hidden',
   },
   deviceInfo: {
     flexDirection: 'row',
@@ -474,11 +447,11 @@ const styles = StyleSheet.create({
   },
   deviceName: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   deviceAddress: {
     fontSize: 12,
-    marginTop: 2,
+    marginTop: 4,
   },
   connectedBadge: {
     flexDirection: 'row',
@@ -488,13 +461,14 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   connectedText: {
-    color: '#fff',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
     marginLeft: 4,
   },
   tapToConnect: {
     fontSize: 12,
+    fontWeight: '600',
+    opacity: 0.7,
   },
   scanningContainer: {
     flex: 1,
@@ -505,37 +479,48 @@ const styles = StyleSheet.create({
   scanningText: {
     marginTop: 16,
     fontSize: 14,
+    fontWeight: '600',
   },
   emptyContainer: {
     alignItems: 'center',
     paddingVertical: 40,
+    borderRadius: 16,
+    borderWidth: 1,
+    overflow: 'hidden',
   },
   emptyText: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '700',
     marginTop: 16,
     marginBottom: 8,
   },
   emptyHint: {
     fontSize: 13,
     textAlign: 'center',
-    lineHeight: 20,
+    lineHeight: 22,
+    fontWeight: '500',
   },
   connectingOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 100,
   },
   connectingModal: {
     padding: 32,
-    borderRadius: 16,
+    borderRadius: 20,
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    elevation: 5,
   },
   connectingText: {
     marginTop: 16,
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '700',
   },
 });
 

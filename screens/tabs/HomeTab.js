@@ -1,49 +1,69 @@
-import React, { useMemo } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ImageBackground, Image, Pressable, Alert } from 'react-native';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Image, Pressable, Alert, Animated, Easing } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Trees, User, MessageCircle, MapPin, Radio, Users, AlertTriangle } from 'lucide-react-native';
+import { Radio, Users, AlertTriangle } from 'lucide-react-native';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
 import { useLobby } from '../../context/LobbyContext';
-
-// Calculate distance between two GPS coordinates (Haversine formula)
-const calculateDistance = (lat1, lon1, lat2, lon2) => {
-  if (!lat1 || !lon1 || !lat2 || !lon2) return null;
-  
-  const R = 6371e3; // meters
-  const φ1 = lat1 * Math.PI / 180;
-  const φ2 = lat2 * Math.PI / 180;
-  const Δφ = (lat2 - lat1) * Math.PI / 180;
-  const Δλ = (lon2 - lon1) * Math.PI / 180;
-
-  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ/2) * Math.sin(Δλ/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-
-  return R * c; // meters
-};
+import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { calculateDistance } from '../../utils/math';
 
 const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
-  const { isConnected, isDeviceReachable, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, unreadCount, sendSOS } = useBluetoothDevice();
-  const { lobbyCode, lobbyName, isHost, myNickname } = useLobby();
-  
-  // Get signal quality from RSSI (LoRa typical ranges: -30 to -120 dBm)
-  const getSignalQuality = (rssi) => {
-    if (rssi === null || rssi === undefined) return 0;
-    if (rssi > -70) return 3;  // Excellent
-    if (rssi > -90) return 2;  // Good
-    if (rssi > -110) return 1; // Fair
-    return 0; // Poor/No signal
-  };
-  
-  const signalQuality = getSignalQuality(loraSignalStrength);
+  const insets = useSafeAreaInsets();
+  const { isConnected, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, sendSOS } = useBluetoothDevice();
+  const { lobbyCode, lobbyName, myNickname } = useLobby();
+
+  // SOS button pulse/blink (subtle) when connected.
+  const sosPulseAnim = useRef(new Animated.Value(0)).current;
+  const sosPulseLoopRef = useRef(null);
+
+  useEffect(() => {
+    // Stop pulse when not connected.
+    if (!isConnected) {
+      try {
+        sosPulseLoopRef.current?.stop?.();
+      } catch {
+        // ignore
+      }
+      sosPulseLoopRef.current = null;
+      sosPulseAnim.setValue(0);
+      return;
+    }
+
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(sosPulseAnim, {
+          toValue: 1,
+          duration: 700,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(sosPulseAnim, {
+          toValue: 0,
+          duration: 700,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    sosPulseLoopRef.current = loop;
+    loop.start();
+
+    return () => {
+      try {
+        loop.stop();
+      } catch {
+        // ignore
+      }
+    };
+  }, [isConnected, sosPulseAnim]);
   
   // Calculate nearest member distance
   const nearestDistance = useMemo(() => {
-    if (!myLocation.valid || memberLocations.length === 0) return null;
+    if (!myLocation?.valid || !memberLocations || memberLocations.length === 0) return null;
     
     const distances = memberLocations
       .filter(m => m.lat && m.lng && !m.isOffline)
@@ -69,25 +89,29 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
     await sendSOS();
     Alert.alert('SOS Sent', 'Your SOS signal has been broadcasted to all group members.');
   };
-
-  // Dynamic badge counts
-  const memberAlerts = (memberLocations || []).filter(m => m.alertType === 'SOS' || m.alertType === 'MORSE').length;
-  const totalAlerts = (activeAlert ? 1 : 0) + memberAlerts;
-  const unreadMsgs = unreadCount || 0;
   
   return (
-    <ImageBackground 
-      source={require('../../assets/dashboard_bg.png')} 
-      style={[styles.tabContainer, { backgroundColor: colors.background }]}
-      imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
-    >
-      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
-      <ScrollView style={{ flex: 1, backgroundColor: 'transparent' }} contentContainerStyle={[styles.scrollContent, { backgroundColor: 'transparent', paddingBottom: 96 }]}>
-        <View style={styles.headerRow}>
-          <View>
+    <View style={[styles.tabContainer, { backgroundColor: 'transparent' }]}>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: 'transparent' }}
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            backgroundColor: 'transparent',
+            paddingTop: 12,
+            paddingBottom: insets.bottom + 90,
+          },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={[styles.headerRow, { alignItems: 'center' }]}>
+          <View style={{ flex: 1 }}>
             <Text style={[styles.welcomeText, { color: colors.textDark }, { fontWeight: 'bold' }]}>Hello!</Text>
-            <Text style={[styles.usernameTitle, { color: colors.textDark }]}>{myNickname}</Text>
+            <Text style={[styles.usernameTitle, { color: colors.textDark }]} numberOfLines={1}>
+              {myNickname}
+            </Text>
           </View>
+
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             {isConnected && (
               <View style={localStyles.connectedIndicator}>
@@ -104,14 +128,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
             )}
             <Image 
               source={require('../../assets/hike_logo.png')} 
-              style={{ 
-                position: 'absolute', 
-                right: 3, 
-                top: -27,
-                width: 50, 
-                height: 50, 
-                resizeMode: 'contain' 
-              }} 
+              style={{ width: 44, height: 44, resizeMode: 'contain', marginLeft: 8 }} 
             />            
           </View>
         </View>
@@ -121,7 +138,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
         {/* Status Message */}
         {statusMessage && (
           <View style={[localStyles.statusBanner, { backgroundColor: colors.primaryLight }]}>
-            <Text style={[localStyles.statusText, { color: colors.primary }]}>
+            <Text style={[localStyles.statusText, { color: colors.textLight }]}>
               {statusMessage.replace(/_/g, ' ')}
             </Text>
           </View>
@@ -150,7 +167,22 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
 
         {/* GPS Status Preview */}
         {isConnected && (
-          <View style={[localStyles.gpsPreview, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
+          <View
+            style={[
+              localStyles.gpsPreview,
+              {
+                backgroundColor: 'transparent',
+                borderColor: colors.glassBorder,
+              },
+            ]}
+          >
+            <BlurView
+              intensity={colors.glassIntensity}
+              tint={colors.glassTint}
+              style={StyleSheet.absoluteFillObject}
+            />
+            <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <Text style={[localStyles.gpsLabel, { color: colors.gray }]}>GPS Status</Text>
               {loraSignalStrength && (
@@ -159,11 +191,27 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
                 </Text>
               )}
             </View>
-            <Text style={[localStyles.gpsValue, { color: myLocation.valid ? colors.primary : colors.gray }]}>
+            <Text style={[localStyles.gpsValue, { color: myLocation.valid ? colors.primary : colors.gray, marginBottom: 6 }]}>
               {myLocation.valid 
                 ? `${myLocation.lat.toFixed(4)}, ${myLocation.lng.toFixed(4)} (${myLocation.satellites} sats)`
                 : `Acquiring signal... (${myLocation.satellites} sats)`}
             </Text>
+
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                borderTopWidth: 1,
+                borderTopColor: colors.glassBorder,
+                paddingTop: 6,
+              }}
+            >
+              <Text style={[localStyles.gpsLabel, { color: colors.gray, marginBottom: 0 }]}>Nearest Hiker</Text>
+              <Text style={[localStyles.rssiText, { color: colors.textDark }]}>
+                {formatNearestDistance(nearestDistance)}
+              </Text>
+            </View>
           </View>
         )}
 
@@ -195,25 +243,69 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
         <Pressable
           onLongPress={handleEmergencySOS}
           delayLongPress={2000}
-          style={({ pressed }) => [
-            localStyles.sosPressable,
-            !isConnected && localStyles.sosDisabled,
-            pressed && localStyles.sosPressed,
-          ]}
+          style={[localStyles.sosPressable, !isConnected && localStyles.sosDisabled]}
         >
-          <View style={[localStyles.sosCard, { backgroundColor: isConnected ? '#9A0000' : '#ff0000' }]}>
-            <View style={localStyles.sosInnerFrame}>
-              <View style={localStyles.sosIconWrap}>
-                <AlertTriangle size={52} color="#fff" strokeWidth={2.6} />
+          {({ pressed }) => {
+            const sosSize = 300; // ~15% bigger than 260
+            const pulseOpacity = sosPulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.86] });
+            const pulseScale = sosPulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.05] });
+
+            const haloOpacity = sosPulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.22, 0] });
+            const haloScale = sosPulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.28] });
+
+            return (
+              <View style={{ alignSelf: 'center' }}>
+                {isConnected && (
+                  <Animated.View
+                    pointerEvents="none"
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                      width: sosSize,
+                      height: sosSize,
+                      borderRadius: sosSize / 2,
+                      backgroundColor: '#9A0000',
+                      opacity: haloOpacity,
+                      transform: [{ scale: haloScale }],
+                    }}
+                  />
+                )}
+
+                <Animated.View
+                  style={{
+                    opacity: isConnected ? pulseOpacity : 1,
+                    transform: [{ scale: pressed ? 0.975 : (isConnected ? pulseScale : 1) }],
+                  }}
+                >
+                  <View
+                    style={[
+                      localStyles.sosCard,
+                      {
+                        backgroundColor: isConnected ? '#9A0000' : '#ff0000',
+                        width: sosSize,
+                        height: sosSize,
+                        borderRadius: sosSize / 2,
+                        alignSelf: 'center',
+                      },
+                    ]}
+                  >
+                    <View style={localStyles.sosInnerFrame}>
+                      <View style={localStyles.sosIconWrap}>
+                        <AlertTriangle size={52} color="#fff" strokeWidth={2.6} />
+                      </View>
+                      <Text style={localStyles.sosLabel}>SOS</Text>
+                      <Text style={localStyles.sosSubLabel}>HOLD TO ALERT</Text>
+                    </View>
+                  </View>
+                </Animated.View>
               </View>
-              <Text style={localStyles.sosLabel}>SOS</Text>
-              <Text style={localStyles.sosSubLabel}>HOLD TO ALERT</Text>
-            </View>
-          </View>
+            );
+          }}
         </Pressable>
 
       </ScrollView>
-    </ImageBackground>
+    </View>
   );
 };
 
@@ -281,9 +373,11 @@ const localStyles = StyleSheet.create({
   },
   gpsPreview: {
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 16,
     marginBottom: 16,
     borderWidth: 1,
+    overflow: 'hidden',
+    position: 'relative',
   },
   gpsLabel: {
     fontSize: 11,
@@ -300,7 +394,7 @@ const localStyles = StyleSheet.create({
   },
 
   sosHint: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '500',
     textAlign: 'center',
     marginBottom: 14,
@@ -308,15 +402,15 @@ const localStyles = StyleSheet.create({
   },
 
   sosTitle: {
-    fontSize: 30,
+    fontSize: 25,
     fontWeight: '900',
     textAlign: 'center',
     letterSpacing: 1.2,
-    marginTop: 6,
+    marginTop: 28,
   },
 
   sosPressable: {
-    marginTop: 6,
+    marginTop: 0,
     alignSelf: 'stretch',
   },
 
@@ -324,14 +418,9 @@ const localStyles = StyleSheet.create({
     opacity: 0.7,
   },
 
-  sosPressed: {
-    transform: [{ scale: 0.985 }],
-  },
-
   sosCard: {
     borderRadius: 28,
     padding: 20,
-    minHeight: 240,
     borderWidth: 1,
     backgroundColor: '#9A0000',
     borderColor: 'rgba(255,255,255,0.18)',
@@ -344,7 +433,7 @@ const localStyles = StyleSheet.create({
 
   sosInnerFrame: {
     flex: 1,
-    borderRadius: 24,
+    borderRadius: 9999,
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.30)',
     alignItems: 'center',
@@ -409,72 +498,6 @@ const localStyles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     marginTop: 4,
-  },
-
-  servicesGrid2x2: {
-    marginTop: 12,
-  },
-
-  serviceRow: {
-    flexDirection: 'row',
-    marginBottom: 8,
-  },
-
-  serviceItem: {
-    alignItems: 'center',
-    width: '23%',
-  },
-  serviceCard: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f5f5f5',
-    borderRadius: 16,
-    padding: 16,
-    margin: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  serviceIconBox: {
-    width: 64,
-    height: 64,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  serviceText: {
-    fontSize: 12,
-    fontWeight: '700',
-    textAlign: 'center',
-    letterSpacing: 0.5,
-  },
-  badge: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
-    backgroundColor: '#4CAF50',
-    borderRadius: 10,
-    minWidth: 18,
-    height: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
-    borderWidth: 1.5,
-    borderColor: '#fff',
-  },
-  badgeText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '700',
   },
 
 });

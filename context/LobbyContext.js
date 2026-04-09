@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const LobbyContext = createContext(null);
@@ -61,6 +61,12 @@ export const LobbyProvider = ({ children }) => {
   const [rememberedUsername, setRememberedUsername] = useState('');
   const [rememberedJoinCode, setRememberedJoinCode] = useState('');
   const [pendingDeviceLobbySyncCode, setPendingDeviceLobbySyncCode] = useState(null);
+
+  // Synchronous reference to lobby members to avoid relying on async state updater ordering.
+  const lobbyMembersRef = useRef([]);
+  useEffect(() => {
+    lobbyMembersRef.current = lobbyMembers;
+  }, [lobbyMembers]);
 
   useEffect(() => {
     loadPersistedLobby();
@@ -419,24 +425,19 @@ export const LobbyProvider = ({ children }) => {
   };
 
   const recalculateHost = useCallback(async (preferredId = null, excludedDeviceId = null) => {
-    let nextHostId = null;
-    let shouldPersistPreferred = false;
+    const currentMembers = lobbyMembersRef.current;
 
-    setLobbyMembers(prev => {
-      const preferredOnline = preferredId !== null && preferredId !== undefined
-        ? prev.some(m => m && m.deviceId === preferredId && !m.isOffline && m.deviceId !== excludedDeviceId)
-        : false;
+    const preferredOnline = preferredId !== null && preferredId !== undefined
+      ? currentMembers.some(m => m && m.deviceId === preferredId && !m.isOffline && m.deviceId !== excludedDeviceId)
+      : false;
 
-      nextHostId = preferredOnline ? preferredId : getNextHostCandidate(prev, excludedDeviceId);
+    const nextHostId = preferredOnline ? preferredId : getNextHostCandidate(currentMembers, excludedDeviceId);
+    const shouldPersistPreferred = (preferredId === null || preferredId === undefined) && nextHostId !== null;
 
-      // If we don't yet have a preferred host, lock to the first host we can determine.
-      shouldPersistPreferred = (preferredId === null || preferredId === undefined) && nextHostId !== null;
-
-      return prev.map(member => ({
-        ...member,
-        isHost: nextHostId !== null && member.deviceId === nextHostId,
-      }));
-    });
+    setLobbyMembers(prev => prev.map(member => ({
+      ...member,
+      isHost: nextHostId !== null && member.deviceId === nextHostId,
+    })));
 
     setHostDeviceId(nextHostId);
 
@@ -526,8 +527,11 @@ export const LobbyProvider = ({ children }) => {
   }, [myDeviceId, persistHostDeviceId, persistPreferredHostDeviceId]);
 
   // Send lobby code to ESP32 device via BLE
-  const syncLobbyToDevice = useCallback(async (bleCommandFn, targetCode = null) => {
+  // - `LOBBY:####` sets the device lobby (join)
+  // - `HOSTLOBBY:####` sets the device lobby and marks this device as hosting (create)
+  const syncLobbyToDevice = useCallback(async (bleCommandFn, targetCode = null, options = null) => {
     const codeToSync = targetCode ?? lobbyCode;
+    const asHost = !!options?.asHost;
 
     if (!codeToSync) {
       console.log('No lobby code to sync');
@@ -541,8 +545,9 @@ export const LobbyProvider = ({ children }) => {
     }
     
     try {
-      // Send LOBBY:XXXX command to ESP32
-      const success = await commandFn(`LOBBY:${codeToSync}`);
+      // Send command to ESP32
+      const cmd = asHost ? `HOSTLOBBY:${codeToSync}` : `LOBBY:${codeToSync}`;
+      const success = await commandFn(cmd);
       if (success) {
         console.log(`Synced lobby code ${codeToSync} to device`);
         await clearPendingDeviceLobbySync();
@@ -748,12 +753,10 @@ export const LobbyProvider = ({ children }) => {
 
   // Remove a member from the lobby
   const removeMember = useCallback((memberId) => {
-    let removedDeviceId = null;
-    setLobbyMembers(prev => {
-      const found = prev.find(m => m.id === memberId);
-      removedDeviceId = found?.deviceId ?? null;
-      return prev.filter(m => m.id !== memberId);
-    });
+    const found = lobbyMembersRef.current.find(m => m && m.id === memberId);
+    const removedDeviceId = found?.deviceId ?? null;
+
+    setLobbyMembers(prev => prev.filter(m => m.id !== memberId));
 
     if (removedDeviceId !== null && removedDeviceId === hostDeviceId) {
       transferHostToFirstJoined(removedDeviceId);

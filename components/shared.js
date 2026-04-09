@@ -5,59 +5,91 @@ import {
   TextInput,
   TouchableOpacity,
   StatusBar,
+  ImageBackground,
+  StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { styles } from '../styles/styles';
 import { useTheme } from '../context/ThemeContext';
+import { BlurView } from 'expo-blur';
 
 // Nature Background Container
-export const ScreenContainer = ({ children }) => {
+export const ScreenContainer = ({ children, bgImage }) => {
   const { isDarkMode, colors } = useTheme();
   
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <ImageBackground
+      source={bgImage || require('../assets/dashboard_bg.png')}
+      style={[styles.container, { backgroundColor: colors.background }]}
+      imageStyle={{ resizeMode: 'cover', width: '100%', height: '100%' }}
+    >
       <StatusBar barStyle={isDarkMode ? "light-content" : "dark-content"} />
-      <LinearGradient
-        colors={isDarkMode ? ['#1a1a1a', '#252525'] : ['#ecfccb', '#ffffff']}
-        style={styles.backgroundGradient}
-      />
-      {!isDarkMode && (
-        <>
-          <View style={styles.bgTreeLeft} />
-          <View style={styles.bgTreeRight} />
-          <View style={styles.bgMountain} />
-        </>
-      )}
+
+      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
       
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
         {children}
       </SafeAreaView>
-    </View>
+    </ImageBackground>
   );
 };
 
 // Custom Button
-export const MainButton = ({ title, onPress, variant = 'primary', style }) => (
-  <TouchableOpacity 
-    style={[
-      styles.button, 
-      variant === 'outline' ? styles.buttonOutline : styles.buttonPrimary,
-      style
-    ]} 
-    onPress={onPress}
-  >
-    <Text style={[
-      styles.buttonText, 
-      variant === 'outline' ? styles.buttonTextOutline : styles.buttonTextPrimary
-    ]}>
-      {title}
-    </Text>
-  </TouchableOpacity>
-);
+export const MainButton = ({ title, onPress, variant = 'primary', style, disabled }) => {
+  const { colors } = useTheme();
+  const isOutline = variant === 'outline';
+
+  return (
+    <TouchableOpacity
+      activeOpacity={0.8}
+      disabled={disabled}
+      style={[
+        styles.button,
+        {
+          backgroundColor: isOutline ? 'transparent' : colors.primary,
+          borderColor: colors.primary,
+          borderWidth: isOutline ? 2 : 0,
+          opacity: disabled ? 0.6 : 1,
+        },
+        style,
+      ]}
+      onPress={onPress}
+    >
+      <Text style={[styles.buttonText, { color: isOutline ? colors.primary : colors.textLight }]}>
+        {title}
+      </Text>
+    </TouchableOpacity>
+  );
+};
+
+export const GlassCard = ({ children, style, intensity, tint }) => {
+  const { colors } = useTheme();
+  return (
+    <View
+      style={[
+        {
+          borderRadius: 16,
+          overflow: 'hidden',
+          position: 'relative',
+          borderWidth: 1,
+          borderColor: colors.glassBorder,
+        },
+        style,
+      ]}
+    >
+      <BlurView
+        intensity={typeof intensity === 'number' ? intensity : colors.glassIntensity}
+        tint={tint || colors.glassTint}
+        style={StyleSheet.absoluteFillObject}
+      />
+      <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+      {children}
+    </View>
+  );
+};
 
 // Custom Input
-export const InputField = ({ label, placeholder, value, onChangeText, secureTextEntry, keyboardType, error, maxLength, icon, rightElement, containerStyle, inputStyle, editable = true }) => {
+export const InputField = ({ label, placeholder, value, onChangeText, secureTextEntry, keyboardType, error, maxLength, autoFocus, icon, rightElement, containerStyle, inputStyle, editable = true }) => {
   const { colors } = useTheme();
   const textColor = editable ? colors.textDark : colors.gray;
   
@@ -82,6 +114,7 @@ export const InputField = ({ label, placeholder, value, onChangeText, secureText
           secureTextEntry={secureTextEntry}
           keyboardType={keyboardType}
           maxLength={maxLength}
+          autoFocus={!!autoFocus}
           editable={editable}
           selectTextOnFocus={editable}
         />

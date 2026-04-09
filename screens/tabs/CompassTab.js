@@ -1,16 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, Switch, Animated, Alert, ImageBackground, StyleSheet } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, Switch, Animated, Alert, StyleSheet } from 'react-native';
 import * as Location from 'expo-location';
 import { Magnetometer } from 'expo-sensors';
-import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles/styles';
 import { useTheme } from '../../context/ThemeContext';
+import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const CompassTab = () => {
   const { colors, isDarkMode } = useTheme();
+  const insets = useSafeAreaInsets();
   const [isServiceEnabled, setIsServiceEnabled] = useState(false);
   const [subscription, setSubscription] = useState(null);
-  const [magnetometer, setMagnetometer] = useState(0);
+  const [displayAngle, setDisplayAngle] = useState(0);
+  const spinValue = useRef(new Animated.Value(0)).current;
+  const lastAngle = useRef(0);
   const [location, setLocation] = useState(null);
   const [address, setAddress] = useState('Waiting for GPS...');
   const [errorMsg, setErrorMsg] = useState(null);
@@ -25,20 +29,51 @@ const CompassTab = () => {
       }
       setIsServiceEnabled(true);
       _subscribe();
-      _getLocation();
     } else {
       setIsServiceEnabled(false);
       _unsubscribe();
       setLocation(null);
-      setMagnetometer(0);
+      setDisplayAngle(0);
+
+      // Reset compass dial to 0 smoothly
+      Animated.timing(spinValue, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+      lastAngle.current = 0;
+
       setAddress('Service Paused');
     }
   };
 
   const _subscribe = () => {
-    Magnetometer.setUpdateInterval(100);
+    Magnetometer.setUpdateInterval(60);
     const sub = Magnetometer.addListener((data) => {
-      setMagnetometer(_angle(data));
+      let angle = 0;
+      if (data) {
+        let { x, y } = data;
+        angle = Math.atan2(y, x) * (180 / Math.PI);
+        if (angle < 0) angle += 360;
+      }
+
+      let newAngle = Math.round(angle);
+
+      // Shortest path: prevent snap/spin backwards when crossing North
+      let diff = newAngle - lastAngle.current;
+      if (diff > 180) newAngle -= 360;
+      else if (diff < -180) newAngle += 360;
+
+      Animated.timing(spinValue, {
+        toValue: newAngle,
+        duration: 60,
+        useNativeDriver: true,
+      }).start();
+
+      lastAngle.current = newAngle;
+
+      // Keep display within 0..359
+      setDisplayAngle((newAngle % 360 + 360) % 360);
     });
     setSubscription(sub);
   };
@@ -46,36 +81,6 @@ const CompassTab = () => {
   const _unsubscribe = () => {
     subscription && subscription.remove();
     setSubscription(null);
-  };
-
-  const _angle = (magnetometer) => {
-    let angle = 0;
-    if (magnetometer) {
-      let { x, y } = magnetometer;
-      if (Math.atan2(y, x) >= 0) {
-        angle = Math.atan2(y, x) * (180 / Math.PI);
-      } else {
-        angle = (Math.atan2(y, x) + 2 * Math.PI) * (180 / Math.PI);
-      }
-    }
-    return Math.round(angle);
-  };
-
-  const _getLocation = async () => {
-    try {
-      let location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
-      setLocation(location);
-      
-      // Display coordinates directly (works offline, no reverse geocoding)
-      const lat = location.coords.latitude.toFixed(6);
-      const lng = location.coords.longitude.toFixed(6);
-      const alt = location.coords.altitude ? `Alt: ${location.coords.altitude.toFixed(0)}m` : '';
-      setAddress(`${lat}, ${lng}\n${alt}`);
-    } catch (e) {
-      setAddress("GPS Unavailable");
-    }
   };
 
   // Continuously update location when service is enabled
@@ -116,28 +121,44 @@ const CompassTab = () => {
     return arr[(val % 8)];
   };
 
-  const rotateStyle = {
-    transform: [{ rotate: `${-magnetometer}deg` }] 
-  };
+  const spin = spinValue.interpolate({
+    inputRange: [0, 360],
+    outputRange: ['0deg', '-360deg'],
+  });
 
   return (
-    <ImageBackground 
-      source={require('../../assets/dashboard_bg.png')} 
-      style={[styles.tabContainer, { backgroundColor: colors.background }]}
-      imageStyle={{ resizeMode: 'cover' }}
-    >
-      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
+    <View style={[styles.tabContainer, { backgroundColor: 'transparent' }]}>
       <View style={{ backgroundColor: colors.primaryLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12, marginHorizontal: 16, marginTop: 16, marginBottom: 6, borderRadius: 12 }}>
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={[styles.headerTitle, { color: colors.textDark }]}>COMPASS</Text>
+          <Text style={[styles.headerTitle, { color: colors.textLight }]}>COMPASS</Text>
         </View>
       </View>
       
       <View style={styles.compassContainer}>
-        <View style={[styles.blackCompassBox, isDarkMode && { borderColor: colors.primary }]}>
+        <View style={[styles.blackCompassBox, { borderColor: colors.glassBorder }]}>
+            <BlurView
+              intensity={colors.glassIntensity}
+              tint={colors.glassTint}
+              style={StyleSheet.absoluteFillObject}
+            />
+            <View
+              pointerEvents="none"
+              style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]}
+            />
+            <View
+              pointerEvents="none"
+              style={[
+                StyleSheet.absoluteFillObject,
+                {
+                  backgroundColor: isDarkMode ? colors.cardBg : colors.textDark,
+                  opacity: 0.68,
+                },
+              ]}
+            />
+
             <View style={[styles.topArrow, { borderBottomColor: colors.primary }]} />
 
-            <Animated.View style={[styles.compassInnerDial, rotateStyle]}>
+            <Animated.View style={[styles.compassInnerDial, { transform: [{ rotate: spin }] }]}>
                <View style={styles.tickRing} />
                
                <Text style={[styles.directionTextBold, {top: 15}]}>N</Text>
@@ -167,20 +188,40 @@ const CompassTab = () => {
         </View>
       </View>
 
-      <View style={[styles.coordsBoxTransparent, { backgroundColor: isDarkMode ? colors.cardBg : 'transparent' }]}>
+      <View
+        style={[
+          styles.coordsBoxTransparent,
+          {
+            borderWidth: 1,
+            borderColor: colors.glassBorder,
+            borderRadius: 16,
+            marginHorizontal: 16,
+            marginTop: 8,
+            overflow: 'hidden',
+            position: 'relative',
+          },
+        ]}
+      >
+        <BlurView
+          intensity={colors.glassIntensity}
+          tint={colors.glassTint}
+          style={StyleSheet.absoluteFillObject}
+        />
+        <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+
         <Text style={[styles.coordsTitle, { color: colors.textDark }]}>
-           {isServiceEnabled ? `${magnetometer}° ${getCardinalDirection(magnetometer)}` : '---'}
+           {isServiceEnabled ? `${displayAngle}° ${getCardinalDirection(displayAngle)}` : '---'}
         </Text>
         <Text style={[styles.coordsSubtitle, { color: colors.gray }]}>
            {isServiceEnabled ? address : 'Enable location services\nto see your position'}
         </Text>
       </View>
 
-      <View style={[styles.distanceBar, { bottom: 70, backgroundColor: colors.primaryLight }]}>
-         <Text style={styles.distanceLabel}>DISTANCE:</Text>
-         <Text style={styles.distanceValue}>{location ? '0 m' : '--'}</Text>
+      <View style={[styles.distanceBar, { bottom: insets.bottom + 65, backgroundColor: colors.primaryLight }]}>
+        <Text style={[styles.distanceLabel, { color: colors.textLight }]}>DISTANCE:</Text>
+        <Text style={[styles.distanceValue, { color: colors.textLight }]}>{location ? '0 m' : '--'}</Text>
       </View>
-    </ImageBackground>
+    </View>
   );
 };
 

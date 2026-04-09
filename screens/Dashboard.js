@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, ImageBackground, BackHandler } from 'react-native';
-import { Home, MapPin, MessageCircle, User, Check, CheckSquare, Square, AlertTriangle, X, Users, Radio } from 'lucide-react-native';
+import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, BackHandler, useWindowDimensions, StyleSheet } from 'react-native';
+import Animated, { Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Home, MapPin, MessageCircle, User, CheckSquare, Square, AlertTriangle, X, Users } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { COLORS } from '../constants/theme';
 import { styles } from '../styles/styles';
 import { useTheme } from '../context/ThemeContext';
 import { useBluetoothDevice } from '../context/BluetoothContext';
@@ -35,16 +36,28 @@ const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
         <Icon size={24} color="#FFFFFF" />
       </LinearGradient>
     ) : (
-      <Icon size={24} color="#000000" />
+      <Icon size={24} color={colors.gray} />
     )}
   </TouchableOpacity>
 );
 
 const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
-  const { colors } = useTheme();
+  const { colors, isDarkMode } = useTheme();
   const { activeAlert, dismissAlert, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isHost, leaveLobby, isInLobby, hostDeviceId, myDeviceId, getEmergencyContactForDevice, getMemberNickname } = useLobby();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState('home');
+  const [tabHistory, setTabHistory] = useState(['home']);
+  const renderedTabRef = useRef('home');
+  const [renderedTab, setRenderedTab] = useState('home');
+  const [transitionFromTab, setTransitionFromTab] = useState(null);
+  const [transitionToTab, setTransitionToTab] = useState(null);
+  const transitionToTabRef = useRef(null);
+  const isTransitioningRef = useRef(false);
+  const transitionProgress = useSharedValue(1);
+  const transitionDirection = useSharedValue(1);
+  // 0 = slide horizontal, 1 = cross-fade, 2 = slide up (modal), 3 = slide down (dismiss)
+  const transitionMode = useSharedValue(0);
   const [chatName, setChatName] = useState('');
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [dontShowAgain, setDontShowAgain] = useState(false);
@@ -57,20 +70,38 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const joinAnnounceKeyRef = useRef(null);
   const wasConnectedRef = useRef(isConnected);
 
+  const changeTab = useCallback((nextTab) => {
+    setActiveTab((currentTab) => {
+      if (currentTab === nextTab) return currentTab;
+      setTabHistory((prev) => [...prev, nextTab]);
+      return nextTab;
+    });
+  }, []);
+
+  const goBackTab = useCallback(() => {
+    setTabHistory((prev) => {
+      if (prev.length <= 1) return prev;
+      const nextHistory = prev.slice(0, -1);
+      const previousTab = nextHistory[nextHistory.length - 1] ?? 'home';
+      setActiveTab(previousTab);
+      return nextHistory;
+    });
+  }, []);
+
   const showLocationServicesBlocked = useCallback(() => {
     Alert.alert(
       'Location Services Off',
       'Enable Location Services in Settings to access the Location tab.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Go to Settings', onPress: () => setActiveTab('settings') },
+        { text: 'Go to Settings', onPress: () => changeTab('settings') },
       ]
     );
-  }, []);
+  }, [changeTab]);
 
   const goToLocationTab = useCallback(() => {
-    setActiveTab('location');
-  }, []);
+    changeTab('location');
+  }, [changeTab]);
 
   const handleLocationTabPress = useCallback(async () => {
     try {
@@ -131,6 +162,83 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
     goToLocationTab();
   }, [goToLocationTab, showLocationServicesBlocked]);
 
+  const tabOrder = isHost
+    ? ['home', 'location', 'message', 'members', 'profile']
+    : ['home', 'location', 'message', 'profile'];
+
+  const subScreens = ['editProfile', 'chat', 'settings', 'help', 'reportProblem'];
+
+  const getTransitionMode = useCallback((fromTab, toTab) => {
+    const fromIsSub = subScreens.includes(fromTab);
+    const toIsSub = subScreens.includes(toTab);
+
+    if (!fromIsSub && toIsSub) return 2;
+    if (fromIsSub && !toIsSub) return 3;
+
+    const fromIndex = tabOrder.indexOf(fromTab);
+    const toIndex = tabOrder.indexOf(toTab);
+    if (fromIndex !== -1 && toIndex !== -1) {
+      const delta = Math.abs(toIndex - fromIndex);
+      return delta === 1 ? 0 : 1;
+    }
+
+    return 1;
+  }, [subScreens, tabOrder]);
+
+  const getTransitionDirection = useCallback((fromTab, toTab) => {
+    const fromIndex = tabOrder.indexOf(fromTab);
+    const toIndex = tabOrder.indexOf(toTab);
+
+    if (fromIndex !== -1 && toIndex !== -1) {
+      return toIndex > fromIndex ? 1 : -1;
+    }
+
+    const fromIsSub = subScreens.includes(fromTab);
+    const toIsSub = subScreens.includes(toTab);
+    if (!fromIsSub && toIsSub) return 1;
+    if (fromIsSub && !toIsSub) return -1;
+    return 1;
+  }, [subScreens, tabOrder]);
+
+  const finishTabTransition = useCallback((toTab) => {
+    renderedTabRef.current = toTab;
+    transitionToTabRef.current = null;
+    isTransitioningRef.current = false;
+    setRenderedTab(toTab);
+    setTransitionFromTab(null);
+    setTransitionToTab(null);
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === renderedTabRef.current) return;
+
+    const fromTab = isTransitioningRef.current
+      ? (transitionToTabRef.current ?? renderedTabRef.current)
+      : renderedTabRef.current;
+    const toTab = activeTab;
+
+    const mode = getTransitionMode(fromTab, toTab);
+    transitionMode.value = mode;
+    transitionDirection.value = getTransitionDirection(fromTab, toTab);
+    setTransitionFromTab(fromTab);
+    setTransitionToTab(toTab);
+    transitionToTabRef.current = toTab;
+    isTransitioningRef.current = true;
+
+    transitionProgress.value = 0;
+
+    const duration = mode === 0 ? 340 : mode === 1 ? 260 : 380;
+    transitionProgress.value = withTiming(
+      1,
+      { duration, easing: Easing.out(Easing.cubic) },
+      (finished) => {
+        if (finished) {
+          runOnJS(finishTabTransition)(toTab);
+        }
+      }
+    );
+  }, [activeTab, finishTabTransition, getTransitionDirection, getTransitionMode, transitionDirection, transitionMode, transitionProgress]);
+
   // Handle hardware back button inside Dashboard: close modals first,
   // if on profile sub-screens go back to profile, otherwise go to home.
   useEffect(() => {
@@ -140,14 +248,13 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
       if (showLobbyModal) { setShowLobbyModal(false); return true; }
       if (showSOSAlertModal) { setShowSOSAlertModal(false); return true; }
 
-      const profileSubs = ['editProfile', 'settings', 'help', 'reportProblem'];
-      if (profileSubs.includes(activeTab)) {
-        setActiveTab('profile');
+      if (tabHistory.length > 1) {
+        goBackTab();
         return true;
       }
 
       if (activeTab !== 'home') {
-        setActiveTab('home');
+        changeTab('home');
         return true;
       }
 
@@ -156,7 +263,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', onBack);
     return () => backHandler.remove();
-  }, [showLogoutModal, showLocationModal, showLobbyModal, showSOSAlertModal, activeTab]);
+  }, [showLogoutModal, showLocationModal, showLobbyModal, showSOSAlertModal, activeTab, tabHistory.length, goBackTab, changeTab]);
 
   // Handle incoming SOS/MORSE/OFFLINE alerts
   useEffect(() => {
@@ -170,21 +277,6 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
       }
     }
   }, [activeAlert]);
-
-  // Auto-log out of the active session when the phone loses connection to the LoRa device (BLE link drops).
-  // This forces a reconnect flow instead of leaving the user in a stale lobby/dashboard state.
-  useEffect(() => {
-    const wasConnected = wasConnectedRef.current;
-    wasConnectedRef.current = isConnected;
-
-    if (wasConnected && !isConnected) {
-      setShowLogoutModal(false);
-      setShowLocationModal(false);
-      setShowLobbyModal(false);
-      setShowSOSAlertModal(false);
-      onRequireDeviceSetup && onRequireDeviceSetup();
-    }
-  }, [isConnected, onRequireDeviceSetup]);
 
   // Broadcast join timestamp once per connected-lobby session.
   // Lobby code sync is already handled in BluetoothContext.
@@ -228,7 +320,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
 
   const handleOpenChat = (name) => {
     setChatName(name);
-    setActiveTab('chat');
+    changeTab('chat');
   };
 
   const handleLogoutPress = () => {
@@ -262,8 +354,8 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
       ? `You (${getMemberNickname(hostDeviceId)})`
       : getMemberNickname(hostDeviceId);
 
-  const renderContent = () => {
-    switch (activeTab) {
+  const renderContentForTab = (tabKey) => {
+    switch (tabKey) {
       case 'home':
         return (
           <HomeTab
@@ -271,7 +363,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
               if (tab === 'location') {
                 handleLocationTabPress();
               } else {
-                setActiveTab(tab);
+                changeTab(tab);
               }
             }}
             onLobbyPress={handleLobbyPress}
@@ -282,39 +374,134 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
       case 'profile': return (
         <ProfileTab 
           onLogout={handleLogoutPress} 
-          onEditProfile={() => setActiveTab('editProfile')}
-          onSettings={() => setActiveTab('settings')}
-          onHelp={() => setActiveTab('help')}
-          onReportProblem={() => setActiveTab('reportProblem')}
+          onEditProfile={() => changeTab('editProfile')}
+          onSettings={() => changeTab('settings')}
+          onHelp={() => changeTab('help')}
+          onReportProblem={() => changeTab('reportProblem')}
         />
       );
-      case 'editProfile': return <EditProfileScreen onBack={() => setActiveTab('profile')} />;
-      case 'chat': return <ChatScreen onBack={() => setActiveTab('message')} chatName={chatName} />;
-      case 'settings': return <SettingsScreen onBack={() => setActiveTab('profile')} onDeleteAccount={onDeleteAccount} />;
-      case 'help': return <HelpScreen onBack={() => setActiveTab('profile')} />;
-      case 'reportProblem': return <ReportProblemScreen onBack={() => setActiveTab('profile')} />;
-      case 'members': return isHost ? <MembersTab /> : <HomeTab onChangeTab={setActiveTab} onLobbyPress={handleLobbyPress} />;
+      case 'editProfile': return <EditProfileScreen onBack={goBackTab} />;
+      case 'chat': return <ChatScreen onBack={goBackTab} chatName={chatName} />;
+      case 'settings': return <SettingsScreen onBack={goBackTab} onDeleteAccount={onDeleteAccount} />;
+      case 'help': return <HelpScreen onBack={goBackTab} />;
+      case 'reportProblem': return <ReportProblemScreen onBack={goBackTab} />;
+      case 'members': return isHost ? <MembersTab /> : <HomeTab onChangeTab={changeTab} onLobbyPress={handleLobbyPress} />;
       default: return <HomeTab />;
     }
   };
 
+  const outgoingStyle = useAnimatedStyle(() => {
+    const direction = transitionDirection.value;
+    const progress = transitionProgress.value;
+    const mode = transitionMode.value;
+
+    // Defaults (cross-fade)
+    let opacity = 1 - progress;
+    let translateX = 0;
+    let translateY = 0;
+    let scale = 1 - 0.015 * progress;
+
+    if (mode === 0) {
+      // Slide horizontal
+      translateX = -direction * windowWidth * progress;
+      opacity = 1 - progress;
+      scale = 1 - 0.01 * progress;
+    } else if (mode === 2) {
+      // Main -> sub-screen (incoming slides up); keep background subtly present
+      opacity = 1 - 0.25 * progress;
+      translateY = -windowHeight * 0.02 * progress;
+      scale = 1 - 0.02 * progress;
+    } else if (mode === 3) {
+      // Sub-screen -> main (sub-screen dismisses downward)
+      translateY = windowHeight * progress;
+      opacity = 1 - progress;
+      scale = 1;
+    }
+
+    return {
+      opacity,
+      transform: [{ translateX }, { translateY }, { scale }],
+    };
+  }, [windowWidth, windowHeight]);
+
+  const incomingStyle = useAnimatedStyle(() => {
+    const direction = transitionDirection.value;
+    const progress = transitionProgress.value;
+    const mode = transitionMode.value;
+
+    // Defaults (cross-fade)
+    let opacity = progress;
+    let translateX = 0;
+    let translateY = 0;
+    let scale = 0.985 + 0.015 * progress;
+
+    if (mode === 0) {
+      // Slide horizontal
+      translateX = direction * windowWidth * (1 - progress);
+      opacity = progress;
+      scale = 0.99 + 0.01 * progress;
+    } else if (mode === 2) {
+      // Sub-screen slides up
+      translateY = windowHeight * (1 - progress);
+      opacity = progress;
+      scale = 0.99 + 0.01 * progress;
+    } else if (mode === 3) {
+      // Main screen re-appears behind the dismissed sub-screen
+      opacity = progress;
+      translateY = -windowHeight * 0.02 * (1 - progress);
+      scale = 0.98 + 0.02 * progress;
+    }
+
+    return {
+      opacity,
+      transform: [{ translateX }, { translateY }, { scale }],
+    };
+  }, [windowWidth, windowHeight]);
+
   // Hide bottom nav when on sub-screens
-  const subScreens = ['editProfile', 'chat', 'settings', 'help', 'reportProblem'];
   const showBottomNav = !subScreens.includes(activeTab);
 
   return (
-    <View style={{flex: 1, backgroundColor: colors.background}}>
-      {renderContent()}
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: 'transparent' }}>
+      <View style={{ flex: 1, overflow: 'hidden' }}>
+        {transitionFromTab && transitionToTab ? (
+          <>
+            <Animated.View
+              style={[StyleSheet.absoluteFillObject, outgoingStyle]}
+              pointerEvents="none"
+            >
+              {renderContentForTab(transitionFromTab)}
+            </Animated.View>
+            <Animated.View
+              style={[{ flex: 1 }, incomingStyle]}
+              pointerEvents="none"
+            >
+              {renderContentForTab(transitionToTab)}
+            </Animated.View>
+          </>
+        ) : (
+          renderContentForTab(renderedTab)
+        )}
+      </View>
       
       {showBottomNav && (
-        <View style={[styles.bottomNav, { backgroundColor: colors.surfaceBg, borderTopColor: colors.borderColor }]}>
-          <TabIcon icon={Home} label="Home" active={activeTab === 'home'} onPress={() => setActiveTab('home')} colors={colors} />
+        <View
+          style={[
+            styles.bottomNav,
+            {
+              backgroundColor: colors.surfaceBg,
+              borderTopColor: colors.borderColor,
+              paddingBottom: 18,
+            },
+          ]}
+        >
+          <TabIcon icon={Home} label="Home" active={activeTab === 'home'} onPress={() => changeTab('home')} colors={colors} />
           <TabIcon icon={MapPin} label="Loc" active={activeTab === 'location'} onPress={handleLocationTabPress} colors={colors} />
-          <TabIcon icon={MessageCircle} label="Chat" active={activeTab === 'message'} onPress={() => setActiveTab('message')} colors={colors} />
+          <TabIcon icon={MessageCircle} label="Chat" active={activeTab === 'message'} onPress={() => changeTab('message')} colors={colors} />
           {isHost && (
-            <TabIcon icon={Users} label="Members" active={activeTab === 'members'} onPress={() => setActiveTab('members')} colors={colors} />
+            <TabIcon icon={Users} label="Members" active={activeTab === 'members'} onPress={() => changeTab('members')} colors={colors} />
           )}
-          <TabIcon icon={User} label="Prof" active={activeTab === 'profile'} onPress={() => setActiveTab('profile')} colors={colors} />
+          <TabIcon icon={User} label="Prof" active={activeTab === 'profile'} onPress={() => changeTab('profile')} colors={colors} />
         </View>
       )}
 
@@ -450,11 +637,16 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
         <TouchableWithoutFeedback onPress={() => setShowLobbyModal(false)}>
           <View style={styles.modalOverlay}>
             <TouchableWithoutFeedback onPress={() => {}}>
-              <ImageBackground
-                source={require('../assets/int bg 1.png')}
-                resizeMode="cover"
-                imageStyle={{ borderRadius: 20 }}
-                style={[styles.modalContent, { maxHeight: '80%', overflow: 'hidden', backgroundColor: 'transparent', marginTop: -28 }]}
+              <View
+                style={[
+                  styles.modalContent,
+                  {
+                    maxHeight: '80%',
+                    overflow: 'hidden',
+                    backgroundColor: colors.modalBg,
+                    marginTop: -28,
+                  },
+                ]}
               >
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -462,7 +654,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                     <Text style={[styles.modalTitle, { color: colors.textDark, marginBottom: 0, fontSize: 14, marginLeft: 6 }]}>LOBBY INFORMATION</Text>
                   </View>
                   <TouchableOpacity onPress={() => setShowLobbyModal(false)} style={{ marginTop: -4 }}>
-                    <X size={24} color="#000" />
+                    <X size={24} color={colors.textDark} />
                   </TouchableOpacity>
                 </View>
 
@@ -470,7 +662,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                   <ScrollView showsVerticalScrollIndicator={false}>
                     <View style={{ backgroundColor: colors.primaryLight, padding: 15, borderRadius: 12, alignItems: 'center', marginBottom: 12 }}>
                       <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', letterSpacing: 1 }}>LOBBY CODE</Text>
-                      <Text style={{ color: '#0B1F16', fontSize: 36, fontWeight: 'bold', letterSpacing: 6, marginTop: 4 }}>{lobbyCode}</Text>
+                      <Text style={{ color: colors.textLight, fontSize: 36, fontWeight: 'bold', letterSpacing: 6, marginTop: 4 }}>{lobbyCode}</Text>
                     </View>
 
                     <View style={{ backgroundColor: colors.inputBg, borderRadius: 12, padding: 14, marginBottom: 10 }}>
@@ -531,7 +723,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                         style={[styles.modalButton, { backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.primary, marginTop: 10 }]}
                         onPress={() => {
                           setShowLobbyModal(false);
-                          setActiveTab('members');
+                          changeTab('members');
                         }}
                       >
                         <Text style={{ color: colors.primary, fontWeight: '600' }}>View Members</Text>
@@ -551,7 +743,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                     </TouchableOpacity>
                   </>
                 )}
-              </ImageBackground>
+              </View>
             </TouchableWithoutFeedback>
           </View>
         </TouchableWithoutFeedback>
@@ -565,7 +757,17 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
         onRequestClose={handleDismissSOSAlert}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: '#FFF0F0', borderWidth: 2, borderColor: activeAlert?.type === 'OFFLINE' ? '#999' : colors.accent }]}>
+          <View
+            style={[
+              styles.modalContent,
+              {
+                // Avoid a bright "flashbang" in dark mode.
+                backgroundColor: isDarkMode ? 'rgba(244,67,54,0.18)' : '#FFF0F0',
+                borderWidth: 2,
+                borderColor: activeAlert?.type === 'OFFLINE' ? colors.gray : '#F44336',
+              },
+            ]}
+          >
             <View style={{ alignItems: 'center', marginBottom: 16 }}>
               <View style={{ 
                 width: 64, 
@@ -575,10 +777,10 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                 alignItems: 'center', 
                 justifyContent: 'center',
               }}>
-                <AlertTriangle size={32} color={activeAlert?.type === 'OFFLINE' ? '#666' : colors.accent} />
+                <AlertTriangle size={32} color={activeAlert?.type === 'OFFLINE' ? colors.gray : '#F44336'} />
               </View>
             </View>
-            <Text style={[styles.modalTitle, { color: activeAlert?.type === 'OFFLINE' ? '#666' : colors.accent, textAlign: 'center' }]}>
+            <Text style={[styles.modalTitle, { color: activeAlert?.type === 'OFFLINE' ? colors.gray : '#F44336', textAlign: 'center' }]}>
               {activeAlert?.type === 'MORSE' ? 'MORSE SOS' : activeAlert?.type === 'OFFLINE' ? 'DEVICE OFFLINE' : 'SOS ALERT'}
             </Text>
             
@@ -647,7 +849,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
           </View>
         </View>
       </Modal>
-    </View>
+    </SafeAreaView>
   );
 };
 

@@ -98,53 +98,56 @@ const ChatScreen = ({ onBack, chatName }) => {
   // Detect system messages like __JOINED_TS__:... or __LEFT_TS__:...
   const parseSystemMessage = (text) => {
     if (typeof text !== 'string') return null;
-    if (text.startsWith('__JOINED_TS__:')) return { type: 'joined' };
-    if (text.startsWith('__LEFT_TS__:')) return { type: 'left' };
+    const t = text.trim();
+    if (
+      t.startsWith('__JOINED_TS__:') ||
+      t.startsWith('__JOIN_TS__:') ||
+      t.startsWith('JOIN_TS:') ||
+      t.startsWith('JOIN TS:') ||
+      t === '__JOINED_TS__' ||
+      t === '__JOIN_TS__' ||
+      t === 'JOIN_TS' ||
+      t === 'JOIN TS'
+    ) {
+      return { type: 'joined' };
+    }
+    if (
+      t.startsWith('__LEFT_TS__:') ||
+      t.startsWith('__LEAVE_TS__:') ||
+      t.startsWith('LEFT_TS:') ||
+      t.startsWith('LEAVE_TS:') ||
+      t === '__LEFT_TS__' ||
+      t === '__LEAVE_TS__' ||
+      t === 'LEFT_TS' ||
+      t === 'LEAVE_TS'
+    ) {
+      return { type: 'left' };
+    }
     return null;
   };
 
   const isOffline = !isConnected || !isDeviceReachable;
 
-  // Match mock's red offline indicator without changing global theme.
-  const lightPalette = useMemo(() => ({
-    background: '#f8faf5',
-    surface: '#f8faf5',
-    surfaceContainerLow: '#f2f4ef',
-    surfaceContainer: '#ecefea',
-    surfaceContainerHigh: '#e7e9e4',
-    surfaceContainerHighest: '#e1e3de',
-    surfaceVariant: '#e1e3de',
-    outline: '#707a6a',
-    outlineVariant: '#bfcab7',
-    primary: '#156e05',
-    primaryContainer: '#77ce60',
-    onPrimary: '#ffffff',
-    onSurface: '#191c1a',
-    onSurfaceVariant: '#404a3b',
-    error: '#ba1a1a',
-  }), []);
-
+  // Unified Theme Mapping: derive all surfaces from ThemeContext (no hardcoded light palette)
   const ui = useMemo(() => {
-    if (isDarkMode) {
-      return {
-        background: colors.background,
-        surface: colors.surfaceBg,
-        surfaceContainer: colors.cardBg,
-        surfaceContainerHigh: colors.surfaceBg,
-        surfaceContainerHighest: colors.cardBg,
-        surfaceVariant: colors.inputBg,
-        outline: colors.borderColor,
-        outlineVariant: colors.borderColor,
-        primary: colors.primary,
-        primaryContainer: colors.primaryLight,
-        onPrimary: colors.textLight,
-        onSurface: colors.textDark,
-        onSurfaceVariant: colors.gray,
-        error: '#ba1a1a',
-      };
-    }
-    return lightPalette;
-  }, [colors, isDarkMode, lightPalette]);
+    return {
+      background: colors.background,
+      surface: colors.surfaceBg,
+      surfaceContainerLow: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+      surfaceContainer: colors.cardBg,
+      surfaceContainerHigh: isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)',
+      surfaceContainerHighest: isDarkMode ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.09)',
+      surfaceVariant: colors.inputBg,
+      outline: colors.borderColor,
+      outlineVariant: colors.borderColor,
+      primary: colors.primary,
+      primaryContainer: colors.primaryLight,
+      onPrimary: colors.textLight,
+      onSurface: colors.textDark,
+      onSurfaceVariant: colors.gray,
+      error: isDarkMode ? '#ef4444' : '#ba1a1a',
+    };
+  }, [colors, isDarkMode]);
 
   const errorColor = ui.error;
 
@@ -309,7 +312,7 @@ const ChatScreen = ({ onBack, chatName }) => {
         <ScrollView
           ref={scrollViewRef}
           style={{ flex: 1, paddingHorizontal: 16, backgroundColor: ui.background }}
-          contentContainerStyle={{ paddingBottom: 150, paddingTop: 8, flexGrow: 1 }}
+          contentContainerStyle={{ paddingBottom: 14, paddingTop: 8, flexGrow: 1 }}
           keyboardShouldPersistTaps="handled"
           onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
         >
@@ -513,16 +516,16 @@ const ChatScreen = ({ onBack, chatName }) => {
               )}
             </TouchableOpacity>
           </View>
+
+          {/* Character Counter */}
+          {messageText.length > 150 && (
+            <View style={[localStyles.charCounter, { backgroundColor: ui.surfaceContainerHigh, borderColor: ui.outlineVariant }]}>
+              <Text style={{ color: messageText.length > 200 ? errorColor : ui.onSurfaceVariant, fontSize: 11, fontWeight: '700', fontFamily: 'PublicSans_700Bold' }}>
+                {messageText.length}/200
+              </Text>
+            </View>
+          )}
         </View>
-        
-        {/* Character Counter */}
-        {messageText.length > 150 && (
-          <View style={[localStyles.charCounter, { backgroundColor: ui.surfaceContainerHigh, borderColor: ui.outlineVariant }]}>
-            <Text style={{ color: messageText.length > 200 ? errorColor : ui.onSurfaceVariant, fontSize: 11, fontWeight: '700', fontFamily: 'PublicSans_700Bold' }}>
-              {messageText.length}/200
-            </Text>
-          </View>
-        )}
       </KeyboardAvoidingView>
     </View>
   );
@@ -779,10 +782,6 @@ const localStyles = StyleSheet.create({
     flexShrink: 1,
   },
   composeWrap: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
     paddingHorizontal: 16,
     paddingTop: 10,
     backgroundColor: 'transparent',
@@ -833,9 +832,8 @@ const localStyles = StyleSheet.create({
     justifyContent: 'center',
   },
   charCounter: {
-    position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 92 : 84,
-    right: 74,
+    alignSelf: 'flex-end',
+    marginTop: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,

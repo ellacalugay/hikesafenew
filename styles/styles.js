@@ -1,10 +1,16 @@
 import { StyleSheet, Platform } from 'react-native';
-import { COLORS, width, height } from '../constants/theme';
+import { LIGHT_COLORS, width, height } from '../constants/theme';
+
+// Static fallback palette for legacy styles.
+// Prefer overriding colors via `const { colors } = useTheme()` in components.
+const COLORS = LIGHT_COLORS;
 
 export const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    // Let ThemeContext / navigator background drive the actual color.
+    // Keeping this transparent prevents static light COLORS from overriding dark mode.
+    backgroundColor: 'transparent',
   },
   safeArea: {
     flex: 1,
@@ -741,13 +747,15 @@ export const styles = StyleSheet.create({
   chatItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'white',
+    backgroundColor: 'transparent',
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 16,
     marginBottom: 10,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    elevation: 2,
+    overflow: 'hidden',
+    position: 'relative',
+    shadowColor: 'transparent',
+    shadowOpacity: 0,
+    elevation: 0,
   },
   chatName: {
     flex: 1,
@@ -782,15 +790,18 @@ export const styles = StyleSheet.create({
   blackCompassBox: {
     width: 280,
     height: 280,
-    backgroundColor: 'black',
+    backgroundColor: 'transparent',
     borderRadius: 30,
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
-    shadowColor: '#000',
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 8,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'transparent',
+    shadowColor: 'transparent',
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
   },
   topArrow: {
     position: 'absolute',
@@ -941,13 +952,15 @@ export const styles = StyleSheet.create({
   menuOption: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'white',
+    backgroundColor: 'transparent',
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 16,
     marginBottom: 10,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    elevation: 1,
+    overflow: 'hidden',
+    position: 'relative',
+    shadowColor: 'transparent',
+    shadowOpacity: 0,
+    elevation: 0,
   },
   menuLabel: {
     marginLeft: 15,

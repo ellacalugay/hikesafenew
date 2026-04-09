@@ -1,26 +1,21 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Modal, TextInput, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Modal, TextInput, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { Users, MapPin, Radio, AlertTriangle, CheckCircle, WifiOff, Crown, Navigation, Edit2, X, Trash2, UserMinus } from 'lucide-react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
 import { useLobby } from '../../context/LobbyContext';
+import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { calculateDistance } from '../../utils/math';
 
-// Calculate distance between two GPS coordinates (Haversine formula)
-const calculateDistance = (lat1, lon1, lat2, lon2) => {
-  if (!lat1 || !lon1 || !lat2 || !lon2) return null;
-  
-  const R = 6371e3; // meters
-  const φ1 = lat1 * Math.PI / 180;
-  const φ2 = lat2 * Math.PI / 180;
-  const Δφ = (lat2 - lat1) * Math.PI / 180;
-  const Δλ = (lon2 - lon1) * Math.PI / 180;
-
-  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ/2) * Math.sin(Δλ/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-
-  return R * c; // meters
+const withAlpha = (color, alphaHex) => {
+  if (typeof color !== 'string') return color;
+  // Support #RRGGBB and #RRGGBBAA
+  if (color.startsWith('#') && (color.length === 7 || color.length === 9)) {
+    const base = color.slice(0, 7);
+    return `${base}${alphaHex}`;
+  }
+  return color;
 };
 
 const formatDistance = (meters) => {
@@ -74,7 +69,14 @@ const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname
   const displayName = getDisplayName();
 
   return (
-    <View style={[localStyles.memberCard, { backgroundColor: colors.cardBg, borderColor: colors.borderColor }]}>
+    <View style={[localStyles.memberCard, { backgroundColor: 'transparent', borderColor: colors.glassBorder }]}>
+      <BlurView
+        intensity={colors.glassIntensity}
+        tint={colors.glassTint}
+        style={StyleSheet.absoluteFillObject}
+      />
+      <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+
       <View style={localStyles.memberHeader}>
         <View style={localStyles.memberInfo}>
           <View style={[localStyles.avatar, { backgroundColor: getStatusColor() }]}>
@@ -232,6 +234,7 @@ const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname
 
 const MembersTab = ({ onNavigateToLocation }) => {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const { myLocation, memberLocations, isConnected, removeMemberLocation } = useBluetoothDevice();
   const { lobbyCode, lobbyName, isHost, lobbyMembers, getMemberNickname, setMemberNickname, myNickname, preferredHostDeviceId, electNewHost } = useLobby();
   
@@ -331,7 +334,8 @@ const MembersTab = ({ onNavigateToLocation }) => {
   if (!isHost) {
     // Non-hosts can see members but not manage them
     return (
-      <View style={[localStyles.container, { backgroundColor: colors.background }]}>
+      <View style={[localStyles.container, { backgroundColor: 'transparent' }]}>
+        <View style={{ flex: 1, backgroundColor: 'transparent' }}>
         {/* Header for Members */}
         <View style={[localStyles.header, { backgroundColor: colors.primary }]}>
           <View style={localStyles.headerTop}>
@@ -341,7 +345,13 @@ const MembersTab = ({ onNavigateToLocation }) => {
                 {lobbyName || 'My Lobby'} • Code: {lobbyCode}
               </Text>
             </View>
-            <View style={[localStyles.hostBadge, { backgroundColor: colors.cardBg }]}>
+            <View style={[localStyles.hostBadge, { backgroundColor: 'transparent', borderColor: colors.glassBorder }]}>
+              <BlurView
+                intensity={colors.glassIntensity}
+                tint={colors.glassTint}
+                style={StyleSheet.absoluteFillObject}
+              />
+              <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
               <Text style={[localStyles.hostBadgeText, { color: colors.gray }]}>MEMBER</Text>
             </View>
           </View>
@@ -368,7 +378,7 @@ const MembersTab = ({ onNavigateToLocation }) => {
         </View>
 
         <ScrollView 
-          contentContainerStyle={localStyles.scrollContent}
+          contentContainerStyle={[localStyles.scrollContent, { paddingBottom: insets.bottom + 90 }]}
           showsVerticalScrollIndicator={false}
         >
           {/* Self Card */}
@@ -422,12 +432,14 @@ const MembersTab = ({ onNavigateToLocation }) => {
             </View>
           )}
         </ScrollView>
-      </View>
+          </View>
+        </View>
     );
   }
 
   return (
-    <View style={[localStyles.container, { backgroundColor: colors.background }]}>
+    <View style={[localStyles.container, { backgroundColor: 'transparent' }]}>
+      <View style={{ flex: 1, backgroundColor: 'transparent' }}>
       {/* Header */}
       <View style={[localStyles.header, { backgroundColor: colors.primary }]}>
         <View style={localStyles.headerTop}>
@@ -438,7 +450,13 @@ const MembersTab = ({ onNavigateToLocation }) => {
             </Text>
           </View>
           <View style={{ alignItems: 'flex-end', gap: 8 }}>
-            <View style={localStyles.hostBadge}>
+            <View style={[localStyles.hostBadge, { backgroundColor: 'transparent', borderColor: colors.glassBorder }]}>
+              <BlurView
+                intensity={colors.glassIntensity}
+                tint={colors.glassTint}
+                style={StyleSheet.absoluteFillObject}
+              />
+              <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
               <Crown size={14} color={colors.primary} />
               <Text style={[localStyles.hostBadgeText, { color: colors.primary }]}>HOST</Text>
             </View>
@@ -477,7 +495,7 @@ const MembersTab = ({ onNavigateToLocation }) => {
       </View>
 
       <ScrollView 
-        contentContainerStyle={localStyles.scrollContent}
+        contentContainerStyle={[localStyles.scrollContent, { paddingBottom: insets.bottom + 90 }]}
         showsVerticalScrollIndicator={false}
       >
         {/* Self (Host) Card */}
@@ -540,7 +558,10 @@ const MembersTab = ({ onNavigateToLocation }) => {
         animationType="fade"
         onRequestClose={() => setShowNicknameModal(false)}
       >
-        <View style={localStyles.modalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={localStyles.modalOverlay}
+        >
           <View style={[localStyles.modalContent, { backgroundColor: colors.modalBg }]}>
             <View style={localStyles.modalHeader}>
               <Text style={[localStyles.modalTitle, { color: colors.textDark }]}>Edit Nickname</Text>
@@ -560,7 +581,7 @@ const MembersTab = ({ onNavigateToLocation }) => {
                 borderColor: colors.borderColor 
               }]}
               placeholder="Enter nickname (e.g., John, Sarah)"
-              placeholderTextColor={colors.gray}
+              placeholderTextColor={withAlpha(colors.textDark, '99') || colors.gray}
               value={editingNickname}
               onChangeText={setEditingNickname}
               maxLength={20}
@@ -582,7 +603,7 @@ const MembersTab = ({ onNavigateToLocation }) => {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Re-elect Admin Modal */}
@@ -636,6 +657,7 @@ const MembersTab = ({ onNavigateToLocation }) => {
           </View>
         </View>
       </Modal>
+      </View>
     </View>
   );
 };
@@ -668,10 +690,13 @@ const localStyles = StyleSheet.create({
   hostBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
+    borderWidth: 1,
+    overflow: 'hidden',
+    position: 'relative',
   },
   hostBadgeText: {
     fontSize: 11,
@@ -713,13 +738,13 @@ const localStyles = StyleSheet.create({
   },
   scrollContent: {
     padding: 15,
-    paddingBottom: 100,
   },
   memberCard: {
-    borderRadius: 12,
+    borderRadius: 16,
     marginBottom: 12,
     borderWidth: 1,
     overflow: 'hidden',
+    position: 'relative',
   },
   memberHeader: {
     flexDirection: 'row',

@@ -11,6 +11,7 @@ const LAST_NAME_KEY = '@hikesafe_last_name';
 const CONTACT_NAME_KEY = '@hikesafe_contact_name';
 const CONTACT_PHONE_KEY = '@hikesafe_contact_phone';
 const MEDICAL_CONDITION_KEY = '@hikesafe_medical_condition';
+const EXPERIENCE_KEY = '@hikesafe_experience';
 const PROFILE_PICTURE_KEY = '@hikesafe_profile_picture';
 const MEMBER_ID_KEY = '@hikesafe_member_id';
 
@@ -28,6 +29,7 @@ export const UserProvider = ({ children }) => {
   const [contactName, setContactNameState] = useState('');
   const [contactPhone, setContactPhoneState] = useState('');
   const [medicalCondition, setMedicalConditionState] = useState('');
+  const [experience, setExperienceState] = useState('Beginner');
   const [profilePicture, setProfilePictureState] = useState(null); 
   const [memberId, setMemberIdState] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -35,30 +37,35 @@ export const UserProvider = ({ children }) => {
   useEffect(() => {
     const load = async () => {
       try {
-        const [f, l, cName, cPhone, med, pic, mid] = await Promise.all([
-          AsyncStorage.getItem(FIRST_NAME_KEY),
-          AsyncStorage.getItem(LAST_NAME_KEY),
-          AsyncStorage.getItem(CONTACT_NAME_KEY),
-          AsyncStorage.getItem(CONTACT_PHONE_KEY),
-          AsyncStorage.getItem(MEDICAL_CONDITION_KEY),
-          AsyncStorage.getItem(PROFILE_PICTURE_KEY),
-          AsyncStorage.getItem(MEMBER_ID_KEY),
-        ]);
+        const keys = [
+          FIRST_NAME_KEY,
+          LAST_NAME_KEY,
+          CONTACT_NAME_KEY,
+          CONTACT_PHONE_KEY,
+          MEDICAL_CONDITION_KEY,
+          EXPERIENCE_KEY,
+          PROFILE_PICTURE_KEY,
+          MEMBER_ID_KEY,
+        ];
 
-        if (f) setFirstNameState(f);
-        if (l) setLastNameState(l);
-        if (cName) setContactNameState(cName);
-        if (cPhone) setContactPhoneState(cPhone);
-        if (med) setMedicalConditionState(med);
-        if (pic) setProfilePictureState(pic);
+        const results = await AsyncStorage.multiGet(keys);
+        const data = Object.fromEntries(results);
 
-         if (mid) {
-          setMemberIdState(mid);
+        if (data[FIRST_NAME_KEY]) setFirstNameState(data[FIRST_NAME_KEY]);
+        if (data[LAST_NAME_KEY]) setLastNameState(data[LAST_NAME_KEY]);
+        if (data[CONTACT_NAME_KEY]) setContactNameState(data[CONTACT_NAME_KEY]);
+        if (data[CONTACT_PHONE_KEY]) setContactPhoneState(data[CONTACT_PHONE_KEY]);
+        if (data[MEDICAL_CONDITION_KEY]) setMedicalConditionState(data[MEDICAL_CONDITION_KEY]);
+        if (data[EXPERIENCE_KEY]) setExperienceState(data[EXPERIENCE_KEY]);
+        if (data[PROFILE_PICTURE_KEY]) setProfilePictureState(data[PROFILE_PICTURE_KEY]);
+
+        if (data[MEMBER_ID_KEY]) {
+          setMemberIdState(data[MEMBER_ID_KEY]);
         } else {
           const newId = uuidv4();
           setMemberIdState(newId);
           await AsyncStorage.setItem(MEMBER_ID_KEY, newId);
-        } 
+        }
 
       } catch (error) {
         console.error('Failed to load user data:', error);
@@ -118,7 +125,17 @@ export const UserProvider = ({ children }) => {
     } catch (e) {
       console.error('Failed to persist medical condition:', e);
     }
-    }, []);
+  }, []);
+
+  const setExperience = useCallback(async (value) => {
+    const next = (value || '').toString();
+    setExperienceState(next || 'Beginner');
+    try {
+      await AsyncStorage.setItem(EXPERIENCE_KEY, next || 'Beginner');
+    } catch (e) {
+      console.error('Failed to persist experience:', e);
+    }
+  }, []);
 
   const setProfilePicture = useCallback(async (uri) => {
     setProfilePictureState(uri);
@@ -128,10 +145,10 @@ export const UserProvider = ({ children }) => {
       } else {
         await AsyncStorage.removeItem(PROFILE_PICTURE_KEY);
       }
-    } catch (e) { console.error('Failed to save profile picture:', e); 
-
+    } catch (e) {
+      console.error('Failed to save profile picture:', e);
     }
-    }, []);
+  }, []);
 
   const clearUser = useCallback(async () => {
     setFirstNameState('');
@@ -139,22 +156,22 @@ export const UserProvider = ({ children }) => {
     setContactNameState('');
     setContactPhoneState('');
     setMedicalConditionState('');
+    setExperienceState('Beginner');
     setProfilePictureState(null);
 
     // New session identity after deletion
     const newId = uuidv4();
     setMemberIdState(newId);
     try {
-      await Promise.all([
-        AsyncStorage.removeItem(FIRST_NAME_KEY),
-        AsyncStorage.removeItem(LAST_NAME_KEY),
-        AsyncStorage.removeItem(CONTACT_NAME_KEY),
-        AsyncStorage.removeItem(CONTACT_PHONE_KEY),
-        AsyncStorage.removeItem(MEDICAL_CONDITION_KEY),
-        AsyncStorage.removeItem(PROFILE_PICTURE_KEY),
-        AsyncStorage.removeItem(MEMBER_ID_KEY),
+      await AsyncStorage.multiRemove([
+        FIRST_NAME_KEY,
+        LAST_NAME_KEY,
+        CONTACT_NAME_KEY,
+        CONTACT_PHONE_KEY,
+        MEDICAL_CONDITION_KEY,
+        EXPERIENCE_KEY,
+        PROFILE_PICTURE_KEY,
       ]);
-
       await AsyncStorage.setItem(MEMBER_ID_KEY, newId);
     } catch (e) {
       console.error('Failed to clear user data:', e);
@@ -167,6 +184,7 @@ export const UserProvider = ({ children }) => {
     contactName,
     contactPhone,
     medicalCondition,
+    experience,
     profilePicture,
     memberId,
     isLoading,
@@ -175,6 +193,7 @@ export const UserProvider = ({ children }) => {
     setContactName,
     setContactPhone,
     setMedicalCondition,
+    setExperience,
     setProfilePicture,
     clearUser,
   };

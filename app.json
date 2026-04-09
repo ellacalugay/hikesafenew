@@ -43,7 +43,8 @@
     "plugins": [
       "expo-asset",
       "expo-audio",
-      "expo-font"
+      "expo-font",
+      "@maplibre/maplibre-react-native"
     ],
     "owner": "hikesafe",
     "extra": {
