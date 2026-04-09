@@ -310,7 +310,7 @@ const Dashboard = ({ onLogout, onRequireDeviceSetup }) => {
                 source={require('../assets/int bg 1.png')}
                 resizeMode="cover"
                 imageStyle={{ borderRadius: 20 }}
-                style={[styles.modalContent, { maxHeight: '80%', overflow: 'hidden', backgroundColor: 'transparent' }]}
+                style={[styles.modalContent, { maxHeight: '80%', overflow: 'hidden', backgroundColor: 'transparent', marginTop: -28 }]}
               >
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
