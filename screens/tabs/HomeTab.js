@@ -215,12 +215,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
             pressed && localStyles.sosPressed,
           ]}
         >
-          <LinearGradient
-            colors={isConnected ? ['#E63946', '#8B0000'] : ['#E8B5B5', '#D98C8C']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={localStyles.sosCard}
-          >
+          <View style={[localStyles.sosCard, { backgroundColor: isConnected ? '#D0312D' : '#8C4A4A' }]}>
             <View style={localStyles.sosInnerFrame}>
               <View style={localStyles.sosIconWrap}>
                 <AlertTriangle size={42} color="#fff" strokeWidth={2.6} />
@@ -228,7 +223,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
               <Text style={localStyles.sosLabel}>SOS</Text>
               <Text style={localStyles.sosSubLabel}>HOLD TO ALERT</Text>
             </View>
-          </LinearGradient>
+          </View>
         </Pressable>
 
         <View style={localStyles.servicesGrid2x2}>
@@ -362,7 +357,7 @@ const localStyles = StyleSheet.create({
     borderRadius: 28,
     padding: 16,
     minHeight: 200,
-    shadowColor: '#8B0000',
+    shadowColor: '#D0312D',
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.38,
     shadowRadius: 18,
