@@ -25,20 +25,6 @@ const calculateDistance = (lat1, lon1, lat2, lon2) => {
   return R * c; // meters
 };
 
-const ServiceItem = ({ icon: Icon, label, onPress, colors, bgColor, badge }) => (
-  <TouchableOpacity style={localStyles.serviceCard} onPress={onPress} activeOpacity={0.8}>
-    <View style={[localStyles.serviceIconBox, { backgroundColor: bgColor }]}>
-      <Icon size={28} color={colors.textDark} strokeWidth={2} />
-      {badge > 0 && (
-        <View style={localStyles.badge}>
-          <Text style={localStyles.badgeText}>{badge}</Text>
-        </View>
-      )}
-    </View>
-    <Text style={[localStyles.serviceText, { color: colors.textDark }]}>{label}</Text>
-  </TouchableOpacity>
-);
-
 const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
   const { isConnected, isDeviceReachable, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, unreadCount, sendSOS } = useBluetoothDevice();
@@ -225,17 +211,6 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
             </View>
           </View>
         </Pressable>
-
-        <View style={localStyles.servicesGrid2x2}>
-          <View style={localStyles.serviceRow}>
-            <ServiceItem icon={User}          label="PROFILE"   onPress={() => onChangeTab('profile')}   colors={colors} bgColor={colors.profileBg} badge={0} />
-            <ServiceItem icon={MessageCircle} label="MESSAGE"   onPress={() => onChangeTab('message')}   colors={colors} bgColor={colors.messageBg} badge={unreadMsgs} />
-          </View>
-          <View style={localStyles.serviceRow}>
-            <ServiceItem icon={MapPin}  label="LOCATION"  onPress={() => onChangeTab('location')}  colors={colors} bgColor={colors.locationBg} badge={totalAlerts} />
-            <ServiceItem icon={Compass} label="COMPASS"   onPress={() => onChangeTab('compass')}   colors={colors} bgColor={colors.compassBg} badge={0} />
-          </View>
-        </View>
 
       </ScrollView>
     </ImageBackground>
