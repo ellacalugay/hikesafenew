@@ -19,6 +19,7 @@ const REMEMBER_KEY = '@hikesafe_remember';
 const REMEMBER_USERNAME_KEY = '@hikesafe_remember_username';
 const REMEMBER_JOINCODE_KEY = '@hikesafe_remember_joincode';
 const REMEMBER_EXPIRY_KEY = '@hikesafe_remember_expiry'; 
+const PENDING_DEVICE_LOBBY_SYNC_KEY = '@hikesafe_pending_device_lobby_sync';
 
 const REMEMBER_SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
 
@@ -54,6 +55,7 @@ export const LobbyProvider = ({ children }) => {
   const [rememberEnabled, setRememberEnabled] = useState(false);
   const [rememberedUsername, setRememberedUsername] = useState('');
   const [rememberedJoinCode, setRememberedJoinCode] = useState('');
+  const [pendingDeviceLobbySyncCode, setPendingDeviceLobbySyncCode] = useState(null);
 
   useEffect(() => {
     loadPersistedLobby();
@@ -87,6 +89,7 @@ export const LobbyProvider = ({ children }) => {
         AsyncStorage.removeItem(REMEMBER_USERNAME_KEY),
         AsyncStorage.removeItem(REMEMBER_JOINCODE_KEY),
         AsyncStorage.removeItem(REMEMBER_EXPIRY_KEY),
+        AsyncStorage.removeItem(PENDING_DEVICE_LOBBY_SYNC_KEY),
       ]);
     } catch (e) {
       console.error('Failed to clear remember storage:', e);
@@ -99,7 +102,8 @@ export const LobbyProvider = ({ children }) => {
         savedCode, savedName, savedRole, savedMax, savedNicknames,
         savedMyNickname, savedDeviceNick, savedHostDeviceId, savedMyDeviceId,
         savedEmergencyContacts, savedMyEmergencyContact,
-        savedRemember, savedRememberName, savedRememberCode, savedRememberExpiry, 
+        savedRemember, savedRememberName, savedRememberCode, savedRememberExpiry,
+        savedPendingDeviceLobbySync,
       ] = await Promise.all([
         AsyncStorage.getItem(LOBBY_CODE_KEY),
         AsyncStorage.getItem(LOBBY_NAME_KEY),
@@ -116,6 +120,7 @@ export const LobbyProvider = ({ children }) => {
         AsyncStorage.getItem(REMEMBER_USERNAME_KEY),
         AsyncStorage.getItem(REMEMBER_JOINCODE_KEY),
         AsyncStorage.getItem(REMEMBER_EXPIRY_KEY), 
+        AsyncStorage.getItem(PENDING_DEVICE_LOBBY_SYNC_KEY),
       ]);
 
       if (savedCode) {
@@ -189,12 +194,39 @@ export const LobbyProvider = ({ children }) => {
         }
       }
 
+      if (savedPendingDeviceLobbySync) {
+        const parsedPending = parseInt(savedPendingDeviceLobbySync, 10);
+        if (!Number.isNaN(parsedPending) && parsedPending >= 1000 && parsedPending <= 9999) {
+          setPendingDeviceLobbySyncCode(parsedPending);
+        }
+      }
+
     } catch (error) {
       console.error('Failed to load lobby data:', error);
     } finally {
       setIsLoading(false);
     }
   };
+
+  const setPendingDeviceLobbySync = useCallback(async (code) => {
+    const numeric = typeof code === 'string' ? parseInt(code, 10) : code;
+    if (Number.isNaN(numeric) || numeric < 1000 || numeric > 9999) return;
+    setPendingDeviceLobbySyncCode(numeric);
+    try {
+      await AsyncStorage.setItem(PENDING_DEVICE_LOBBY_SYNC_KEY, String(numeric));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const clearPendingDeviceLobbySync = useCallback(async () => {
+    setPendingDeviceLobbySyncCode(null);
+    try {
+      await AsyncStorage.removeItem(PENDING_DEVICE_LOBBY_SYNC_KEY);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const persistEmergencyContacts = useCallback(async (next) => {
     try {
@@ -263,6 +295,7 @@ export const LobbyProvider = ({ children }) => {
         AsyncStorage.removeItem(REMEMBER_KEY),
         AsyncStorage.removeItem(REMEMBER_USERNAME_KEY),
         AsyncStorage.removeItem(REMEMBER_JOINCODE_KEY),
+        AsyncStorage.removeItem(PENDING_DEVICE_LOBBY_SYNC_KEY),
       ]);
     } catch (error) {
       console.error('Failed to clear lobby data:', error);
@@ -449,20 +482,27 @@ export const LobbyProvider = ({ children }) => {
       const success = await commandFn(`LOBBY:${codeToSync}`);
       if (success) {
         console.log(`Synced lobby code ${codeToSync} to device`);
+        await clearPendingDeviceLobbySync();
+      } else {
+        await setPendingDeviceLobbySync(codeToSync);
       }
       return success;
     } catch (error) {
       console.error('Failed to sync lobby to device:', error);
+      await setPendingDeviceLobbySync(codeToSync);
       return false;
     }
-  }, [lobbyCode, sendLobbyCommand]);
+  }, [clearPendingDeviceLobbySync, lobbyCode, sendLobbyCommand, setPendingDeviceLobbySync]);
 
   // Leave current lobby
   const leaveLobby = useCallback(async () => {
     // Send code 0 to device to clear lobby filter
     if (sendLobbyCommand) {
       try {
-        await sendLobbyCommand('LOBBY:0');
+        // IMPORTANT: Do NOT send `LOBBY:0` here.
+        // In multi-phone scenarios, multiple phones can be connected to the same LoRa device.
+        // Clearing the device lobby would kick *all* phones off the lobby.
+        // await sendLobbyCommand('LOBBY:0');
       } catch (e) {
         console.log('Could not clear device lobby:', e);
       }
@@ -491,7 +531,9 @@ export const LobbyProvider = ({ children }) => {
     // Best-effort: clear lobby filter on device
     if (sendLobbyCommand) {
       try {
-        await sendLobbyCommand('LOBBY:0');
+        // IMPORTANT: Do NOT clear device lobby here.
+        // Account reset should only affect this phone; the LoRa device lobby is shared.
+        // await sendLobbyCommand('LOBBY:0');
       } catch (e) {
         console.log('Could not clear device lobby during account reset:', e);
       }
@@ -739,11 +781,14 @@ export const LobbyProvider = ({ children }) => {
     rememberEnabled,
     rememberedUsername,
     rememberedJoinCode,
+    pendingDeviceLobbySyncCode,
     
     createLobby,
     joinLobby,
     leaveLobby,
     syncLobbyToDevice,
+    setPendingDeviceLobbySync,
+    clearPendingDeviceLobbySync,
     addMember,
     removeMember,
     setMyDeviceId,

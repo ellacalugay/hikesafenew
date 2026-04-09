@@ -6,6 +6,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import * as Notifications from 'expo-notifications';
 import { useLobby } from './LobbyContext';
+import { startAndroidMonitorService, stopAndroidMonitorService } from '../utils/AndroidMonitorService';
+import { startBreadcrumbBackgroundUpdates, stopBreadcrumbBackgroundUpdates } from '../utils/BreadcrumbBackgroundTask';
 
 // Storage keys
 const CHAT_HISTORY_KEY = '@hikesafe_chat_history';
@@ -50,6 +52,11 @@ const NUS_TX_CHAR_UUID = '6E400003-B5A3-F393-E0A9-E50E24DCCA9E'; // Notification
 
 const BluetoothContext = createContext();
 
+// Android notification channels: channel settings (especially sound) are immutable after creation.
+// Use versioned IDs so updates reliably take effect on existing installs.
+const EMERGENCY_CHANNEL_ID = 'emergency-alerts-v2';
+const MESSAGES_CHANNEL_ID = 'messages-v2';
+
 export const useBluetoothDevice = () => {
   const context = useContext(BluetoothContext);
   if (!context) {
@@ -67,8 +74,11 @@ export const BluetoothProvider = ({ children }) => {
     registerBleCommandSender,
     syncLobbyToDevice,
     lobbyCode,
+    pendingDeviceLobbySyncCode,
+    clearPendingDeviceLobbySync,
     myNickname,
     setMemberNickname,
+    getMemberNickname,
     myEmergencyContact,
     setEmergencyContactForDevice,
   } = useLobby();
@@ -85,6 +95,28 @@ export const BluetoothProvider = ({ children }) => {
   // For backward compatibility, expose first connected device as "connectedDevice"
   const connectedDevice = connectedDevicesList.length > 0 ? connectedDevicesList[0] : null;
   const isConnected = connectedDevicesList.length > 0;
+
+  // Android: keep BLE monitoring alive in background via a Foreground Service.
+  // This is required for offline SOS listening while the app is backgrounded.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    if (!bleAvailable) return;
+
+    if (isConnected || isTrackingBreadcrumbs) {
+      startAndroidMonitorService({
+        title: 'HikeSafe monitoring active',
+        desc: isInLobby
+          ? (isTrackingBreadcrumbs ? 'Listening for SOS + recording breadcrumbs' : 'Listening for SOS alerts (Lobby active)')
+          : (isTrackingBreadcrumbs ? 'Listening for SOS + recording breadcrumbs' : 'Listening for SOS alerts'),
+      });
+      return () => {
+        // Best-effort stop when provider unmounts.
+        stopAndroidMonitorService();
+      };
+    }
+
+    stopAndroidMonitorService();
+  }, [isConnected, isInLobby, isTrackingBreadcrumbs]);
   
   // GPS and Location data
   const [myLocation, setMyLocation] = useState({ lat: 0, lng: 0, satellites: 0, valid: false });
@@ -348,8 +380,8 @@ export const BluetoothProvider = ({ children }) => {
         content: {
           title,
           body,
-          sound: true,
-          channelId: 'emergency-alerts',
+          sound: 'default',
+          channelId: EMERGENCY_CHANNEL_ID,
           priority: Notifications.AndroidNotificationPriority.MAX,
           data: { type: 'emergency', eventKey },
         },
@@ -357,6 +389,31 @@ export const BluetoothProvider = ({ children }) => {
       });
     } catch (error) {
       console.log('Emergency notification failed:', error?.message || error);
+    }
+  }, [notificationsEnabled, shouldThrottleEmergency]);
+
+  const pushMessageNotification = useCallback(async (title, body, eventKey) => {
+    try {
+      if (!notificationsEnabled) {
+        return;
+      }
+      if (shouldThrottleEmergency(`msg-notif-${eventKey}`, 5000)) {
+        return;
+      }
+
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title,
+          body,
+          sound: 'default',
+          channelId: MESSAGES_CHANNEL_ID,
+          priority: Notifications.AndroidNotificationPriority.HIGH,
+          data: { type: 'message', eventKey },
+        },
+        trigger: null,
+      });
+    } catch (error) {
+      console.log('Message notification failed:', error?.message || error);
     }
   }, [notificationsEnabled, shouldThrottleEmergency]);
 
@@ -376,12 +433,19 @@ export const BluetoothProvider = ({ children }) => {
         setNotificationsEnabled(granted);
 
         if (Platform.OS === 'android') {
-          await Notifications.setNotificationChannelAsync('emergency-alerts', {
+          await Notifications.setNotificationChannelAsync(EMERGENCY_CHANNEL_ID, {
             name: 'Emergency Alerts',
             importance: Notifications.AndroidImportance.MAX,
             vibrationPattern: [0, 500, 200, 500, 200, 500],
             sound: 'default',
             lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+          });
+
+          await Notifications.setNotificationChannelAsync(MESSAGES_CHANNEL_ID, {
+            name: 'Messages',
+            importance: Notifications.AndroidImportance.HIGH,
+            sound: 'default',
+            lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
           });
         }
       } catch (error) {
@@ -392,6 +456,18 @@ export const BluetoothProvider = ({ children }) => {
 
     setupNotifications();
   }, []);
+
+  // Android: background breadcrumbs via expo-location task.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    if (isTrackingBreadcrumbs) {
+      startBreadcrumbBackgroundUpdates();
+      return;
+    }
+
+    stopBreadcrumbBackgroundUpdates();
+  }, [isTrackingBreadcrumbs]);
 
   // Play connection success sound
   const playConnectionSound = useCallback(async () => {
@@ -613,15 +689,49 @@ export const BluetoothProvider = ({ children }) => {
   const startBreadcrumbTracking = useCallback(() => {
     setIsTrackingBreadcrumbs(true);
     lastBreadcrumbRef.current = null;
-    setBreadcrumbSessionDay(getLocalDayStamp(Date.now()));
+    const sessionDay = getLocalDayStamp(Date.now());
+    setBreadcrumbSessionDay(sessionDay);
+
+    // Persist immediately so the background task can start recording right away.
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem(BREADCRUMBS_KEY);
+        const parsed = saved ? JSON.parse(saved) : {};
+        const points = Array.isArray(parsed?.points) ? parsed.points : [];
+        await AsyncStorage.setItem(BREADCRUMBS_KEY, JSON.stringify({
+          points,
+          isTracking: true,
+          sessionDay,
+        }));
+      } catch (e) {
+        // ignore
+      }
+    })();
     console.log('Breadcrumb tracking started');
   }, [getLocalDayStamp]);
   
   // Stop tracking breadcrumbs
   const stopBreadcrumbTracking = useCallback(() => {
     setIsTrackingBreadcrumbs(false);
+
+    // Persist immediately so the background task stops recording even before debounced save runs.
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem(BREADCRUMBS_KEY);
+        const parsed = saved ? JSON.parse(saved) : {};
+        const points = Array.isArray(parsed?.points) ? parsed.points : [];
+        const sessionDay = parsed?.sessionDay || getLocalDayStamp(Date.now());
+        await AsyncStorage.setItem(BREADCRUMBS_KEY, JSON.stringify({
+          points,
+          isTracking: false,
+          sessionDay,
+        }));
+      } catch (e) {
+        // ignore
+      }
+    })();
     console.log('Breadcrumb tracking stopped');
-  }, []);
+  }, [getLocalDayStamp]);
   
   // Clear all breadcrumbs
   const clearBreadcrumbs = useCallback(async () => {
@@ -948,6 +1058,12 @@ export const BluetoothProvider = ({ children }) => {
       // ALERT:[TYPE],[ID],[LAT],[LON] - Alert from another device via LoRa
       // Also handles ALERT:OFFLINE,ID and ALERT:ONLINE,ID (no lat/lng)
       else if (trimmed.startsWith('ALERT:')) {
+        // Only process LoRa lobby traffic when this phone is actually in a lobby.
+        // The LoRa device lobby is shared across multiple phones; a phone that leaves locally
+        // should not keep receiving/processing group traffic.
+        if (!isInLobby) {
+          return;
+        }
         const parts = trimmed.substring(6).split(',');
         const type = parts[0]; // SOS, MORSE, OK, OFFLINE, ONLINE
         const deviceId = parseInt(parts[1], 10);
@@ -1040,16 +1156,17 @@ export const BluetoothProvider = ({ children }) => {
             startEmergencySignals();
 
             const emergencyKey = `${type}-${deviceId}`;
+            const displayName = getMemberNickname ? getMemberNickname(deviceId) : `Device ${deviceId}`;
             pushEmergencyNotification(
               'Emergency Alert',
-              `Device ${deviceId} triggered ${type}. Check immediately.`,
+              `${displayName} triggered ${type}. Check immediately.`,
               emergencyKey
             );
 
             if (!shouldThrottleEmergency(`popup-${emergencyKey}`, 12000)) {
               Alert.alert(
                 '🚨 EMERGENCY ALERT',
-                `Device ${deviceId} has triggered a ${type} alert!\n\nLocation: ${lat.toFixed(5)}, ${lng.toFixed(5)}\n\nCheck on this member immediately!`,
+                `${displayName} has triggered a ${type} alert!\n\nLocation: ${lat.toFixed(5)}, ${lng.toFixed(5)}\n\nCheck on this member immediately!`,
                 [{ text: 'View Location', style: 'default' }],
                 { cancelable: true }
               );
@@ -1144,6 +1261,9 @@ export const BluetoothProvider = ({ children }) => {
 
       // LOC:[ID],[LAT],[LON],[SATS],[RSSI] - Regular location heartbeat forwarded from LoRa
       else if (trimmed.startsWith('LOC:')) {
+        if (!isInLobby) {
+          return;
+        }
         const parts = trimmed.substring(4).split(',');
         if (parts.length >= 3) {
           const deviceId = parseInt(parts[0], 10);
@@ -1203,6 +1323,12 @@ export const BluetoothProvider = ({ children }) => {
           const lobbyCode = status.substring(10);
           console.log(`Lobby code set on device: ${lobbyCode}`);
           setStatusMessage(`Lobby ${lobbyCode} synced to device`);
+
+          // If we were retrying a pending lobby sync, clear it once confirmed.
+          const confirmed = parseInt(lobbyCode, 10);
+          if (pendingDeviceLobbySyncCode && !Number.isNaN(confirmed) && confirmed === pendingDeviceLobbySyncCode) {
+            clearPendingDeviceLobbySync && clearPendingDeviceLobbySync();
+          }
 
           const localDeviceId = parseDeviceId(connectedDevice || deviceRef.current);
           if (isInLobby && localDeviceId !== null) {
@@ -1308,6 +1434,9 @@ export const BluetoothProvider = ({ children }) => {
       
       // MSG:[FROM_ID],M[MOBILE_ID],[TEXT],...,RSSI:[VALUE] - Incoming text message via LoRa
       else if (trimmed.startsWith('MSG:')) {
+        if (!isInLobby) {
+          return;
+        }
         const firstComma = trimmed.indexOf(',');
         if (firstComma > 4) {
           const fromId = parseInt(trimmed.substring(4, firstComma), 10);
@@ -1420,6 +1549,14 @@ export const BluetoothProvider = ({ children }) => {
           
           // Vibrate for incoming message (respects vibrationEnabled)
           triggerVibration('MESSAGE');
+
+          // Background-friendly notification for normal messages
+          const fromName = getMemberNickname ? getMemberNickname(fromId) : `Device ${fromId}`;
+          pushMessageNotification(
+            `Message from ${fromName}${mobileId > 0 ? ` (M${mobileId})` : ''}`,
+            text,
+            `${fromId}-${mobileId}-${newMessage.timestamp}`
+          );
         }
       }
 
@@ -1481,6 +1618,12 @@ export const BluetoothProvider = ({ children }) => {
 
           if (shouldIncrementUnread) {
             setUnreadCount(prev => prev + 1);
+            const fromName = getMemberNickname ? getMemberNickname(deviceId) : `Device ${deviceId}`;
+            pushMessageNotification(
+              `Message from ${fromName}`,
+              text,
+              `echo-${deviceId}-${now}`
+            );
           }
           setStatusMessage('Message synced to connected phones');
           setTimeout(() => setStatusMessage(''), 2000);
@@ -1568,7 +1711,7 @@ export const BluetoothProvider = ({ children }) => {
         setTimeout(() => setStatusMessage(''), 2000);
       }
     });
-  }, [addActivity, connectedDevice, isDeviceSosActive, isInLobby, parseDeviceId, pushEmergencyNotification, registerMemberSync, requestSosTrailSnapshot, sendSosTrailSnapshot, setEmergencyContactForDevice, setMemberNickname, setMemberOffline, setMyDeviceId, shouldThrottleEmergency, startEmergencySignals, stopEmergencySignals, triggerVibration]);
+  }, [addActivity, clearPendingDeviceLobbySync, connectedDevice, getMemberNickname, isDeviceSosActive, isInLobby, parseDeviceId, pendingDeviceLobbySyncCode, pushEmergencyNotification, pushMessageNotification, registerMemberSync, requestSosTrailSnapshot, sendSosTrailSnapshot, setEmergencyContactForDevice, setMemberNickname, setMemberOffline, setMyDeviceId, shouldThrottleEmergency, startEmergencySignals, stopEmergencySignals, triggerVibration]);
 
   const sendMyNicknameToDevice = useCallback(async () => {
     if (!isConnected) return false;
@@ -1903,14 +2046,16 @@ export const BluetoothProvider = ({ children }) => {
     }
   }, [registerBleCommandSender, sendCommand]);
 
-  // Auto-sync lobby to device whenever lobbyCode changes while connected.
+  // Retry device lobby sync only when explicitly marked as pending.
+  // This prevents other phones from overwriting the device lobby just because they have a saved lobbyCode.
   useEffect(() => {
     if (!isConnected) return;
-    if (!lobbyCode) return;
+    if (!pendingDeviceLobbySyncCode) return;
     if (!syncLobbyToDevice) return;
-    // Fire-and-forget; LobbyContext already handles missing sender.
-    syncLobbyToDevice(sendCommand);
-  }, [isConnected, lobbyCode, syncLobbyToDevice, sendCommand]);
+
+    // Fire-and-forget; LobbyContext handles persistence + failures.
+    syncLobbyToDevice(sendCommand, pendingDeviceLobbySyncCode);
+  }, [isConnected, pendingDeviceLobbySyncCode, syncLobbyToDevice, sendCommand]);
 
   // Clear remote trails when leaving/resetting lobby.
   useEffect(() => {
@@ -2048,13 +2193,13 @@ export const BluetoothProvider = ({ children }) => {
       
       return {
         deviceId,
-        name: `Device ${deviceId}`,
+        name: getMemberNickname ? getMemberNickname(deviceId) : `Device ${deviceId}`,
         lastMessage: lastMsg?.text || '',
         lastTimestamp: lastMsg?.timestamp || 0,
         unreadCount: unread,
       };
     }).sort((a, b) => b.lastTimestamp - a.lastTimestamp);
-  }, [messages]);
+  }, [getMemberNickname, messages]);
   
   // Mark messages as read
   const markMessagesAsRead = useCallback((deviceId) => {

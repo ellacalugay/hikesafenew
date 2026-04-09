@@ -21,11 +21,16 @@
       "edgeToEdgeEnabled": true,
       "permissions": [
         "android.permission.POST_NOTIFICATIONS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+        "android.permission.WAKE_LOCK",
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
         "android.permission.BLUETOOTH_CONNECT",
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.VIBRATE",
         "android.permission.RECORD_AUDIO",
@@ -40,11 +45,11 @@
       "expo-audio",
       "expo-font"
     ],
+    "owner": "hikesafe",
     "extra": {
       "eas": {
-        "projectId": "1acdf07d-8111-4a10-a858-b5f30a08a6c4"
+        "projectId": "1f3b8117-9ef1-4c13-9f27-4fcc47e6b8fd"
       }
-    },
-    "owner": "kristinebarrina"
+    }
   }
 }
