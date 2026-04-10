@@ -524,6 +524,14 @@ export const LobbyProvider = ({ children }) => {
     if (isNaN(numericCode) || numericCode < 1000 || numericCode > 9999) {
       throw new Error('Invalid lobby code. Must be 4 digits.');
     }
+
+    // Switching/joining should not carry nicknames from a previous lobby.
+    setMemberNicknames({});
+    try {
+      await AsyncStorage.removeItem(MEMBER_NICKNAMES_KEY);
+    } catch {
+      // ignore
+    }
     
     setLobbyCodeState(numericCode);
     setLobbyName(''); // Will be synced from host later
