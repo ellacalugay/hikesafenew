@@ -181,13 +181,14 @@ const EditProfileScreen = ({ onBack }) => {
             paddingBottom: 24,
             borderWidth: 1,
             borderColor: colors.glassBorder,
+            backgroundColor: '#e9edf1',
             overflow: 'hidden',
             position: 'relative',
             marginBottom: 24,
           }}
         >
           <BlurView intensity={colors.glassIntensity} tint={colors.glassTint} style={StyleSheet.absoluteFillObject} />
-          <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+          <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(233, 237, 241, 0.72)' }]} />
 
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 18 }}>
             <User size={18} color={colors.primary} />
