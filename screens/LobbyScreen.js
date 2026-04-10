@@ -10,7 +10,25 @@ import { useBluetoothDevice } from '../context/BluetoothContext';
 
 const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const { colors } = useTheme();
-  const { createLobby, joinLobby, syncLobbyToDevice, lobbyCode, isInLobby, rememberEnabled, rememberedUsername, rememberedJoinCode, setRememberEnabled, saveRememberData, clearRememberData, myNickname } = useLobby();
+  const {
+    createLobby,
+    joinLobby,
+    syncLobbyToDevice,
+    lobbyCode,
+    isInLobby,
+    isHost,
+    lobbyMembers,
+    myDeviceId,
+    transferHostToFirstJoined,
+    clearNicknames,
+    rememberEnabled,
+    rememberedUsername,
+    rememberedJoinCode,
+    setRememberEnabled,
+    saveRememberData,
+    clearRememberData,
+    myNickname,
+  } = useLobby();
   const { sendCommand, isConnected, statusMessage, memberLocations } = useBluetoothDevice();
   
   // For tracking lobby validation
@@ -142,6 +160,28 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     
     try {
       const numericCode = typeof code === 'string' ? parseInt(code, 10) : code;
+
+      // If switching from an existing lobby, hand off admin/host locally (if possible)
+      // and clear per-lobby nickname state so it doesn't leak into the new lobby.
+      const isSwitching = Boolean(isInLobby && lobbyCode && lobbyCode !== numericCode);
+      if (isSwitching) {
+        try {
+          const othersOnline = (lobbyMembers || [])
+            .filter(m => m && !m.isOffline)
+            .filter(m => m.deviceId !== null && m.deviceId !== undefined)
+            .filter(m => myDeviceId === null || myDeviceId === undefined ? true : m.deviceId !== myDeviceId);
+
+          if (isHost && othersOnline.length > 0) {
+            await transferHostToFirstJoined(myDeviceId ?? null);
+          }
+
+          await clearNicknames();
+        } catch (e) {
+          // Best-effort only; do not block joining the new lobby.
+          console.log('Switch lobby cleanup failed:', e);
+        }
+      }
+
       await joinLobby(numericCode, name);
       setValidationState(null);
       pendingJoinRef.current = null;
@@ -223,8 +263,9 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       return;
     }
 
-    // Multi-phone safety: if this phone is already in a lobby, joining a different code
-    // will change the shared LoRa device lobby for everyone using that device.
+    // If this phone is already in a lobby, joining a different code will change the
+    // lobby on the connected LoRa device. Show a confirmation, but always allow
+    // the user to proceed if they choose.
     if (isInLobby && lobbyCode && lobbyCode !== code) {
       Alert.alert(
         'Change Lobby?',
@@ -236,7 +277,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       );
       return;
     }
-    
+
     // Start validation process
     performJoinLobby();
   };
