@@ -480,6 +480,14 @@ export const LobbyProvider = ({ children }) => {
   const createLobby = useCallback(async (name, maxMemberCount = 10) => {
     const code = generateLobbyCode();
     const now = Date.now();
+
+    // New lobby should start with a clean per-lobby nickname map.
+    setMemberNicknames({});
+    try {
+      await AsyncStorage.removeItem(MEMBER_NICKNAMES_KEY);
+    } catch {
+      // ignore
+    }
     
     setLobbyCodeState(code);
     setLobbyName(name);
@@ -507,6 +515,14 @@ export const LobbyProvider = ({ children }) => {
     
     if (isNaN(numericCode) || numericCode < 1000 || numericCode > 9999) {
       throw new Error('Invalid lobby code. Must be 4 digits.');
+    }
+
+    // Switching/joining should not carry nicknames from a previous lobby.
+    setMemberNicknames({});
+    try {
+      await AsyncStorage.removeItem(MEMBER_NICKNAMES_KEY);
+    } catch {
+      // ignore
     }
     
     setLobbyCodeState(numericCode);
