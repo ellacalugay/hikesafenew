@@ -165,56 +165,6 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
           </TouchableOpacity>
         )}
 
-        {/* GPS Status Preview */}
-        {isConnected && (
-          <View
-            style={[
-              localStyles.gpsPreview,
-              {
-                backgroundColor: 'transparent',
-                borderColor: colors.glassBorder,
-              },
-            ]}
-          >
-            <BlurView
-              intensity={colors.glassIntensity}
-              tint={colors.glassTint}
-              style={StyleSheet.absoluteFillObject}
-            />
-            <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
-
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={[localStyles.gpsLabel, { color: colors.gray }]}>GPS Status</Text>
-              {loraSignalStrength && (
-                <Text style={[localStyles.rssiText, { color: loraSignalStrength > -90 ? colors.primary : colors.accent }]}>
-                  LoRa: {loraSignalStrength} dBm
-                </Text>
-              )}
-            </View>
-            <Text style={[localStyles.gpsValue, { color: myLocation.valid ? colors.primary : colors.gray, marginBottom: 6 }]}>
-              {myLocation.valid 
-                ? `${myLocation.lat.toFixed(4)}, ${myLocation.lng.toFixed(4)} (${myLocation.satellites} sats)`
-                : `Acquiring signal... (${myLocation.satellites} sats)`}
-            </Text>
-
-            <View
-              style={{
-                flexDirection: 'row',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                borderTopWidth: 1,
-                borderTopColor: colors.glassBorder,
-                paddingTop: 6,
-              }}
-            >
-              <Text style={[localStyles.gpsLabel, { color: colors.gray, marginBottom: 0 }]}>Nearest Hiker</Text>
-              <Text style={[localStyles.rssiText, { color: colors.textDark }]}>
-                {formatNearestDistance(nearestDistance)}
-              </Text>
-            </View>
-          </View>
-        )}
-
         <TouchableOpacity onPress={onLobbyPress} activeOpacity={0.8} style={{ marginTop: -8 }}>
           <LinearGradient colors={[colors.primaryLight, colors.primary]} style={localStyles.compactLobbyCard}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -238,11 +188,11 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
         </TouchableOpacity>
 
         <Text style={[localStyles.sosTitle, { color: colors.textDark }]}>EMERGENCY SOS</Text>
-        <Text style={[localStyles.sosHint, { color: colors.gray }]}>PRESS AND HOLD FOR 2 SECONDS</Text>
+        <Text style={[localStyles.sosHint, { color: colors.gray }]}>PRESS AND HOLD FOR 1 SECOND</Text>
 
         <Pressable
           onLongPress={handleEmergencySOS}
-          delayLongPress={2000}
+          delayLongPress={1000}
           style={[localStyles.sosPressable, !isConnected && localStyles.sosDisabled]}
         >
           {({ pressed }) => {
@@ -402,7 +352,7 @@ const localStyles = StyleSheet.create({
   },
 
   sosTitle: {
-    fontSize: 25,
+    fontSize: 28,
     fontWeight: '900',
     textAlign: 'center',
     letterSpacing: 1.2,
