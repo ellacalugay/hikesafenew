@@ -156,7 +156,12 @@ function AppNavigator() {
 
     const nav = navigation || navigationRef;
     if (typeof nav?.isReady === 'function' && !nav.isReady()) return;
-    nav?.navigate?.('Dashboard');
+    // Clear Lobby/Onboarding from stack so transparent dashboard content
+    // cannot show previous screens underneath.
+    nav?.reset?.({
+      index: 0,
+      routes: [{ name: 'Dashboard' }],
+    });
   };
 
   const handleDeviceSetupComplete = (navigation) => {
@@ -324,6 +329,7 @@ function AppNavigator() {
             name="Dashboard"
             options={{
               ...(Platform.OS === 'ios' ? slideFromRight() : softZoomIn()),
+              contentStyle: { backgroundColor: colors.background },
             }}
           >
             {({ navigation }) => (

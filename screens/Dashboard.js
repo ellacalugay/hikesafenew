@@ -462,8 +462,8 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const showBottomNav = !subScreens.includes(activeTab);
 
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: 'transparent' }}>
-      <View style={{ flex: 1, overflow: 'hidden' }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: colors.background }}>
+      <View style={{ flex: 1, overflow: 'hidden', backgroundColor: colors.background }}>
         {transitionFromTab && transitionToTab ? (
           <>
             <Animated.View
