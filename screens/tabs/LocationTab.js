@@ -397,7 +397,7 @@ const RadarView = ({ myLocation, members, colors, onMemberPress, locationService
       </View>
       
       {!myLocation.valid && (
-        <Text style={[localStyles.radarNote, { color: colors.gray }]}>
+        <Text style={[localStyles.radarNote, { color: colors.black }]}>
           Waiting for GPS to show positions...
         </Text>
       )}
@@ -1062,80 +1062,6 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
         style={{ flex: 1, backgroundColor: 'transparent' }}
         contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 90 }}
       >
-        {/* Device Connection Status (only when connected) */}
-        {isConnected && (
-          <TouchableOpacity 
-            style={[localStyles.connectionCard, { 
-              backgroundColor: colors.primaryLight,
-              borderColor: colors.primary,
-            }]}
-            onPress={onShowDeviceConnection}
-            activeOpacity={0.7}
-          >
-            <View style={localStyles.connectionHeader}>
-              <Radio size={24} color={colors.textLight} />
-              <View style={localStyles.connectionText}>
-                <Text style={[localStyles.connectionTitle, { color: colors.textLight }]}>
-                  {connectedDevice?.name}
-                </Text>
-                <Text style={[localStyles.connectionSubtitle, { color: colors.textLight, opacity: 0.9 }]}>
-                  Tap to manage connection
-                </Text>
-              </View>
-            </View>
-          </TouchableOpacity>
-        )}
-
-        {/* My GPS Location */}
-        {isConnected && (
-          <View style={[localStyles.myLocationCard, { backgroundColor: 'transparent', borderColor: colors.glassBorder }]}>
-            <BlurView
-              intensity={colors.glassIntensity}
-              tint={colors.glassTint}
-              style={StyleSheet.absoluteFillObject}
-            />
-            <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
-
-            <View style={localStyles.myLocationHeader}>
-              <Satellite size={20} color={colors.primary} />
-              <Text style={[localStyles.myLocationTitle, { color: colors.textDark }]}>My GPS Location</Text>
-              <View style={[localStyles.satBadge, { backgroundColor: myLocation.valid ? colors.primary : colors.gray }]}>
-                <Text style={localStyles.satText}>{myLocation.satellites} sats</Text>
-              </View>
-            </View>
-            
-            {myLocation.valid ? (
-              <View style={localStyles.coordsContainer}>
-                <View style={localStyles.coordRow}>
-                  <Text style={[localStyles.coordLabel, { color: colors.gray }]}>LAT:</Text>
-                  <Text 
-                    style={[localStyles.coordValue, { color: colors.textDark }]}
-                    selectable={true}
-                    numberOfLines={1}
-                  >
-                    {myLocation.lat.toFixed(6)}
-                  </Text>
-                </View>
-                <View style={localStyles.coordRow}>
-                  <Text style={[localStyles.coordLabel, { color: colors.gray }]}>LNG:</Text>
-                  <Text 
-                    style={[localStyles.coordValue, { color: colors.textDark }]}
-                    selectable={true}
-                    numberOfLines={1}
-                  >
-                    {myLocation.lng.toFixed(6)}
-                  </Text>
-                </View>
-              </View>
-            ) : (
-              <Text style={[localStyles.waitingText, { color: colors.gray }]}>
-                Waiting for GPS signal...{'\n'}
-                Make sure you're outdoors with clear sky view.
-              </Text>
-            )}
-          </View>
-        )}
-
         {/* View Mode Toggle */}
         <View style={[localStyles.viewToggle, { backgroundColor: 'transparent', borderColor: colors.glassBorder }]}>
           <BlurView
@@ -1387,7 +1313,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
           activeOpacity={isConnected ? 1 : 0.7}
           onPress={isConnected ? undefined : onShowDeviceConnection}
         >
-          <Text style={{ textAlign: 'center', color: colors.gray, marginTop: 20, marginBottom: 40, fontSize: 12 }}>
+          <Text style={{ textAlign: 'center', color: colors.black, marginTop: 5, marginBottom: 40, fontSize: 12 }}>
             {isConnected 
               ? 'Locations update automatically via LoRa' 
               : 'Connect to your HikeSafe device to enable GPS tracking'}

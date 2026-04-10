@@ -103,20 +103,20 @@ const HelpScreen = ({ onBack }) => {
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'center',
-              paddingTop: insets.top + 10,
-              paddingBottom: 15,
-              height: insets.top + 60,
+              paddingTop: 15,
+              paddingBottom: 10,
+              height: 55,
             },
           ]}
         >
           <TouchableOpacity
             onPress={onBack}
-            style={{ position: 'absolute', left: 16, bottom: 12, padding: 4 }}
+            style={{ position: 'absolute', left: 16, bottom: 10, padding: 4 }}
           >
             <ArrowLeft size={24} color={colors.textDark} />
           </TouchableOpacity>
 
-          <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 20, bottom: -4 }]}>
+          <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 20, bottom: 0, lineHeight: 24 }]}>
             HELP
           </Text>
 
@@ -125,9 +125,9 @@ const HelpScreen = ({ onBack }) => {
             style={{
               position: 'absolute',
               right: 16,
-              bottom: 6,
-              width: 36,
-              height: 36,
+              bottom: 10,
+              width: 34,
+              height: 34,
               resizeMode: 'contain',
             }}
           />
