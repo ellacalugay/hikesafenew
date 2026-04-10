@@ -1584,6 +1584,7 @@ export const BluetoothProvider = ({ children }) => {
             setMyDeviceId(localDeviceId);
             registerMemberSync(localDeviceId, Date.now(), { isSelf: true, source: 'lobby-sync' });
           }
+          return;
         } else if (status === 'SENDING_SOS' || status === 'SENDING_MORSE_SOS') {
           const localDeviceId = parseDeviceId(connectedDevice || deviceRef.current);
           const emergencyType = status === 'SENDING_SOS' ? 'SOS' : 'MORSE';
@@ -1622,6 +1623,9 @@ export const BluetoothProvider = ({ children }) => {
           if (status === 'SENDING_SOS') {
             setIsSosTrailSharingActive(true);
           }
+
+          // Status displayed via setStatusMessage below.
+          return;
         } else if (status === 'SENDING_OK') {
           // Clear active emergency state for this connected device when OK is sent.
           setActiveAlert(prev => {
@@ -1634,10 +1638,15 @@ export const BluetoothProvider = ({ children }) => {
           stopEmergencySignals();
           setStatusMessage('Emergency cleared (OK sent)');
           setIsSosTrailSharingActive(false);
+
+          // Keep the friendly message; don't overwrite with the raw status token.
+          showTemporaryStatus('Emergency cleared (OK sent)', 3000);
+          return;
         } else {
-          setStatusMessage(status);
+          // Default: display raw status string briefly.
+          showTemporaryStatus(status, 3000);
+          return;
         }
-        showTemporaryStatus(status, 3000);
       }
 
       // Nickname sync from device: NICK:[DEVICE_ID],[NICKNAME]
