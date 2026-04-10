@@ -92,8 +92,12 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     if (!statusMessage) return;
     if (!pendingJoinRef.current) return;
 
-    const match = statusMessage.match(/Lobby\s(\d{4})\ssynced\sto\sdevice/i);
-    const confirmedCode = match ? parseInt(match[1], 10) : null;
+    // Accept both the friendly status text and the raw firmware token.
+    const matchFriendly = statusMessage.match(/Lobby\s(\d{4})\ssynced\sto\sdevice/i);
+    const matchRaw = statusMessage.match(/^(?:STATUS:)?LOBBY_SET,(\d{4})/i);
+    const confirmedCode = matchFriendly
+      ? parseInt(matchFriendly[1], 10)
+      : (matchRaw ? parseInt(matchRaw[1], 10) : null);
     const expectedCode = pendingJoinRef.current?.code;
 
     if (confirmedCode && expectedCode && confirmedCode === expectedCode) {
@@ -318,7 +322,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
           pendingJoinRef.current = null;
           Alert.alert('Error', 'Device did not confirm lobby code. Please try again.');
         }
-      }, 5000);
+      }, 8000);
       
     } catch (error) {
       Alert.alert('Error', 'Failed to join lobby: ' + error.message);
