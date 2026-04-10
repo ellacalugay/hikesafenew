@@ -128,9 +128,10 @@ export const BluetoothProvider = ({ children }) => {
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     if (!bleAvailable) return;
+    if (__DEV__) return;
 
     if (isConnected || isTrackingBreadcrumbs) {
-      startAndroidMonitorService({
+      void startAndroidMonitorService({
         title: 'HikeSafe monitoring active',
         desc: isInLobby
           ? (isTrackingBreadcrumbs ? 'Listening for SOS + recording breadcrumbs' : 'Listening for SOS alerts (Lobby active)')
@@ -138,11 +139,11 @@ export const BluetoothProvider = ({ children }) => {
       });
       return () => {
         // Best-effort stop when provider unmounts.
-        stopAndroidMonitorService();
+        void stopAndroidMonitorService();
       };
     }
 
-    stopAndroidMonitorService();
+    void stopAndroidMonitorService();
   }, [isConnected, isInLobby, isTrackingBreadcrumbs]);
   
   // GPS and Location data
@@ -870,6 +871,8 @@ export const BluetoothProvider = ({ children }) => {
   }, [myLocation, isTrackingBreadcrumbs, addBreadcrumb]);
   
   const bleManagerRef = useRef(null);
+  const bleStateSubscriptionRef = useRef(null);
+  const lastBleStateRef = useRef('Unknown');
   const deviceRef = useRef(null);
   const subscriptionRef = useRef(null);
   const healthCheckRef = useRef(null);
@@ -888,35 +891,64 @@ export const BluetoothProvider = ({ children }) => {
     return Number.isNaN(parsed) ? null : parsed;
   }, []);
 
+  const cleanupBleManager = useCallback(() => {
+    if (bleStateSubscriptionRef.current) {
+      try {
+        bleStateSubscriptionRef.current.remove();
+      } catch {
+        // ignore
+      }
+      bleStateSubscriptionRef.current = null;
+    }
+
+    if (bleManagerRef.current) {
+      try {
+        bleManagerRef.current.destroy();
+      } catch {
+        // ignore
+      }
+      bleManagerRef.current = null;
+    }
+  }, []);
+
+  const ensureBleManagerReady = useCallback(() => {
+    if (!bleAvailable || !BleManager) {
+      return false;
+    }
+
+    if (bleManagerRef.current) {
+      return true;
+    }
+
+    try {
+      const manager = new BleManager();
+      bleManagerRef.current = manager;
+      bleStateSubscriptionRef.current = manager.onStateChange((state) => {
+        lastBleStateRef.current = state;
+        setIsEnabled(state === 'PoweredOn');
+      }, true);
+      return true;
+    } catch (e) {
+      console.log('BLE Manager initialization failed:', e?.message || e);
+      return false;
+    }
+  }, []);
+
   // Initialize BLE Manager
   useEffect(() => {
-    if (bleAvailable && BleManager && !bleManagerRef.current) {
-      try {
-        bleManagerRef.current = new BleManager();
-        
-        // Listen for BLE state changes
-        const subscription = bleManagerRef.current.onStateChange((state) => {
-          setIsEnabled(state === 'PoweredOn');
-        }, true);
-        
-        return () => {
-          subscription.remove();
-          if (bleManagerRef.current) {
-            bleManagerRef.current.destroy();
-            bleManagerRef.current = null;
-          }
-        };
-      } catch (e) {
-        console.log('BLE Manager initialization failed - running in mock mode:', e.message);
-        // BLE not available (e.g., Expo Go), mock mode will be used
-        setIsEnabled(true); // Pretend BT is on for mock mode
-      }
-    } else if (!bleAvailable) {
+    if (!bleAvailable) {
       // Mock mode - pretend Bluetooth is enabled
       console.log('Running in mock mode (BLE not available)');
       setIsEnabled(true);
+      return;
     }
-  }, []);
+
+    ensureBleManagerReady();
+
+    return () => {
+      cleanupBleManager();
+    };
+  }, [cleanupBleManager, ensureBleManagerReady]);
 
   // Connection health monitor - detects device shutdown/timeout
   useEffect(() => {
@@ -1012,33 +1044,93 @@ export const BluetoothProvider = ({ children }) => {
     return true; // iOS handles permissions automatically
   }, []);
 
+  const syncBluetoothEnabledState = useCallback(async () => {
+    if (!bleAvailable) {
+      setIsEnabled(true);
+      return true;
+    }
+
+    if (!ensureBleManagerReady() || !bleManagerRef.current) {
+      setIsEnabled(false);
+      return false;
+    }
+
+    try {
+      const state = await bleManagerRef.current.state();
+      lastBleStateRef.current = state;
+      const poweredOn = state === 'PoweredOn';
+      setIsEnabled(poweredOn);
+      return poweredOn;
+    } catch (error) {
+      const errMsg = String(error?.message || error || '');
+
+      // Recover automatically when native BLE manager is torn down.
+      if (/destroyed/i.test(errMsg)) {
+        cleanupBleManager();
+        if (ensureBleManagerReady() && bleManagerRef.current) {
+          try {
+            const retriedState = await bleManagerRef.current.state();
+            lastBleStateRef.current = retriedState;
+            const retriedPoweredOn = retriedState === 'PoweredOn';
+            setIsEnabled(retriedPoweredOn);
+            return retriedPoweredOn;
+          } catch {
+            // fall through to last known state fallback
+          }
+        }
+      } else {
+        console.error('Failed to read Bluetooth adapter state:', error);
+      }
+
+      const lastKnownPoweredOn = lastBleStateRef.current === 'PoweredOn';
+      if (lastKnownPoweredOn) {
+        setIsEnabled(true);
+        return true;
+      }
+      return false;
+    }
+  }, [cleanupBleManager, ensureBleManagerReady]);
+
   // Request to enable Bluetooth
   const requestEnable = useCallback(async () => {
-    if (!bleAvailable || !bleManagerRef.current) {
+    if (!bleAvailable) {
       console.log('Mock mode: Bluetooth enabled');
       setIsEnabled(true); // Mock mode
       return true;
     }
+
+    if (!ensureBleManagerReady()) {
+      showTemporaryStatus('Bluetooth service is not ready. Please restart Bluetooth and try again.', 4000);
+      return false;
+    }
     
-    await requestPermissions();
+    const hasPermissions = await requestPermissions();
+    if (!hasPermissions) {
+      Alert.alert(
+        'Permissions Required',
+        'Bluetooth and nearby-device permissions are required. Please allow them in app settings.'
+      );
+      return false;
+    }
+
+    const alreadyEnabled = await syncBluetoothEnabledState();
+    if (alreadyEnabled) {
+      return true;
+    }
     
     if (Platform.OS === 'android') {
-      try {
-        await bleManagerRef.current.enable();
-        setIsEnabled(true);
-        return true;
-      } catch (error) {
-        Alert.alert('Bluetooth Required', 'Please enable Bluetooth in your device settings.');
-        return false;
-      }
+      // Android 12+ often rejects programmatic enable() even when BT is already on.
+      // Avoid false-negative popups and ask user to toggle from system settings only when truly off.
+      showTemporaryStatus('Bluetooth is off. Please enable it in device settings.', 4000);
+      return false;
     }
-    return isEnabled;
-  }, [isEnabled, requestPermissions]);
+    return await syncBluetoothEnabledState();
+  }, [ensureBleManagerReady, requestPermissions, showTemporaryStatus, syncBluetoothEnabledState]);
 
   // Scan for BLE devices - NO SYSTEM PAIRING REQUIRED!
   // This is why you can connect directly from the app
   const scanForDevices = useCallback(async () => {
-    if (!bleAvailable || !bleManagerRef.current) {
+    if (!bleAvailable) {
       // Mock devices for development/Expo Go
       console.log('Using mock device scan (BLE not available)');
       setIsScanning(true);
@@ -1049,6 +1141,11 @@ export const BluetoothProvider = ({ children }) => {
         ]);
         setIsScanning(false);
       }, 2000);
+      return;
+    }
+
+    if (!ensureBleManagerReady() || !bleManagerRef.current) {
+      showTemporaryStatus('Bluetooth scanner is unavailable. Please try again.', 3000);
       return;
     }
 
@@ -1063,6 +1160,32 @@ export const BluetoothProvider = ({ children }) => {
     
     const foundDevices = new Map();
 
+    const normalizeUuid = (value) => String(value || '').trim().toUpperCase();
+    const isLikelyHikeSafeDevice = (device) => {
+      if (!device) return false;
+
+      const advName = `${device.name || ''}`.trim();
+      const localName = `${device.localName || ''}`.trim();
+      const id = `${device.id || ''}`.trim();
+
+      const looksLikeName =
+        advName.startsWith('HikeSafe-D') ||
+        advName.startsWith('SOS-Device') ||
+        localName.startsWith('HikeSafe-D') ||
+        localName.startsWith('SOS-Device');
+
+      if (looksLikeName) return true;
+
+      const serviceUuids = Array.isArray(device.serviceUUIDs) ? device.serviceUUIDs : [];
+      const hasNusService = serviceUuids.some((uuid) => normalizeUuid(uuid) === NUS_SERVICE_UUID);
+
+      if (hasNusService) return true;
+
+      // Fallback for minor naming variations.
+      const combined = `${advName} ${localName} ${id}`.toLowerCase();
+      return combined.includes('hikesafe') || combined.includes('sos-device');
+    };
+
     try {
       // Scan for all BLE devices, filter by name
       bleManagerRef.current.startDeviceScan(
@@ -1075,12 +1198,13 @@ export const BluetoothProvider = ({ children }) => {
             return;
           }
 
-          // Filter for HikeSafe devices by name (also accept legacy SOS-Device names)
-          if (device && device.name && (device.name.startsWith('HikeSafe-D') || device.name.startsWith('SOS-Device'))) {
+          // Filter for HikeSafe devices by advertised name, localName, or NUS service UUID.
+          if (isLikelyHikeSafeDevice(device)) {
             if (!foundDevices.has(device.id)) {
+              const displayName = device.name || device.localName || 'HikeSafe Device';
               foundDevices.set(device.id, {
                 id: device.id,
-                name: device.name,
+                name: displayName,
                 address: device.id,
                 rssi: device.rssi,
               });
@@ -1102,7 +1226,7 @@ export const BluetoothProvider = ({ children }) => {
       console.error('Scan error:', error);
       setIsScanning(false);
     }
-  }, [requestPermissions]);
+  }, [ensureBleManagerReady, requestPermissions, showTemporaryStatus]);
 
   // Parse incoming BLE data from device
   const parseBluetoothData = useCallback((data) => {
@@ -1968,12 +2092,17 @@ export const BluetoothProvider = ({ children }) => {
   // Connect to a BLE device - MULTI-DEVICE SUPPORT - no pairing needed!
   // Now supports multiple simultaneous connections (3-4 phones to same device)
   const connectToDevice = useCallback(async (device) => {
-    if (!bleAvailable || !bleManagerRef.current) {
+    if (!bleAvailable) {
       Alert.alert(
         'Bluetooth Not Available',
         'Bluetooth is required to connect to your HikeSafe device. Please use a native build (not Expo Go) and ensure Bluetooth is enabled.',
         [{ text: 'OK' }]
       );
+      return false;
+    }
+
+    if (!ensureBleManagerReady() || !bleManagerRef.current) {
+      Alert.alert('Bluetooth Unavailable', 'Bluetooth service is not ready yet. Please try again.');
       return false;
     }
 
@@ -1999,14 +2128,8 @@ export const BluetoothProvider = ({ children }) => {
         timeout: 10000,
       });
 
-      // Improve write reliability on Android by negotiating a larger MTU when possible.
-      if (Platform.OS === 'android' && typeof connectedDev.requestMTU === 'function') {
-        try {
-          await connectedDev.requestMTU(185);
-        } catch (mtuError) {
-          console.log('MTU request skipped:', mtuError?.message || mtuError);
-        }
-      }
+      // MTU negotiation is optional and has caused native instability on some Android devices.
+      // Keep default MTU for connection stability.
       
       // Discover services and characteristics
       await connectedDev.discoverAllServicesAndCharacteristics();
@@ -2089,7 +2212,7 @@ export const BluetoothProvider = ({ children }) => {
     } finally {
       setIsConnecting(false);
     }
-  }, [connectedDevicesList, isInLobby, parseBluetoothData, parseDeviceId, playConnectionSound, registerMemberSync, requestPermissions, setMyDeviceId]);
+  }, [connectedDevicesList, ensureBleManagerReady, isInLobby, parseBluetoothData, parseDeviceId, playConnectionSound, registerMemberSync, requestPermissions, setMyDeviceId]);
 
   // Disconnect from a specific device (multi-device support)
   const disconnectFromDevice = useCallback(async (deviceId) => {
