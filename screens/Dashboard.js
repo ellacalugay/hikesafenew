@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, BackHandler, useWindowDimensions, StyleSheet } from 'react-native';
+import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, BackHandler, useWindowDimensions, StyleSheet, ImageBackground } from 'react-native';
 import Animated, { Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Home, MapPin, MessageCircle, User, CheckSquare, Square, AlertTriangle, X, Users } from 'lucide-react-native';
@@ -463,7 +463,14 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: colors.background }}>
-      <View style={{ flex: 1, overflow: 'hidden', backgroundColor: colors.background }}>
+      <ImageBackground
+        source={require('../assets/dashboard_bg.png')}
+        style={StyleSheet.absoluteFillObject}
+        imageStyle={{ resizeMode: 'cover' }}
+      />
+      <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
+
+      <View style={{ flex: 1, overflow: 'hidden', backgroundColor: 'transparent' }}>
         {transitionFromTab && transitionToTab ? (
           <>
             <Animated.View
