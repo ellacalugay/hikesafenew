@@ -130,9 +130,9 @@ const EditProfileScreen = ({ onBack }) => {
             flexDirection: 'row',
             alignItems: 'center',
             justifyContent: 'center',
-            paddingTop: insets.top + 2,
+            paddingTop:  15,
             paddingBottom: 10,
-            height: insets.top + 22,
+            height: 55,
           },
         ]}
       >
@@ -144,7 +144,7 @@ const EditProfileScreen = ({ onBack }) => {
         </Text>
         <Image
           source={require('../../assets/hike_logo.png')}
-          style={{ position: 'absolute', right: 16, bottom: 5, width: 34, height: 34, resizeMode: 'contain' }}
+          style={{ position: 'absolute', right: 16, bottom: 10, width: 34, height: 34, resizeMode: 'contain' }}
         />
       </View>
 
