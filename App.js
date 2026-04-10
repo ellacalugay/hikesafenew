@@ -159,19 +159,9 @@ function AppNavigator() {
     nav?.navigate?.('Dashboard');
   };
 
+  // BYPASS LOBBY: Go straight to Dashboard for testing
   const handleDeviceSetupComplete = (navigation) => {
-    if (resumeAfterReconnect) {
-      setResumeAfterReconnect(false);
-      navigation.goBack();
-      return;
-    }
-
-    if (!userLoading && !lobbyLoading && (myNickname || '').trim().length > 0) {
-      navigation.navigate('Lobby');
-      return;
-    }
-
-    navigation.navigate('OnboardingName');
+    navigation.navigate('Dashboard');
   };
 
   const handleShowReminder = () => setShowReminder(true);
