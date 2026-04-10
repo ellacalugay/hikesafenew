@@ -77,6 +77,25 @@ export const useBluetoothDevice = () => {
 };
 
 export const BluetoothProvider = ({ children }) => {
+    // --- Always sync lobby info on BLE connect ---
+    useEffect(() => {
+      if (!isConnected) return;
+      // Sync lobby code
+      if (lobbyCode) {
+        console.log('[BLE SYNC] Sending lobby code to device:', lobbyCode);
+        sendCommand && sendCommand(`SET_LOBBY_CODE:${lobbyCode}`);
+      }
+      // Sync nickname
+      if (myNickname) {
+        console.log('[BLE SYNC] Sending nickname to device:', myNickname);
+        sendCommand && sendCommand(`NICK:${myNickname}`);
+      }
+      // Sync emergency contact
+      if (myEmergencyContact && myEmergencyContact.name && myEmergencyContact.phone) {
+        console.log('[BLE SYNC] Sending emergency contact to device:', myEmergencyContact);
+        sendCommand && sendCommand(`EC:${myEmergencyContact.name},${myEmergencyContact.phone}`);
+      }
+    }, [isConnected, lobbyCode, myNickname, myEmergencyContact, sendCommand]);
   const {
     isInLobby,
     registerMemberSync,

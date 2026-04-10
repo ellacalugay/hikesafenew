@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Alert } from 'react-native';
 
 const LobbyContext = createContext(null);
 
@@ -477,28 +478,43 @@ export const LobbyProvider = ({ children }) => {
   }, [isHost, persistPreferredHostDeviceId, recalculateHost]);
 
   // Create a new lobby (user becomes host)
-  const createLobby = useCallback(async (name, maxMemberCount = 10) => {
-    const code = generateLobbyCode();
-    const now = Date.now();
-    
-    setLobbyCodeState(code);
-    setLobbyName(name);
-    setMaxMembers(maxMemberCount);
-    setIsHost(true);
-    setIsInLobby(true);
-    setLobbyMembers([{ id: 'self', name: 'You (Host)', isHost: true, isSelf: true, joinedAt: now, isOffline: false, deviceId: myDeviceId }]);
-    
-    await persistLobbyData(code, name, 'host', maxMemberCount);
-    if (myDeviceId !== null) {
-      setHostDeviceId(myDeviceId);
-      await persistHostDeviceId(myDeviceId);
-      setPreferredHostDeviceId(myDeviceId);
-      await persistPreferredHostDeviceId(myDeviceId);
+  const createLobby = useCallback(async (code, userName = 'Member') => {
+    if (!isConnected) {
+      Alert.alert(
+        'Device Required',
+        'You must connect to your HikeSafe device before creating a lobby.',
+        [{ text: 'OK' }]
+      );
+      return;
     }
-    
-    console.log(`Created lobby: ${name} with code ${code}`);
-    return code;
-  }, [myDeviceId, persistHostDeviceId, persistPreferredHostDeviceId]);
+
+    if (isInLobby) {
+      Alert.alert(
+        'Lobby Exists',
+        `You are already in a lobby with code ${lobbyCode}. Please leave the current lobby before creating a new one.`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const success = await sendCommand(`CREATE_LOBBY:${code}`);
+      if (success) {
+        setLobbyCodeState(code);
+        setIsHost(true);
+        setIsInLobby(true);
+        setLobbyMembers([{ id: 'self', name: userName, isHost: true, isSelf: true, joinedAt: Date.now(), isOffline: false }]);
+        Alert.alert('Success', `Lobby created with code ${code}`);
+      } else {
+        Alert.alert('Error', 'Failed to create lobby. Please try again.');
+      }
+    } catch (error) {
+      Alert.alert('Error', `Failed to create lobby: ${error.message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [isConnected, isInLobby, lobbyCode, sendCommand]);
 
   // Join an existing lobby with code
   const joinLobby = useCallback(async (code, userName = 'Member') => {
@@ -838,6 +854,38 @@ export const LobbyProvider = ({ children }) => {
   const registerBleCommandSender = useCallback((commandFn) => {
     setSendLobbyCommand(() => commandFn);
   }, []);
+
+  const checkExistingLobby = useCallback(async () => {
+    if (!isConnected) {
+      Alert.alert(
+        'Device Required',
+        'You must connect to your HikeSafe device to check for existing lobbies.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    try {
+      const response = await sendCommand('QUERY_LOBBY');
+      if (response.startsWith('ERROR:')) {
+        Alert.alert('Error', 'Failed to retrieve lobby information.');
+        return;
+      }
+
+      const [status, code, creator] = response.split(',');
+      if (status === 'LOBBY_EXISTS') {
+        Alert.alert(
+          'Lobby Exists',
+          `A lobby already exists with code ${code}, created by ${creator}. Please leave the current lobby before creating a new one.`,
+          [{ text: 'OK' }]
+        );
+      } else {
+        Alert.alert('No Lobby', 'No existing lobby found.');
+      }
+    } catch (error) {
+      Alert.alert('Error', `Failed to check for existing lobby: ${error.message}`);
+    }
+  }, [isConnected, sendCommand]);
 
   const value = {
     // State

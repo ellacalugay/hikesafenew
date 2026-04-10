@@ -10,18 +10,22 @@
 #include <BLE2902.h>
 #include <Preferences.h>
 #include <math.h>
+#include <queue>
+#include <Crypto.h>
+#include <AES.h>
+
 #ifdef ESP32
 #include <esp_gatts_api.h>
 #endif
 
 // --- CONFIGURATION ---
-#define DEVICE_ID 3
+#define DEVICE_ID 2
 
 // --- SEPARATION ALERT CONFIGURATION ---
-#define SEPARATION_ALERT_METERS  100  // alert fires at 200m
-#define SEPARATION_CLEAR_METERS  50  // clears when back within 160m
-#define SEPARATION_BUZZ_ON_MS    300    // Red LED + buzzer ON per pulse
-#define SEPARATION_BUZZ_OFF_MS  1000    // Gap between pulses
+#define SEPARATION_ALERT_METERS  100  // alert fires at 100m
+#define SEPARATION_CLEAR_METERS  50   // clears when back within 50m
+#define SEPARATION_BUZZ_ON_MS    300  // Red LED + buzzer ON per pulse
+#define SEPARATION_BUZZ_OFF_MS  1000  // Gap between pulses
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -37,8 +41,7 @@ BLEServer *pServer = NULL;
 BLECharacteristic *pTxCharacteristic;
 String bleRxBuffer = "";
 
-uint32_t connectedDevices    = 0;
-uint32_t oldConnectedDevices = 0;
+uint32_t oldConnectedMobileCount = 0; 
 
 // LoRa Pins
 #define SCK  5
@@ -51,6 +54,7 @@ uint32_t oldConnectedDevices = 0;
 
 HardwareSerial gpsSerial(2);
 TinyGPSPlus gps;
+bool gpsWarningPrinted = false;
 
 const int GPS_RX = 34;
 const int GPS_TX = 12;
@@ -82,22 +86,20 @@ int  lastRssi     = 0;
 // --- MOBILE PHONE TRACKING ---
 #define MAX_MOBILE_PHONES 4
 struct ConnectedMobile {
-  uint16_t connId;      // BLE connection ID (when available)
+  uint16_t connId;      
   uint8_t mobileID;
-  String token;         // Phone token used for CLAIM/PLOC (best-effort mapping)
+  String token;         
   String nickname;
   unsigned long lastSeen;
   bool isAlert;
-  int lastRssi;         // Signal strength from device
-  float latitude;       // GPS location
+  int lastRssi;         
+  float latitude;       
   float longitude;
-  int estimatedDistance; // Computed from RSSI (meters)
+  int estimatedDistance; 
 };
 ConnectedMobile connectedMobiles[MAX_MOBILE_PHONES];
 uint8_t connectedMobileCount = 0;
-uint8_t nextMobileID = 1;  // Legacy; IDs are now allocated from available slots
 
-// ---- Mobile tracking helpers ----
 void clearMobileSlot(uint8_t idx) {
   if (idx >= MAX_MOBILE_PHONES) return;
   connectedMobiles[idx].connId = 0xFFFF;
@@ -114,14 +116,12 @@ void clearMobileSlot(uint8_t idx) {
 
 void clearAllMobiles() {
   connectedMobileCount = 0;
-  nextMobileID = 1;
   for (uint8_t i = 0; i < MAX_MOBILE_PHONES; i++) {
     clearMobileSlot(i);
   }
 }
 
 uint8_t allocateMobileId() {
-  // Choose the lowest unused ID in [1..MAX_MOBILE_PHONES]
   for (uint8_t candidate = 1; candidate <= MAX_MOBILE_PHONES; candidate++) {
     bool used = false;
     for (uint8_t i = 0; i < connectedMobileCount; i++) {
@@ -162,11 +162,11 @@ unsigned long lastSOSTime = 0;
 const unsigned long sosInterval = 10000;
 
 unsigned long lastECBroadcastTime = 0;
-const unsigned long ecBroadcastInterval = 45000;  // Refresh EC every 45 seconds
+const unsigned long ecBroadcastInterval = 45000;  
 
 uint32_t currentLobbyCode = 0;
-bool lobbyHostActive = false;                 // True if this device is hosting the current lobby
-String pendingLobbyVerifyNonce = "";          // Nonce for an in-flight VERIFY_LOBBY request
+bool lobbyHostActive = false;                 
+String pendingLobbyVerifyNonce = "";          
 uint32_t pendingLobbyVerifyCode = 0;
 String myNickname = "Hiker";
 String myECName   = "None";
@@ -191,39 +191,39 @@ Preferences preferences;
 struct LoRaMessage {
   uint32_t lobbyCode;
   uint8_t  deviceID;
-  uint8_t  mobileID;    // 0 = device button, 1-4 = mobile phone ID
+  uint8_t  mobileID;    
   uint8_t  msgType;
   float    latitude;
   float    longitude;
   uint8_t  satellites;
-  int      rssi;        // Signal strength (will be added during transmission)
+  int      rssi;        
 };
 
 struct LoRaTextMessage {
   uint32_t lobbyCode;
   uint8_t  deviceID;
-  uint8_t  mobileID;    // 0 = device, 1-4 = mobile phone ID
+  uint8_t  mobileID;    
   uint8_t  msgType;
   uint8_t  targetID;
-  int      rssi;        // Signal strength
+  int      rssi;        
   char     text[MAX_TEXT_LEN];
 };
 
 struct LoRaNickMessage {
   uint32_t lobbyCode;
   uint8_t  deviceID;
-  uint8_t  mobileID;    // 0 = device, 1-4 = mobile phone ID
+  uint8_t  mobileID;    
   uint8_t  msgType;
-  int      rssi;        // Signal strength
+  int      rssi;        
   char     nickname[MAX_NICK_LEN];
 };
 
 struct LoRaECMessage {
   uint32_t lobbyCode;
   uint8_t  deviceID;
-  uint8_t  mobileID;    // 0 = device, 1-4 = mobile phone ID
+  uint8_t  mobileID;    
   uint8_t  msgType;
-  int      rssi;        // Signal strength
+  int      rssi;        
   char     ecName[MAX_EC_NAME];
   char     ecPhone[MAX_EC_PHONE];
 };
@@ -251,7 +251,7 @@ void handleSeparationAlarmNonBlocking();
 void checkSeparationAlert(uint8_t fromDevice, float remoteLat, float remoteLon, uint8_t remoteSatellites);
 
 // ============================================================
-// HAVERSINE DISTANCE (returns meters)
+// HAVERSINE DISTANCE
 // ============================================================
 float haversineDistance(float lat1, float lon1, float lat2, float lon2) {
   const float R = 6371000.0;
@@ -263,31 +263,17 @@ float haversineDistance(float lat1, float lon1, float lat2, float lon2) {
   return R * 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
 }
 
-// ============================================================
-// RSSI TO DISTANCE (Path Loss Model - returns meters)
-// RSSI = -XX dBm at 1 meter (calibration needed)
-// Distance = 10^((RSSI - TX_POWER) / (10 * n))
-// n = path loss exponent (2-4, typically 3 for free space)
-// ============================================================
 int rssiToDistance(int rssi) {
-  const int TX_POWER = -40;  // dBm at 1 meter (calibrate based on device)
+  const int TX_POWER = -40;  
   const float PATH_LOSS_EXPONENT = 3.0;
-  
-  if (rssi == 0) return -1;  // Invalid RSSI
-  
+  if (rssi == 0) return -1;  
   float distance = pow(10.0, (float)(TX_POWER - rssi) / (10.0 * PATH_LOSS_EXPONENT));
-  return (int)distance;  // Return distance in meters
+  return (int)distance;  
 }
 
-// ============================================================
-// CHECK SEPARATION ALERT
-// Fires when distance > SEPARATION_ALERT_METERS (200m)
-// Clears only when distance <= SEPARATION_CLEAR_METERS (160m)
-// BOTH devices must have valid GPS fixes (satellites > 0)
-// ============================================================
 void checkSeparationAlert(uint8_t fromDevice, float remoteLat, float remoteLon, uint8_t remoteSatellites) {
   if (!gps.location.isValid()) return;
-  if (remoteSatellites == 0) return;  // Remote device must have satellite fix
+  if (remoteSatellites == 0) return;  
   if (remoteLat == 0.0 && remoteLon == 0.0) return;
 
   float dist = haversineDistance(
@@ -298,12 +284,12 @@ void checkSeparationAlert(uint8_t fromDevice, float remoteLat, float remoteLon, 
   separationFromDevice = fromDevice;
 
   if (!separationAlert && dist > SEPARATION_ALERT_METERS) {
-    // --- TRIGGER ---
+    Serial.printf("[WARN] Separation Alert! Dist: %.1fm\n", dist);
     separationAlert = true;
     sendToPhone("ALERT:TOO_FAR," + String(fromDevice) + "," + String(dist, 1));
-    updateDisplay();
+    updateDisplay(); // Important alerts update display immediately
   } else if (separationAlert && dist <= SEPARATION_CLEAR_METERS) {
-    // --- CLEAR (hysteresis) ---
+    Serial.printf("[INFO] Regrouped. Dist: %.1fm\n", dist);
     separationAlert = false;
     digitalWrite(SOS_LED, LOW);
     digitalWrite(BUZZER,  LOW);
@@ -313,11 +299,6 @@ void checkSeparationAlert(uint8_t fromDevice, float remoteLat, float remoteLon, 
   }
 }
 
-// ============================================================
-// NON-BLOCKING SEPARATION BUZZER + RED LED PULSE
-// 300ms ON / 1000ms OFF — slow pulse distinct from SOS
-// Lower priority than SOS and received-SOS alarms
-// ============================================================
 void handleSeparationAlarmNonBlocking() {
   if (!separationAlert) return;
   if (sosActive || morseActive || receivedSOS || receivedMorse) return;
@@ -338,9 +319,24 @@ void handleSeparationAlarmNonBlocking() {
 // ============================================================
 class MyServerCallbacks : public BLEServerCallbacks {
   void addMobile(uint16_t connId) {
-    if (connectedMobileCount >= MAX_MOBILE_PHONES) return;
+    // FIX 1: Prevent silent fail/memory leak by kicking oldest inactive phone if full
+    if (connectedMobileCount >= MAX_MOBILE_PHONES) {
+      int oldestIdx = 0;
+      unsigned long oldestTime = connectedMobiles[0].lastSeen;
+      for (uint8_t i = 1; i < connectedMobileCount; i++) {
+        if (connectedMobiles[i].lastSeen < oldestTime) {
+          oldestTime = connectedMobiles[i].lastSeen;
+          oldestIdx = i;
+        }
+      }
+      Serial.printf("[WARN] BLE Slots full. Forcing removal of inactive M%d\n", connectedMobiles[oldestIdx].mobileID);
+      for (uint8_t j = oldestIdx; j + 1 < connectedMobileCount; j++) {
+        connectedMobiles[j] = connectedMobiles[j + 1];
+      }
+      connectedMobileCount--;
+      clearMobileSlot(connectedMobileCount);
+    }
 
-    // Avoid duplicate entries if we somehow get repeated connect events.
     for (uint8_t i = 0; i < connectedMobileCount; i++) {
       if (connectedMobiles[i].connId == connId) return;
     }
@@ -352,21 +348,17 @@ class MyServerCallbacks : public BLEServerCallbacks {
     clearMobileSlot(idx);
     connectedMobiles[idx].connId = connId;
     connectedMobiles[idx].mobileID = id;
-    connectedMobiles[idx].token = "";
     connectedMobiles[idx].nickname = "Mobile " + String(id);
     connectedMobiles[idx].lastSeen = millis();
-    connectedMobiles[idx].isAlert = false;
     connectedMobileCount++;
+    Serial.printf("[BLE] Mobile Assigned: M%d\n", id);
   }
 
   bool removeMobileByConnId(uint16_t connId) {
     if (connectedMobileCount == 0) return false;
     for (uint8_t i = 0; i < connectedMobileCount; i++) {
       if (connectedMobiles[i].connId == connId) {
-        Serial.print("Removing Mobile ID: ");
-        Serial.println(connectedMobiles[i].mobileID);
-
-        // Shift left to keep array compact
+        Serial.printf("[BLE] Removing Mobile ID: M%d\n", connectedMobiles[i].mobileID);
         for (uint8_t j = i; j + 1 < connectedMobileCount; j++) {
           connectedMobiles[j] = connectedMobiles[j + 1];
         }
@@ -378,39 +370,16 @@ class MyServerCallbacks : public BLEServerCallbacks {
     return false;
   }
 
-  // Enforce conn_id-based tracking: DO NOT include the parameter-less versions.
   void onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t *param) override {
-    connectedDevices++;
-
-    uint16_t connId = 0xFFFF;
-    if (param) connId = param->connect.conn_id;
-
-    Serial.print("Phone Connected! Conn_ID: ");
-    Serial.println(connId);
-
+    uint16_t connId = param ? param->connect.conn_id : 0xFFFF;
+    Serial.printf("[BLE] Phone Connected! Conn_ID: %d\n", connId);
     addMobile(connId);
   }
 
   void onDisconnect(BLEServer* pServer, esp_ble_gatts_cb_param_t *param) override {
-    if (connectedDevices > 0) connectedDevices--;
-
-    uint16_t disconnectedConnId = 0xFFFF;
-    if (param) disconnectedConnId = param->disconnect.conn_id;
-
-    Serial.print("Phone Disconnected! Conn_ID: ");
-    Serial.println(disconnectedConnId);
-
-    if (disconnectedConnId != 0xFFFF) {
-      const bool removed = removeMobileByConnId(disconnectedConnId);
-      if (!removed) {
-        Serial.println("Warning: conn_id not found in table");
-      }
-    } else {
-      Serial.println("Warning: disconnect conn_id unknown");
-    }
-
-    // Keep advertising so new phones can join.
-    if (pServer) pServer->startAdvertising();
+    uint16_t disconnectedConnId = param ? param->disconnect.conn_id : 0xFFFF;
+    Serial.printf("[BLE] Phone Disconnected! Conn_ID: %d\n", disconnectedConnId);
+    if (disconnectedConnId != 0xFFFF) removeMobileByConnId(disconnectedConnId);
   }
 };
 
@@ -424,15 +393,37 @@ class MyCallbacks : public BLECharacteristicCallbacks {
 // ============================================================
 // SETUP
 // ============================================================
+void setupPreferences() {
+  preferences.begin("hikesafe", false);
+  currentLobbyCode = preferences.getUInt("lobby_code", 0);
+  lobbyHostActive = preferences.getBool("lobby_host", false);
+  myNickname = preferences.getString("nickname", "Hiker");
+  myECName = preferences.getString("ec_name", "None");
+  myECPhone = preferences.getString("ec_phone", "0000000000");
+}
+
+void saveLobbyPreferences(uint32_t lobbyCode, bool isHost) {
+  preferences.putUInt("lobby_code", lobbyCode);
+  preferences.putBool("lobby_host", isHost);
+  logLobbyEvent("Lobby preferences saved: Code=" + String(lobbyCode) + ", Host=" + String(isHost));
+}
+
+void saveUserPreferences(const String& nickname, const String& ecName, const String& ecPhone) {
+  preferences.putString("nickname", nickname);
+  preferences.putString("ec_name", ecName);
+  preferences.putString("ec_phone", ecPhone);
+  logLobbyEvent("User preferences saved: Nickname=" + nickname + ", EC Name=" + ecName + ", EC Phone=" + ecPhone);
+}
+
 void setup() {
   Serial.begin(115200);
-
-  // Ensure mobile tracking table starts clean
+  setupPreferences();
+  Serial.println("\n[INFO] --- Booting HikeSafe ---");
   clearAllMobiles();
 
   Wire.begin(21, 22);
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println("OLED failed");
+    Serial.println("[ERROR] OLED failed");
     while (1);
   }
 
@@ -447,28 +438,6 @@ void setup() {
   display.display();
   delay(3000);
 
-  preferences.begin("sos_app", false);
-  sosActive        = preferences.getBool("sos_state", false);
-  morseActive      = preferences.getBool("morse_state", false);
-  currentLobbyCode = preferences.getUInt("lobby_code", 0);
-  lobbyHostActive  = preferences.getBool("lobby_host", false);
-  myNickname       = preferences.getString("nickname", "Hiker");
-  myECName         = preferences.getString("ec_name", "None");
-  myECPhone        = preferences.getString("ec_phone", "0000000000");
-
-  if (currentLobbyCode == 0) {
-    lobbyHostActive = false;
-    preferences.putBool("lobby_host", false);
-  }
-
-  if (sosActive || morseActive) {
-    display.clearDisplay();
-    display.setCursor(0, 0);
-    display.print("RESUMING SOS...");
-    display.display();
-    delay(1000);
-  }
-
   // --- BLE SETUP ---
   String bleName = "HikeSafe-D" + String(DEVICE_ID);
   BLEDevice::init(bleName.c_str());
@@ -477,12 +446,10 @@ void setup() {
   pServer->setCallbacks(new MyServerCallbacks());
 
   BLEService *pService = pServer->createService(SERVICE_UUID);
-  pTxCharacteristic = pService->createCharacteristic(
-    CHARACTERISTIC_UUID_TX, BLECharacteristic::PROPERTY_NOTIFY);
+  pTxCharacteristic = pService->createCharacteristic(CHARACTERISTIC_UUID_TX, BLECharacteristic::PROPERTY_NOTIFY);
   pTxCharacteristic->addDescriptor(new BLE2902());
 
-  BLECharacteristic *pRxCharacteristic = pService->createCharacteristic(
-    CHARACTERISTIC_UUID_RX, BLECharacteristic::PROPERTY_WRITE);
+  BLECharacteristic *pRxCharacteristic = pService->createCharacteristic(CHARACTERISTIC_UUID_RX, BLECharacteristic::PROPERTY_WRITE);
   pRxCharacteristic->setCallbacks(new MyCallbacks());
 
   pService->start();
@@ -492,6 +459,7 @@ void setup() {
   SPI.begin(SCK, MISO, MOSI, SS);
   LoRa.setPins(SS, RST, DI0);
   if (!LoRa.begin(BAND)) {
+    Serial.println("[ERROR] LORA FAILED");
     display.clearDisplay();
     display.setCursor(0, 0);
     display.print("LORA FAILED");
@@ -524,14 +492,13 @@ void setup() {
 // MAIN LOOP
 // ============================================================
 void loop() {
-  // --- BLE connection management ---
-  if (connectedDevices != oldConnectedDevices) {
-    if (connectedDevices > oldConnectedDevices) {
+  if (connectedMobileCount != oldConnectedMobileCount) {
+    if (connectedMobileCount > oldConnectedMobileCount) {
       digitalWrite(GREEN_LED, HIGH); delay(200); digitalWrite(GREEN_LED, LOW);
     }
     delay(500);
-    pServer->startAdvertising();
-    oldConnectedDevices = connectedDevices;
+    pServer->startAdvertising(); 
+    oldConnectedMobileCount = connectedMobileCount;
     updateDisplay();
   }
 
@@ -539,32 +506,30 @@ void loop() {
   receiveLoRaMessage();
   checkBluetoothCommands();
 
-  // --- Connection timeout ---
+  if (millis() > 10000 && gps.charsProcessed() < 10 && !gpsWarningPrinted) {
+      Serial.println("[ERROR] GPS: No data received.");
+      gpsWarningPrinted = true;
+  }
+
   if (!isOffline && (millis() - lastSeenTime >= timeoutInterval) && remoteDevice != 0) {
     isOffline = true;
     sendToPhone("ALERT:OFFLINE," + String(remoteDevice));
     updateDisplay();
   }
 
-  // --- Heartbeat ---
   if (millis() - lastHeartbeatTime >= heartbeatInterval) {
     lastHeartbeatTime = millis();
     if (!sosActive && !morseActive) sendLoRaMessage(MSG_BEAT, 0);
   }
 
-  // --- Active emergency rebroadcast ---
   if (sosActive || morseActive) {
     if (millis() - lastSOSTime >= sosInterval) {
       lastSOSTime = millis();
       sendLoRaMessage(sosActive ? MSG_SOS : MSG_MORSE, 0);
-      // Rebroadcast EC with emergency for consistency
-      if (currentLobbyCode > 0) {
-        sendLoRaEmergencyContact();
-      }
+      if (currentLobbyCode > 0) sendLoRaEmergencyContact();
     }
   }
 
-  // --- Periodic EC refresh (keep EC data fresh for all devices) ---
   if (currentLobbyCode > 0 && !sosActive && !morseActive) {
     if (millis() - lastECBroadcastTime >= ecBroadcastInterval) {
       lastECBroadcastTime = millis();
@@ -586,7 +551,6 @@ void loop() {
     } else if (sosActive || morseActive) {
       triggerOkay();
     } else if (separationAlert) {
-      // Manually silence separation alarm via OKAY button
       separationAlert = false;
       digitalWrite(SOS_LED, LOW);
       digitalWrite(BUZZER,  LOW);
@@ -596,7 +560,6 @@ void loop() {
     }
   }
 
-  // --- Morse input ---
   if (digitalRead(BUTTON_MORSE) == LOW) {
     if (!isPressing) {
       isPressing = true;
@@ -617,12 +580,11 @@ void loop() {
           digitalWrite(SOS_LED, HIGH); delay(200); digitalWrite(SOS_LED, LOW);
         }
         lastTapTime = millis();
-        updateDisplay();
+        // FIX 4: Removed spammy updateDisplay() here. Loop handles it.
       }
     }
   }
 
-  // --- Smart Morse evaluation ---
   if (morseInput.length() > 0) {
     String target = "...---...";
     if (!target.startsWith(morseInput))              checkMorseInput();
@@ -630,7 +592,6 @@ void loop() {
     else if (millis() - lastTapTime > MORSE_TIMEOUT) checkMorseInput();
   }
 
-  // --- Alarm handlers (priority: received SOS > received Morse > separation) ---
   if (receivedSOS) {
     digitalWrite(GREEN_LED, LOW);
     blinkNormalSOSNonBlocking();
@@ -648,7 +609,6 @@ void loop() {
     }
   }
 
-  // --- Periodic updates ---
   if (millis() - lastGPSCheck >= 2000) {
     lastGPSCheck = millis();
     sendStatusUpdate();
@@ -663,7 +623,7 @@ void loop() {
 // HELPERS
 // ============================================================
 void sendToPhone(String msg) {
-  if (connectedDevices > 0) {
+  if (connectedMobileCount > 0) {
     msg += "\n";
     pTxCharacteristic->setValue((uint8_t*)msg.c_str(), msg.length());
     pTxCharacteristic->notify();
@@ -685,21 +645,15 @@ void triggerSOS() {
   display.print("SOS ON!");
   display.display();
 
-  // Broadcast SOS from ALL connected mobiles
   for (uint8_t i = 0; i < connectedMobileCount; i++) {
     sendLoRaMessage(MSG_SOS, connectedMobiles[i].mobileID);
   }
-  // Also send from device itself
   sendLoRaMessage(MSG_SOS, 0);
   
-  // Immediately broadcast EC so receivers know who to contact
   delay(100);
-  if (currentLobbyCode > 0) {
-    sendLoRaEmergencyContact();
-  }
+  if (currentLobbyCode > 0) sendLoRaEmergencyContact();
   
   lastSOSTime = millis();
-
   digitalWrite(SOS_LED, HIGH); delay(1000); digitalWrite(SOS_LED, LOW);
   updateDisplay();
   delay(300);
@@ -718,11 +672,9 @@ void triggerOkay() {
   display.print("I'M OK!");
   display.display();
 
-  // Broadcast OK from ALL connected mobiles
   for (uint8_t i = 0; i < connectedMobileCount; i++) {
     sendLoRaMessage(MSG_OKAY, connectedMobiles[i].mobileID);
   }
-  // Also send from device itself
   sendLoRaMessage(MSG_OKAY, 0);
   
   digitalWrite(GREEN_LED, HIGH); delay(1000); digitalWrite(GREEN_LED, LOW);
@@ -732,207 +684,63 @@ void triggerOkay() {
 
 void checkBluetoothCommands() {
   int newlineIdx = bleRxBuffer.indexOf('\n');
-  if (newlineIdx == -1) return;
-
   while (newlineIdx != -1) {
     String cmd = bleRxBuffer.substring(0, newlineIdx);
     bleRxBuffer = bleRxBuffer.substring(newlineIdx + 1);
     cmd.trim();
-
     if (cmd.length() > 0) {
-      if (cmd == "SOS") {
-        triggerSOS();
-      } else if (cmd == "OK") {
-        if (receivedSOS || receivedMorse) {
-          receivedSOS = receivedMorse = sosActive = false;
-          digitalWrite(SOS_LED, LOW);
-          digitalWrite(BUZZER,  LOW);
-          updateDisplay();
-        } else {
-          triggerOkay();
-        }
-      } else if (cmd == "ON_MY_WAY") {
-        // Receiver is responding - send alert to SOS sender
-        sendLoRaMessage(MSG_ON_MY_WAY, 0);
-        sendToPhone("STATUS:ON_MY_WAY_SENT");
-      } else if (cmd.startsWith("LOBBY:")) {
-        uint32_t nextCode = cmd.substring(6).toInt();
-        // Multi-phone on one device: if we're already hosting this same lobby,
-        // don't clear host mode just because another phone re-sent LOBBY:####.
-        if (nextCode != currentLobbyCode) {
-          lobbyHostActive = false;
-          preferences.putBool("lobby_host", false);
-        }
-        currentLobbyCode = nextCode;
-        preferences.putUInt("lobby_code", currentLobbyCode);
-        sendToPhone("STATUS:LOBBY_SET," + String(currentLobbyCode));
-        // Broadcast own EC when joining a new lobby
-        if (currentLobbyCode > 0) {
-          delay(200);  // Small delay to ensure device is ready
-          sendLoRaEmergencyContact();
-          lastECBroadcastTime = millis();
-        }
-        updateDisplay();
-      } else if (cmd.startsWith("HOSTLOBBY:")) {
-        // Host creates/owns the lobby on this device.
-        currentLobbyCode = cmd.substring(10).toInt();
-        preferences.putUInt("lobby_code", currentLobbyCode);
-        lobbyHostActive = (currentLobbyCode > 0);
-        preferences.putBool("lobby_host", lobbyHostActive);
-        sendToPhone("STATUS:LOBBY_SET," + String(currentLobbyCode));
-
-        if (currentLobbyCode > 0) {
-          delay(200);
-          sendLoRaEmergencyContact();
-          lastECBroadcastTime = millis();
-        }
-        updateDisplay();
-      } else if (cmd.startsWith("VERIFY_LOBBY:")) {
-        // App asks device to verify that the lobby exists.
-        // Format: VERIFY_LOBBY:<code>,<nonce>
-        String payload = cmd.substring(12);
-        int commaIdx = payload.indexOf(',');
-        if (commaIdx > 0) {
-          uint32_t code = payload.substring(0, commaIdx).toInt();
-          String nonce = payload.substring(commaIdx + 1);
-          nonce.trim();
-
-          if (nonce.length() > 0 && code > 0 && code == currentLobbyCode) {
-            if (lobbyHostActive) {
-              // Local host confirmation for multi-phone-on-one-device.
-              sendToPhone("STATUS:LOBBY_VERIFIED," + String(code) + "," + nonce + ",LOCAL");
-            } else {
-              // Try LoRa verification: broadcast __LOBBY_VERIFY__ and wait for __LOBBY_ACK__.
-              pendingLobbyVerifyNonce = nonce;
-              pendingLobbyVerifyCode = code;
-              sendLoRaTextMessage(0, "__LOBBY_VERIFY__:" + nonce, 0);
-            }
-          }
-        }
-      } else if (cmd.startsWith("NICK:")) {
-        myNickname = cmd.substring(5);
-        if (myNickname.length() >= MAX_NICK_LEN)
-          myNickname = myNickname.substring(0, MAX_NICK_LEN - 1);
-        preferences.putString("nickname", myNickname);
-        sendToPhone("STATUS:NICK_SET," + myNickname);
-        sendLoRaNickname();
-        updateDisplay();
-      } else if (cmd.startsWith("EC:")) {
-        int commaIdx = cmd.indexOf(',', 3);
-        if (commaIdx > 0) {
-          myECName  = cmd.substring(3, commaIdx);
-          myECPhone = cmd.substring(commaIdx + 1);
-          if (myECName.length()  >= MAX_EC_NAME)  myECName  = myECName.substring(0, MAX_EC_NAME - 1);
-          if (myECPhone.length() >= MAX_EC_PHONE) myECPhone = myECPhone.substring(0, MAX_EC_PHONE - 1);
-          preferences.putString("ec_name",  myECName);
-          preferences.putString("ec_phone", myECPhone);
-          sendToPhone("STATUS:EC_SET");
-          // Immediately broadcast EC to all group members
-          if (currentLobbyCode > 0) {
-            sendLoRaEmergencyContact();
-            lastECBroadcastTime = millis();
-          }
-          updateDisplay();
-        }
-      } else if (cmd.startsWith("MSG:")) {
-        int commaIdx = cmd.indexOf(',', 4);
-        if (commaIdx > 0) {
-          int    toDevice = cmd.substring(4, commaIdx).toInt();
-          String msgText  = cmd.substring(commaIdx + 1);
-          sendLoRaTextMessage(toDevice, msgText, 0);
-          sendToPhone("ECHO_MSG:" + String(toDevice) + "," + msgText);
-        }
-      } else if (cmd.startsWith("CLAIM:")) {
-        // Multi-phone identity handshake.
-        // Phone sends: CLAIM:<token>
-        // Device replies (broadcast to all phones): CLAIMED:<token>,<mobileId>
-        String token = cmd.substring(6);
-        token.trim();
-        if (token.length() > 0) {
-          int existingIdx = -1;
-          for (uint8_t i = 0; i < connectedMobileCount; i++) {
-            if (connectedMobiles[i].token == token) {
-              existingIdx = i;
-              break;
-            }
-          }
-
-          if (existingIdx >= 0) {
-            connectedMobiles[existingIdx].lastSeen = millis();
-            sendToPhone("CLAIMED:" + token + "," + String(connectedMobiles[existingIdx].mobileID));
-          } else {
-            // Best-effort: assign this token to the newest connected slot without a token.
-            int bestIdx = -1;
-            unsigned long bestSeen = 0;
-            for (uint8_t i = 0; i < connectedMobileCount; i++) {
-              if (connectedMobiles[i].token.length() > 0) continue;
-              if (bestIdx < 0 || connectedMobiles[i].lastSeen >= bestSeen) {
-                bestIdx = i;
-                bestSeen = connectedMobiles[i].lastSeen;
-              }
-            }
-
-            if (bestIdx >= 0) {
-              connectedMobiles[bestIdx].token = token;
-              connectedMobiles[bestIdx].lastSeen = millis();
-              sendToPhone("CLAIMED:" + token + "," + String(connectedMobiles[bestIdx].mobileID));
-            } else {
-              // No available slots (or no connected mobiles tracked).
-              sendToPhone("CLAIMED:" + token + ",0");
-            }
-          }
-        }
-      } else if (cmd.startsWith("PLOC:")) {
-        // Phone location relay into the LoRa mesh.
-        // Format: PLOC:<token>,<mobileId>,<lat>,<lng>[,<sats>]
-        String payload = cmd.substring(5);
-        payload.trim();
-
-        int i1 = payload.indexOf(',');
-        int i2 = i1 >= 0 ? payload.indexOf(',', i1 + 1) : -1;
-        int i3 = i2 >= 0 ? payload.indexOf(',', i2 + 1) : -1;
-        int i4 = i3 >= 0 ? payload.indexOf(',', i3 + 1) : -1;
-
-        if (i1 > 0 && i2 > i1 && i3 > i2) {
-          const String token = payload.substring(0, i1);
-          const uint8_t mobileId = (uint8_t)payload.substring(i1 + 1, i2).toInt();
-          const float lat = payload.substring(i2 + 1, i3).toFloat();
-          const float lng = (i4 >= 0 ? payload.substring(i3 + 1, i4) : payload.substring(i3 + 1)).toFloat();
-          const uint8_t sats = (i4 >= 0 ? (uint8_t)payload.substring(i4 + 1).toInt() : 0);
-
-          if (mobileId >= 1 && mobileId <= MAX_MOBILE_PHONES && !(lat == 0.0 && lng == 0.0)) {
-            // Update local tracking table (best-effort validation using token).
-            for (uint8_t i = 0; i < connectedMobileCount; i++) {
-              if (connectedMobiles[i].mobileID != mobileId) continue;
-              if (connectedMobiles[i].token.length() > 0 && connectedMobiles[i].token != token) {
-                // Token mismatch: ignore (prevents accidental cross-talk between phones)
-                break;
-              }
-
-              if (connectedMobiles[i].token.length() == 0) {
-                connectedMobiles[i].token = token;
-              }
-
-              connectedMobiles[i].latitude = lat;
-              connectedMobiles[i].longitude = lng;
-              connectedMobiles[i].lastSeen = millis();
-              break;
-            }
-
-            // Broadcast this phone's location over LoRa as a heartbeat tagged with mobileID.
-            if (currentLobbyCode > 0) {
-              sendLoRaLocationMessage(MSG_BEAT, mobileId, lat, lng, sats);
-            }
-
-            // Also forward to all connected phones for local visualization.
-            sendToPhone(
-              "MOBILELOC:" + String(DEVICE_ID) + "," + String(mobileId) + "," + String(lat, 6) + "," + String(lng, 6) + ",0,0"
-            );
-          }
-        }
-      }
+      bleCommandQueue.push(cmd);
     }
     newlineIdx = bleRxBuffer.indexOf('\n');
+  }
+
+  while (!bleCommandQueue.empty()) {
+    String nextCmd = bleCommandQueue.front();
+    bleCommandQueue.pop();
+    processBLECommand(nextCmd);
+  }
+}
+
+void processBLECommand(const String& cmd) {
+  if (cmd == "SOS") {
+    logLobbyEvent("SOS command received");
+    triggerSOS();
+  } else if (cmd == "OK") {
+    logLobbyEvent("OK command received");
+    if (receivedSOS || receivedMorse) {
+      receivedSOS = receivedMorse = sosActive = false;
+      digitalWrite(SOS_LED, LOW);
+      digitalWrite(BUZZER, LOW);
+      updateDisplay();
+    } else {
+      triggerOkay();
+    }
+  } else if (cmd == "ON_MY_WAY") {
+    logLobbyEvent("ON_MY_WAY command received");
+    sendLoRaMessage(MSG_ON_MY_WAY, 0);
+    sendToPhone("STATUS:ON_MY_WAY_SENT");
+  } else if (cmd.startsWith("LOBBY:")) {
+    uint32_t nextCode = cmd.substring(6).toInt();
+    String encryptedCode = encryptLobbyCode(nextCode);
+    logLobbyEvent("Encrypted LOBBY code: " + encryptedCode);
+    if (!authenticateLobbyCode(nextCode, encryptedCode)) {
+      logLobbyEvent("Authentication failed for LOBBY code: " + String(nextCode));
+      sendToPhone("ERROR:AUTH_FAILED");
+      return;
+    }
+    setLobbyCode(nextCode, false);
+  } else if (cmd.startsWith("CREATE_LOBBY:")) {
+    uint32_t lobbyCode = cmd.substring(13).toInt();
+    if (lobbyCode < 1000 || lobbyCode > 9999) {
+      logLobbyEvent("Invalid lobby code for creation: " + String(lobbyCode));
+      sendToPhone("ERROR:INVALID_LOBBY_CODE");
+      return;
+    }
+    String creator = "User"; // Replace "User" with actual creator info if available
+    createLobby(lobbyCode, creator);
+  } else {
+    logLobbyEvent("Unknown command received: " + cmd);
+    sendToPhone("ERROR:UNKNOWN_COMMAND");
   }
 }
 
@@ -945,7 +753,7 @@ void sendStatusUpdate() {
 
   packet += String(gps.satellites.value()) + "," +
             String(lastRssi) + "," +
-            String(connectedDevices);
+            String(connectedMobileCount); 
 
   if (lastKnownDistance >= 0)
     packet += "," + String(lastKnownDistance, 1);
@@ -954,7 +762,6 @@ void sendStatusUpdate() {
 
   sendToPhone(packet);
 
-  // Send mobile locations (best-effort). Use MOBILELOC so phones can associate mobiles with a device.
   for (uint8_t i = 0; i < connectedMobileCount; i++) {
     if (connectedMobiles[i].mobileID == 0) continue;
     if (connectedMobiles[i].latitude == 0.0 && connectedMobiles[i].longitude == 0.0) continue;
@@ -988,7 +795,8 @@ void sendLoRaLocationMessage(uint8_t msgType, uint8_t mobileID, float lat, float
   msg.latitude   = lat;
   msg.longitude  = lng;
   msg.satellites = satellites;
-  msg.rssi       = 0;  // Set to 0 when sending (will be known by receiver)
+  msg.rssi       = 0;  
+  Serial.printf("[LORA] TX Type: %d | ID: %d\n", msgType, mobileID);
   LoRa.beginPacket();
   LoRa.write((uint8_t*)&msg, sizeof(msg));
   LoRa.endPacket();
@@ -1001,7 +809,7 @@ void sendLoRaTextMessage(uint8_t targetDevice, String message, uint8_t mobileID)
   textMsg.mobileID  = mobileID;
   textMsg.msgType   = MSG_TEXT;
   textMsg.targetID  = targetDevice;
-  textMsg.rssi      = 0;  // Set to 0 when sending
+  textMsg.rssi      = 0; 
   strncpy(textMsg.text, message.c_str(), MAX_TEXT_LEN - 1);
   textMsg.text[MAX_TEXT_LEN - 1] = '\0';
   LoRa.beginPacket();
@@ -1014,7 +822,7 @@ void sendLoRaNickname() {
   LoRaNickMessage nickMsg;
   nickMsg.lobbyCode = currentLobbyCode;
   nickMsg.deviceID  = DEVICE_ID;
-  nickMsg.mobileID  = 0;  // Device sending, not a specific mobile
+  nickMsg.mobileID  = 0; 
   nickMsg.msgType   = MSG_NICK;
   nickMsg.rssi      = 0;
   strncpy(nickMsg.nickname, myNickname.c_str(), MAX_NICK_LEN - 1);
@@ -1029,7 +837,7 @@ void sendLoRaEmergencyContact() {
   LoRaECMessage ecMsg;
   ecMsg.lobbyCode = currentLobbyCode;
   ecMsg.deviceID  = DEVICE_ID;
-  ecMsg.mobileID  = 0;  // Device sending, not a specific mobile
+  ecMsg.mobileID  = 0; 
   ecMsg.msgType   = MSG_EC;
   ecMsg.rssi      = 0;
   strncpy(ecMsg.ecName,  myECName.c_str(),  MAX_EC_NAME  - 1);
@@ -1048,22 +856,19 @@ void receiveLoRaMessage() {
   int packetSize = LoRa.parsePacket();
   if (packetSize == 0) return;
   
-  int currentRssi = LoRa.packetRssi();  // Get RSSI for this packet
+  int currentRssi = LoRa.packetRssi(); 
 
   if (packetSize == sizeof(LoRaMessage)) {
     LoRaMessage msg;
     LoRa.readBytes((uint8_t*)&msg, sizeof(msg));
     if (msg.lobbyCode != currentLobbyCode) return;
-    if (msg.deviceID  == DEVICE_ID)        return;
+    if (msg.deviceID  == DEVICE_ID) return;
 
     remoteDevice = msg.deviceID;
     lastRssi     = currentRssi;
     lastSeenTime = millis();
 
-    // If this message came from a mobile (mobileID 1..4), forward its location to phones.
-    // Do NOT tie remote mobiles to this device's locally-connected phone table.
     if (msg.mobileID > 0 && msg.mobileID <= MAX_MOBILE_PHONES) {
-      // Forward mobile location for rendering as a sub-dot under the remote device.
       sendToPhone(
         "MOBILELOC:" + String(msg.deviceID) + "," + String(msg.mobileID) + "," +
         String(msg.latitude, 6) + "," + String(msg.longitude, 6) + "," +
@@ -1076,7 +881,6 @@ void receiveLoRaMessage() {
       sendToPhone("ALERT:ONLINE," + String(remoteDevice));
     }
 
-    // Run separation checks on device-level packets (mobileID==0) only.
     if (msg.mobileID == 0 &&
         (msg.msgType == MSG_SOS   ||
          msg.msgType == MSG_MORSE ||
@@ -1098,11 +902,8 @@ void receiveLoRaMessage() {
       digitalWrite(GREEN_LED, HIGH); delay(500); digitalWrite(GREEN_LED, LOW);
     } else if (msg.msgType == MSG_ON_MY_WAY) {
       alert += "ON_MY_WAY,";
-      // Receiver is coming to help - keep SOS active but show different indicator
     } else if (msg.msgType == MSG_BEAT) {
       if (msg.mobileID == 0) {
-        // Forward regular device location updates to connected phone(s)
-        // so the app can show live tracking even without SOS.
         String loc = "LOC:";
         loc += String(msg.deviceID) + ",";
         loc += String(msg.latitude, 6) + ",";
@@ -1110,33 +911,26 @@ void receiveLoRaMessage() {
         loc += String(msg.satellites) + ",";
         loc += String(currentRssi);
         sendToPhone(loc);
-        updateDisplay();
-        return;
       }
-
-      // Mobile heartbeat already forwarded above via MOBILELOC.
-      updateDisplay();
-      return;
+      return; // FIX 4: Display updates handled by main loop
     }
 
     alert += String(msg.deviceID) + "," +
              String(msg.latitude,  6) + "," +
              String(msg.longitude, 6);
     sendToPhone(alert);
-    updateDisplay();
 
   } else if (packetSize == sizeof(LoRaTextMessage)) {
     LoRaTextMessage txtMsg;
     LoRa.readBytes((uint8_t*)&txtMsg, sizeof(txtMsg));
-    if (txtMsg.lobbyCode != currentLobbyCode)                  return;
+    if (txtMsg.lobbyCode != currentLobbyCode) return;
     if (txtMsg.targetID  != DEVICE_ID && txtMsg.targetID != 0) return;
-    if (txtMsg.deviceID  == DEVICE_ID)                         return;
+    if (txtMsg.deviceID  == DEVICE_ID) return;
 
     lastRssi     = currentRssi;
     lastSeenTime = millis();
     if (isOffline) isOffline = false;
 
-    // Update mobile device info if this message came from a mobile
     if (txtMsg.mobileID > 0 && txtMsg.mobileID <= MAX_MOBILE_PHONES) {
       for (uint8_t i = 0; i < connectedMobileCount; i++) {
         if (connectedMobiles[i].mobileID == txtMsg.mobileID) {
@@ -1150,20 +944,15 @@ void receiveLoRaMessage() {
 
     txtMsg.text[MAX_TEXT_LEN - 1] = '\0';
 
-    // --- Lobby verification handshake ---
-    // Joiner broadcasts: __LOBBY_VERIFY__:<nonce>
-    // Any device in the same lobby responds directly: __LOBBY_ACK__:<nonce>
     String text = String(txtMsg.text);
     if (text.startsWith("__LOBBY_VERIFY__:")) {
       const String nonce = text.substring(String("__LOBBY_VERIFY__:").length());
       if (nonce.length() > 0) {
         sendLoRaTextMessage(txtMsg.deviceID, "__LOBBY_ACK__:" + nonce, 0);
       }
-      // Don't forward verification pings to phones as chat messages.
       return;
     }
 
-    // If we're verifying a lobby via LoRa, capture the ACK and inform the phone.
     if (text.startsWith("__LOBBY_ACK__:")) {
       const String nonce = text.substring(String("__LOBBY_ACK__:").length());
       if (pendingLobbyVerifyNonce.length() > 0 && nonce == pendingLobbyVerifyNonce && pendingLobbyVerifyCode == currentLobbyCode) {
@@ -1171,19 +960,17 @@ void receiveLoRaMessage() {
         pendingLobbyVerifyNonce = "";
         pendingLobbyVerifyCode = 0;
       }
-      // Don't forward ACKs to phones as chat messages.
       return;
     }
 
     sendToPhone("MSG:" + String(txtMsg.deviceID) + ",M" + String(txtMsg.mobileID) + "," + text + ",RSSI:" + String(currentRssi));
     digitalWrite(GREEN_LED, HIGH); delay(200); digitalWrite(GREEN_LED, LOW);
-    updateDisplay();
 
   } else if (packetSize == sizeof(LoRaNickMessage)) {
     LoRaNickMessage nickMsg;
     LoRa.readBytes((uint8_t*)&nickMsg, sizeof(nickMsg));
     if (nickMsg.lobbyCode != currentLobbyCode) return;
-    if (nickMsg.deviceID  == DEVICE_ID)        return;
+    if (nickMsg.deviceID  == DEVICE_ID) return;
 
     lastRssi     = LoRa.packetRssi();
     lastSeenTime = millis();
@@ -1191,13 +978,12 @@ void receiveLoRaMessage() {
 
     nickMsg.nickname[MAX_NICK_LEN - 1] = '\0';
     sendToPhone("NICK:" + String(nickMsg.deviceID) + "," + String(nickMsg.nickname));
-    updateDisplay();
 
   } else if (packetSize == sizeof(LoRaECMessage)) {
     LoRaECMessage ecMsg;
     LoRa.readBytes((uint8_t*)&ecMsg, sizeof(ecMsg));
     if (ecMsg.lobbyCode != currentLobbyCode) return;
-    if (ecMsg.deviceID  == DEVICE_ID)        return;
+    if (ecMsg.deviceID  == DEVICE_ID) return;
 
     lastRssi     = LoRa.packetRssi();
     lastSeenTime = millis();
@@ -1207,7 +993,6 @@ void receiveLoRaMessage() {
     ecMsg.ecPhone[MAX_EC_PHONE - 1] = '\0';
     sendToPhone("EC:" + String(ecMsg.deviceID) + "," +
                 String(ecMsg.ecName) + "," + String(ecMsg.ecPhone));
-    updateDisplay();
   }
 }
 
@@ -1243,8 +1028,8 @@ void updateDisplay() {
   }
 
   display.setCursor(102, 3);
-  if (connectedDevices > 0) {
-    display.print("BL:"); display.print(connectedDevices);
+  if (connectedMobileCount > 0) {
+    display.print("BL:"); display.print(connectedMobileCount);
   } else {
     display.print("PAIR");
   }
@@ -1312,7 +1097,7 @@ void updateDisplay() {
     display.setTextColor(SSD1306_BLACK);
     display.setCursor(4, 53);
     display.print("D"); display.print(separationFromDevice);
-    display.print(" >200m AWAY!");   // <-- fixed from >300m
+    display.print(" >100m AWAY!");   
   } else {
     display.setTextColor(SSD1306_WHITE);
     display.setCursor(0, 53);
@@ -1343,14 +1128,11 @@ void checkMorseInput() {
     preferences.putBool("sos_state",   false);
     sendToPhone("STATUS:SENDING_MORSE_SOS");
     
-    // Broadcast MORSE from ALL connected mobiles
     for (uint8_t i = 0; i < connectedMobileCount; i++) {
       sendLoRaMessage(MSG_MORSE, connectedMobiles[i].mobileID);
     }
-    // Also send from device itself
     sendLoRaMessage(MSG_MORSE, 0);
     
-    // Immediately broadcast EC so receivers know who to contact
     delay(100);
     if (currentLobbyCode > 0) {
       sendLoRaEmergencyContact();
@@ -1375,15 +1157,13 @@ void checkMorseInput() {
     display.display();
 
     sendToPhone("STATUS:MORSE_FAIL");
-    digitalWrite(BUZZER, HIGH); delay(1000); digitalWrite(BUZZER, LOW);
+    // FIX 3: Shortened blocking delay from 1000ms to 200ms
+    digitalWrite(BUZZER, HIGH); delay(200); digitalWrite(BUZZER, LOW);
   }
   morseInput = "";
   updateDisplay();
 }
 
-// ============================================================
-// ALARM BLINK HELPERS
-// ============================================================
 void blinkNormalSOSNonBlocking() {
   unsigned long now = millis();
   if (now - alarmStartTime >= 200) {
@@ -1402,4 +1182,68 @@ void blinkMorseSOSNonBlocking() {
     digitalWrite(SOS_LED, alarmLedState ? HIGH : LOW);
     digitalWrite(BUZZER,  alarmLedState ? HIGH : LOW);
   }
+}
+
+// Add logging for lobby-related events
+void logLobbyEvent(const String& event) {
+  Serial.println("[" + getTimestamp() + "] [LOBBY EVENT]: " + event);
+}
+
+void setLobbyCode(uint32_t lobbyCode, bool isHost) {
+  currentLobbyCode = lobbyCode;
+  lobbyHostActive = isHost;
+  preferences.putUInt("lobby_code", lobbyCode);
+  preferences.putBool("lobby_host", isHost);
+  logLobbyEvent("Lobby code set: " + String(lobbyCode) + ", Host: " + String(isHost));
+  sendToPhone("STATUS:LOBBY_SET," + String(lobbyCode));
+  if (lobbyCode > 0) {
+    delay(200);
+    sendLoRaEmergencyContact();
+    lastECBroadcastTime = millis();
+  }
+}
+
+String getTimestamp() {
+  unsigned long now = millis();
+  unsigned long seconds = (now / 1000) % 60;
+  unsigned long minutes = (now / (1000 * 60)) % 60;
+  unsigned long hours = (now / (1000 * 60 * 60)) % 24;
+  char buffer[9];
+  snprintf(buffer, sizeof(buffer), "%02lu:%02lu:%02lu", hours, minutes, seconds);
+  return String(buffer);
+}
+
+String encryptLobbyCode(uint32_t lobbyCode) {
+  byte plainText[16] = {0};
+  byte cipherText[16] = {0};
+  memcpy(plainText, &lobbyCode, sizeof(lobbyCode));
+  aes.setKey(aesKey, aes.keySize());
+  aes.encryptBlock(cipherText, plainText);
+  String encrypted = "";
+  for (int i = 0; i < 16; i++) {
+    encrypted += String(cipherText[i], HEX);
+  }
+  return encrypted;
+}
+
+bool authenticateLobbyCode(uint32_t receivedCode, const String& encryptedCode) {
+  String encryptedReceived = encryptLobbyCode(receivedCode);
+  return encryptedReceived == encryptedCode;
+}
+
+void createLobby(uint32_t lobbyCode, const String& creator) {
+  if (currentLobbyCode > 0) {
+    String existingCreator = preferences.getString("lobby_creator", "Unknown");
+    logLobbyEvent("Lobby creation rejected. Existing lobby code: " + String(currentLobbyCode) + ", Creator: " + existingCreator);
+    sendToPhone("ERROR:LOBBY_EXISTS," + String(currentLobbyCode) + ", Creator: " + existingCreator);
+    return;
+  }
+
+  currentLobbyCode = lobbyCode;
+  lobbyHostActive = true;
+  preferences.putUInt("lobby_code", lobbyCode);
+  preferences.putBool("lobby_host", true);
+  preferences.putString("lobby_creator", creator);
+  logLobbyEvent("Lobby created with code: " + String(lobbyCode) + ", Creator: " + creator);
+  sendToPhone("STATUS:LOBBY_CREATED," + String(lobbyCode));
 }
