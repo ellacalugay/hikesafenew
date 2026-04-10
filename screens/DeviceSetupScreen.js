@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   StyleSheet,
   ImageBackground,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -23,7 +24,7 @@ import { useTheme } from '../context/ThemeContext';
 import { MainButton } from '../components/shared';
 
 const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
-  const { colors } = useTheme();
+  const { colors, isDarkMode } = useTheme();
   const {
     isEnabled,
     isScanning,
@@ -140,11 +141,41 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
 
       <SafeAreaView style={localStyles.container} edges={['top', 'bottom']}>
         <View style={localStyles.headerArea}>
-          <Text style={[localStyles.brandTitle, { color: colors.primary }]}>HikeSafe</Text>
-          <Text style={[localStyles.connectingLabel, { color: colors.textDark }]}>Long Range Device</Text>
-          <Text style={[localStyles.connectingText, { color: colors.textDark }]}>
-            Connecting{'.'.repeat(Math.max(1, dotCount))}
-          </Text>
+          <View style={localStyles.headerRow}>
+            <View style={localStyles.headerLeft}>
+              <Text style={[localStyles.brandTitle, { color: colors.primary }]}>HikeSafe</Text>
+              <Text style={[localStyles.connectingLabel, { color: colors.textDark }]}>Long Range Device</Text>
+              <View style={localStyles.connectingRow}>
+                <Text
+                  numberOfLines={1}
+                  ellipsizeMode="clip"
+                  style={[localStyles.connectingText, localStyles.connectingWord, { color: colors.textDark }]}
+                >
+                  Connecting
+                </Text>
+                <View style={localStyles.connectingDots}>
+                  <Text style={[localStyles.connectingText, localStyles.connectingDot, { color: colors.textDark, opacity: Math.max(1, dotCount) >= 1 ? 1 : 0 }]}>.</Text>
+                  <Text style={[localStyles.connectingText, localStyles.connectingDot, { color: colors.textDark, opacity: Math.max(1, dotCount) >= 2 ? 1 : 0 }]}>.</Text>
+                  <Text style={[localStyles.connectingText, localStyles.connectingDot, { color: colors.textDark, opacity: Math.max(1, dotCount) >= 3 ? 1 : 0 }]}>.</Text>
+                </View>
+              </View>
+            </View>
+
+            <View
+              style={[
+                localStyles.headerRightArt,
+                {
+                  shadowColor: isDarkMode ? colors.overlay : colors.textDark,
+                },
+              ]}
+            >
+              <Image
+                source={require('../assets/lillyyyyygoooar 2.png')}
+                style={{ width: 150, height: 150 }}
+                resizeMode="contain"
+              />
+            </View>
+          </View>
         </View>
 
         <View style={[localStyles.statusStrip, { borderColor: colors.glassBorder }]}>
@@ -277,6 +308,31 @@ const localStyles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 16,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
+    position: 'relative',
+  },
+  headerLeft: {
+    flex: 1,
+    // Reserve space for the absolutely-positioned right art so text layout stays stable.
+    paddingRight: 148,
+  },
+  headerRightArt: {
+    width: 148,
+    height: 128,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    shadowOffset: { width: 6, height: 10 },
+    shadowOpacity: 0.75,
+    shadowRadius: 3,
+    elevation: 10,
+  },
   brandTitle: {
     fontSize: 44,
     fontWeight: '800',
@@ -288,10 +344,26 @@ const localStyles = StyleSheet.create({
     fontWeight: '600',
   },
   connectingText: {
-    fontSize: 34,
+    fontSize: 30,
     lineHeight: 38,
     fontWeight: '800',
     marginTop: 2,
+  },
+  connectingRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  connectingWord: {
+    flexShrink: 1,
+  },
+  connectingDots: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    flexShrink: 0,
+  },
+  connectingDot: {
+    // Lift dots slightly so they sit "beside" without baseline collisions.
+    transform: [{ translateY: -1 }],
   },
   statusStrip: {
     flexDirection: 'row',
