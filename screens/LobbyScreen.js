@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, Keyboard, Image, ImageBackground, Alert, ActivityIndicator, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 // remember persistence moved to LobbyContext
@@ -41,6 +41,34 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   useEffect(() => {
     validationStateRef.current = validationState;
   }, [validationState]);
+
+  const startLobbyVerification = useCallback((expectedCode) => {
+    if (!pendingJoinRef.current) return;
+    if (!expectedCode) return;
+
+    if (validationTimeoutRef.current) {
+      clearTimeout(validationTimeoutRef.current);
+      validationTimeoutRef.current = null;
+    }
+
+    const nonce = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    pendingJoinRef.current.nonce = nonce;
+    setValidationState('verifying');
+
+    sendCommand && sendCommand(`VERIFY_LOBBY:${expectedCode},${nonce}`);
+
+    validationTimeoutRef.current = setTimeout(() => {
+      if (validationStateRef.current === 'verifying') {
+        setIsSubmitting(false);
+        setValidationState(null);
+        pendingJoinRef.current = null;
+        Alert.alert(
+          'Lobby Not Found',
+          'No devices responded for this lobby code. Make sure the host device is powered on and nearby, then try again.'
+        );
+      }
+    }, 6000);
+  }, [sendCommand]);
   
   const [mode, setMode] = useState('join');
   // remember flag is managed in LobbyContext
@@ -101,36 +129,9 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     const expectedCode = pendingJoinRef.current?.code;
 
     if (confirmedCode && expectedCode && confirmedCode === expectedCode) {
-      if (validationTimeoutRef.current) {
-        clearTimeout(validationTimeoutRef.current);
-        validationTimeoutRef.current = null;
-      }
-
-      // Ask the LoRa device to verify the lobby exists.
-      // Firmware supports:
-      // - local host confirm (multi-phone on one device): STATUS:LOBBY_VERIFIED,...,LOCAL
-      // - LoRa confirm (multi-device lobby): STATUS:LOBBY_VERIFIED,...,LORA
-      const nonce = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-      pendingJoinRef.current.nonce = nonce;
-      setValidationState('verifying');
-
-      // Device will either confirm locally (if hosting) or broadcast LoRa verify and confirm on ACK.
-      sendCommand && sendCommand(`VERIFY_LOBBY:${expectedCode},${nonce}`);
-
-      // If no ACK within 6 seconds, treat as lobby not found.
-      validationTimeoutRef.current = setTimeout(() => {
-        if (validationStateRef.current === 'verifying') {
-          setIsSubmitting(false);
-          setValidationState(null);
-          pendingJoinRef.current = null;
-          Alert.alert(
-            'Lobby Not Found',
-            'No devices responded for this lobby code. Make sure the host device is powered on and nearby, then try again.'
-          );
-        }
-      }, 6000);
+      startLobbyVerification(expectedCode);
     }
-  }, [statusMessage, validationState]);
+  }, [statusMessage, validationState, startLobbyVerification]);
 
   // Monitor for device-side verification success (STATUS:LOBBY_VERIFIED,...)
   useEffect(() => {
@@ -309,6 +310,15 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
         return;
       }
 
+      // Fallback: some firmware builds may not emit STATUS:LOBBY_SET. If we don't get a
+      // confirmation quickly, proceed to VERIFY_LOBBY anyway and rely on the verify ACK.
+      setTimeout(() => {
+        const expected = pendingJoinRef.current?.code;
+        if (validationStateRef.current === 'syncing' && expected && expected === parsedCode) {
+          startLobbyVerification(expected);
+        }
+      }, 1200);
+
       // Wait for device confirmation via STATUS:LOBBY_SET,<code>
       // If no confirmation within 5 seconds, fail.
       if (validationTimeoutRef.current) {
@@ -317,10 +327,11 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
 
       validationTimeoutRef.current = setTimeout(() => {
         if (validationStateRef.current === 'syncing') {
+          // If we somehow didn't transition to verifying, fail here.
           setIsSubmitting(false);
           setValidationState(null);
           pendingJoinRef.current = null;
-          Alert.alert('Error', 'Device did not confirm lobby code. Please try again.');
+          Alert.alert('Error', 'Unable to verify lobby. Please try again.');
         }
       }, 8000);
       
