@@ -119,8 +119,9 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       return;
     }
 
-    // Multi-phone safety: if this phone is already in a lobby, joining a different code
-    // will change the shared LoRa device lobby for everyone using that device.
+    // If this phone is already in a lobby, joining a different code will change the
+    // lobby on the connected LoRa device. Show a confirmation, but always allow
+    // the user to proceed if they choose.
     if (isInLobby && lobbyCode && lobbyCode !== code) {
       Alert.alert(
         'Change Lobby?',
