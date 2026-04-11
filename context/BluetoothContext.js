@@ -2545,6 +2545,76 @@ export const BluetoothProvider = ({ children }) => {
     };
   }, [connectedDevicesCount, isConnected, phoneToken, myMobileId, sendCommand]);
 
+  // Update SOS handling logic to meet the requirements
+  const handleSosTrigger = useCallback(async (deviceId, lat, lng) => {
+    const emergencyKey = `SOS-${deviceId}`;
+    const displayName = getMemberNickname ? getMemberNickname(deviceId) : `Device ${deviceId}`;
+    const emergencyContact = myEmergencyContact ? `${myEmergencyContact.name} (${myEmergencyContact.phone})` : 'No emergency contact set';
+
+    // Sender: Show "I am okay" button only
+    if (deviceId === myDeviceId) {
+      setActiveAlert({
+        type: 'SOS',
+        deviceId,
+        lat,
+        lng,
+        timestamp: Date.now(),
+        buttons: ['I am okay'],
+      });
+    } else {
+      // Receiver: Show "View Location" and "Help on the Way" buttons only
+      setActiveAlert({
+        type: 'SOS',
+        deviceId,
+        lat,
+        lng,
+        timestamp: Date.now(),
+        buttons: ['View Location', 'Help on the Way'],
+      });
+
+      // Include emergency contact in the notification
+      pushEmergencyNotification(
+        'Emergency Alert',
+        `${displayName} triggered SOS. Location: ${lat.toFixed(5)}, ${lng.toFixed(5)}. Emergency Contact: ${emergencyContact}`,
+        emergencyKey
+      );
+    }
+
+    // Start emergency signals
+    startEmergencySignals();
+  }, [getMemberNickname, myDeviceId, myEmergencyContact, pushEmergencyNotification, startEmergencySignals]);
+
+  // Handle "Help on the Way" button click
+  const handleHelpOnTheWay = useCallback((deviceId) => {
+    const displayName = getMemberNickname ? getMemberNickname(deviceId) : `Device ${deviceId}`;
+
+    // Notify the sender
+    pushEmergencyNotification(
+      'Help on the Way',
+      `${displayName} is on the way to help you!`,
+      `help-${deviceId}`
+    );
+
+    // Update activity log
+    addActivity('on_my_way', deviceId, `${displayName} is on the way to help`);
+  }, [getMemberNickname, pushEmergencyNotification, addActivity]);
+
+  // Update alert handling logic
+  useEffect(() => {
+    if (activeAlert?.type === 'SOS' && activeAlert.buttons.includes('Help on the Way')) {
+      // Attach "Help on the Way" button handler
+      Alert.alert(
+        '🚨 EMERGENCY ALERT',
+        `Device ${activeAlert.deviceId} triggered SOS!\n\nLocation: ${activeAlert.lat.toFixed(5)}, ${activeAlert.lng.toFixed(5)}`,
+        [
+          { text: 'View Location', onPress: () => {/* Navigate to location */} },
+          { text: 'Help on the Way', onPress: () => handleHelpOnTheWay(activeAlert.deviceId) },
+        ],
+        { cancelable: true }
+      );
+    }
+  }, [activeAlert, handleHelpOnTheWay]);
+
   // Convenience methods
   const sendSOS = useCallback(() => sendCommand('SOS'), [sendCommand]);
   const sendOK = useCallback(() => sendCommand('OK'), [sendCommand]);

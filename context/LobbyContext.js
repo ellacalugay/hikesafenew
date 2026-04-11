@@ -500,6 +500,29 @@ export const LobbyProvider = ({ children }) => {
     return code;
   }, [myDeviceId, persistHostDeviceId, persistPreferredHostDeviceId]);
 
+  // Create a new lobby without requiring a device connection
+  const createLobbyWithoutDevice = useCallback(async (name, maxMembers = 10) => {
+    try {
+      const code = generateLobbyCode();
+      setLobbyCodeState(code);
+      setLobbyName(name);
+      setMaxMembers(maxMembers);
+      setIsHost(true);
+      setIsInLobby(true);
+
+      await AsyncStorage.multiSet([
+        [LOBBY_CODE_KEY, String(code)],
+        [LOBBY_NAME_KEY, name],
+        [LOBBY_MAX_MEMBERS_KEY, String(maxMembers)],
+        [LOBBY_ROLE_KEY, 'host'],
+      ]);
+
+      console.log(`Lobby created without device: ${name} (Code: ${code})`);
+    } catch (error) {
+      console.error('Failed to create lobby without device:', error);
+    }
+  }, []);
+
   // Join an existing lobby with code
   const joinLobby = useCallback(async (code, userName = 'Member') => {
     const numericCode = typeof code === 'string' ? parseInt(code, 10) : code;
@@ -839,6 +862,26 @@ export const LobbyProvider = ({ children }) => {
     setSendLobbyCommand(() => commandFn);
   }, []);
 
+  const getSenderNickname = useCallback((senderId) => {
+    const nickname = memberNicknames[senderId];
+    return nickname || `Unknown Sender`;
+  }, [memberNicknames]);
+
+  const syncNicknames = useCallback(async () => {
+    try {
+      const storedNicknames = await AsyncStorage.getItem(MEMBER_NICKNAMES_KEY);
+      if (storedNicknames) {
+        setMemberNicknames(JSON.parse(storedNicknames));
+      }
+    } catch (error) {
+      console.error('Failed to sync nicknames:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    syncNicknames();
+  }, [syncNicknames]);
+
   const value = {
     // State
     lobbyCode,
@@ -889,6 +932,7 @@ export const LobbyProvider = ({ children }) => {
     clearRememberData,
     clearAccount,
     generateLobbyCode,
+    createLobbyWithoutDevice,
   };
 
   return (
@@ -899,3 +943,6 @@ export const LobbyProvider = ({ children }) => {
 };
 
 export default LobbyContext;
+
+// Export the function for external use
+export { createLobbyWithoutDevice };
