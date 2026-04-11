@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Alert } from 'react-native';
 
 const LobbyContext = createContext(null);
 
@@ -55,12 +56,20 @@ export const LobbyProvider = ({ children }) => {
   const [preferredHostDeviceId, setPreferredHostDeviceId] = useState(null);
   const [myDeviceId, setMyDeviceIdState] = useState(null);
   const [sendLobbyCommand, setSendLobbyCommand] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [emergencyContacts, setEmergencyContacts] = useState({});
   const [myEmergencyContact, setMyEmergencyContactState] = useState({ name: '', phone: '' });
   const [rememberEnabled, setRememberEnabled] = useState(false);
   const [rememberedUsername, setRememberedUsername] = useState('');
   const [rememberedJoinCode, setRememberedJoinCode] = useState('');
   const [pendingDeviceLobbySyncCode, setPendingDeviceLobbySyncCode] = useState(null);
+
+  // BluetoothContext registers the low-level sender here. Treat sender presence as connection for lobby actions.
+  const isConnected = typeof sendLobbyCommand === 'function';
+  const sendCommand = useCallback(async (command) => {
+    if (!sendLobbyCommand) return false;
+    return sendLobbyCommand(command);
+  }, [sendLobbyCommand]);
 
   // Synchronous reference to lobby members to avoid relying on async state updater ordering.
   const lobbyMembersRef = useRef([]);
@@ -477,36 +486,43 @@ export const LobbyProvider = ({ children }) => {
   }, [isHost, persistPreferredHostDeviceId, recalculateHost]);
 
   // Create a new lobby (user becomes host)
-  const createLobby = useCallback(async (name, maxMemberCount = 10) => {
-    const code = generateLobbyCode();
-    const now = Date.now();
+  const createLobby = useCallback(async (code, userName = 'Member') => {
+    if (!isConnected) {
+      Alert.alert(
+        'Device Required',
+        'You must connect to your HikeSafe device before creating a lobby.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
 
-    // New lobby should start with a clean per-lobby nickname map.
-    setMemberNicknames({});
+    if (isInLobby) {
+      Alert.alert(
+        'Lobby Exists',
+        `You are already in a lobby with code ${lobbyCode}. Please leave the current lobby before creating a new one.`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    setIsSubmitting(true);
     try {
-      await AsyncStorage.removeItem(MEMBER_NICKNAMES_KEY);
-    } catch {
-      // ignore
+      const success = await sendCommand(`CREATE_LOBBY:${code}`);
+      if (success) {
+        setLobbyCodeState(code);
+        setIsHost(true);
+        setIsInLobby(true);
+        setLobbyMembers([{ id: 'self', name: userName, isHost: true, isSelf: true, joinedAt: Date.now(), isOffline: false }]);
+        Alert.alert('Success', `Lobby created with code ${code}`);
+      } else {
+        Alert.alert('Error', 'Failed to create lobby. Please try again.');
+      }
+    } catch (error) {
+      Alert.alert('Error', `Failed to create lobby: ${error.message}`);
+    } finally {
+      setIsSubmitting(false);
     }
-    
-    setLobbyCodeState(code);
-    setLobbyName(name);
-    setMaxMembers(maxMemberCount);
-    setIsHost(true);
-    setIsInLobby(true);
-    setLobbyMembers([{ id: 'self', name: 'You (Host)', isHost: true, isSelf: true, joinedAt: now, isOffline: false, deviceId: myDeviceId }]);
-    
-    await persistLobbyData(code, name, 'host', maxMemberCount);
-    if (myDeviceId !== null) {
-      setHostDeviceId(myDeviceId);
-      await persistHostDeviceId(myDeviceId);
-      setPreferredHostDeviceId(myDeviceId);
-      await persistPreferredHostDeviceId(myDeviceId);
-    }
-    
-    console.log(`Created lobby: ${name} with code ${code}`);
-    return code;
-  }, [myDeviceId, persistHostDeviceId, persistPreferredHostDeviceId]);
+  }, [isConnected, isInLobby, lobbyCode, sendCommand]);
 
   // Join an existing lobby with code
   const joinLobby = useCallback(async (code, userName = 'Member') => {
@@ -854,6 +870,38 @@ export const LobbyProvider = ({ children }) => {
   const registerBleCommandSender = useCallback((commandFn) => {
     setSendLobbyCommand(() => commandFn);
   }, []);
+
+  const checkExistingLobby = useCallback(async () => {
+    if (!isConnected) {
+      Alert.alert(
+        'Device Required',
+        'You must connect to your HikeSafe device to check for existing lobbies.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    try {
+      const response = await sendCommand('QUERY_LOBBY');
+      if (response.startsWith('ERROR:')) {
+        Alert.alert('Error', 'Failed to retrieve lobby information.');
+        return;
+      }
+
+      const [status, code, creator] = response.split(',');
+      if (status === 'LOBBY_EXISTS') {
+        Alert.alert(
+          'Lobby Exists',
+          `A lobby already exists with code ${code}, created by ${creator}. Please leave the current lobby before creating a new one.`,
+          [{ text: 'OK' }]
+        );
+      } else {
+        Alert.alert('No Lobby', 'No existing lobby found.');
+      }
+    } catch (error) {
+      Alert.alert('Error', `Failed to check for existing lobby: ${error.message}`);
+    }
+  }, [isConnected, sendCommand]);
 
   const value = {
     // State

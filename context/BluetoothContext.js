@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import { Alert, Platform, PermissionsAndroid, Vibration } from 'react-native';
+import { Alert, Platform, PermissionsAndroid, Vibration, NativeModules } from 'react-native';
 import { Buffer } from 'buffer';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -34,21 +34,24 @@ const VIBRATION_PATTERNS = {
 let BleManager = null;
 let bleAvailable = false;
 
-// Check if we're running in Expo Go
-const isExpoGo = Constants.appOwnership === 'expo';
+// Do not rely on appOwnership to decide BLE availability.
+// The reliable signal is whether the native module exists in this binary.
+// If NativeModules.BlePlx is missing, importing react-native-ble-plx can crash on some setups.
+const hasBleNativeModule = !!NativeModules?.BlePlx;
 
-if (isExpoGo) {
-  console.log('Running in Expo Go - BLE not available, using mock mode');
+if (!hasBleNativeModule) {
+  const ownership = Constants?.appOwnership;
+  console.log('BLE native module missing (using mock mode). appOwnership=', ownership);
   bleAvailable = false;
 } else {
-  // Only try to load BLE in development builds or standalone apps
   try {
     const blePlx = require('react-native-ble-plx');
     BleManager = blePlx.BleManager;
-    bleAvailable = true;
+    bleAvailable = typeof BleManager === 'function';
     console.log('BLE module loaded successfully');
   } catch (e) {
-    console.log('BLE library load failed:', e.message);
+    const ownership = Constants?.appOwnership;
+    console.log('BLE not available (using mock mode). appOwnership=', ownership, 'error=', e?.message || e);
     bleAvailable = false;
   }
 }
@@ -74,6 +77,25 @@ export const useBluetoothDevice = () => {
 };
 
 export const BluetoothProvider = ({ children }) => {
+    // --- Always sync lobby info on BLE connect ---
+    useEffect(() => {
+      if (!isConnected) return;
+      // Sync lobby code
+      if (lobbyCode) {
+        console.log('[BLE SYNC] Sending lobby code to device:', lobbyCode);
+        sendCommand && sendCommand(`SET_LOBBY_CODE:${lobbyCode}`);
+      }
+      // Sync nickname
+      if (myNickname) {
+        console.log('[BLE SYNC] Sending nickname to device:', myNickname);
+        sendCommand && sendCommand(`NICK:${myNickname}`);
+      }
+      // Sync emergency contact
+      if (myEmergencyContact && myEmergencyContact.name && myEmergencyContact.phone) {
+        console.log('[BLE SYNC] Sending emergency contact to device:', myEmergencyContact);
+        sendCommand && sendCommand(`EC:${myEmergencyContact.name},${myEmergencyContact.phone}`);
+      }
+    }, [isConnected, lobbyCode, myNickname, myEmergencyContact, sendCommand]);
   const {
     isInLobby,
     registerMemberSync,
@@ -894,18 +916,34 @@ export const BluetoothProvider = ({ children }) => {
   const cleanupBleManager = useCallback(() => {
     if (bleStateSubscriptionRef.current) {
       try {
-        bleStateSubscriptionRef.current.remove();
-      } catch {
-        // ignore
-      }
-      bleStateSubscriptionRef.current = null;
-    }
+        bleManagerRef.current = new BleManager();
+        
+        // Listen for BLE state changes
+        const subscription = bleManagerRef.current.onStateChange((state) => {
+          console.log('BLE state changed:', state);
+          if (state === 'PoweredOn') {
+            setIsEnabled(true);
+            return;
+          }
 
-    if (bleManagerRef.current) {
-      try {
-        bleManagerRef.current.destroy();
-      } catch {
-        // ignore
+          // Only show "disabled" when we're sure Bluetooth is off/blocked.
+          // Many Android devices emit transient states (e.g. Resetting/Unknown) during prompts.
+          if (state === 'PoweredOff' || state === 'Unauthorized' || state === 'Unsupported') {
+            setIsEnabled(false);
+          }
+        }, true);
+        
+        return () => {
+          subscription.remove();
+          if (bleManagerRef.current) {
+            bleManagerRef.current.destroy();
+            bleManagerRef.current = null;
+          }
+        };
+      } catch (e) {
+        console.log('BLE Manager initialization failed - running in mock mode:', e.message);
+        // BLE not available (e.g., Expo Go), mock mode will be used
+        setIsEnabled(true); // Pretend BT is on for mock mode
       }
       bleManagerRef.current = null;
     }
@@ -1023,17 +1061,22 @@ export const BluetoothProvider = ({ children }) => {
           const granted = await PermissionsAndroid.requestMultiple([
             PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
             PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+            // Location is not required for BLE scanning on Android 12+, but some OEMs still prompt.
+            // Request it opportunistically, but do not block BLE if the user denies it.
             PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
           ]);
-          
-          return Object.values(granted).every(
-            status => status === PermissionsAndroid.RESULTS.GRANTED
-          );
+
+          const scanGranted = granted?.[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN] === PermissionsAndroid.RESULTS.GRANTED;
+          const connectGranted = granted?.[PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT] === PermissionsAndroid.RESULTS.GRANTED;
+
+          console.log('BLE permission results (API>=31):', granted);
+          return scanGranted && connectGranted;
         } else {
           // Android 11 and below
           const granted = await PermissionsAndroid.request(
             PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
           );
+          console.log('BLE permission result (API<31):', granted);
           return granted === PermissionsAndroid.RESULTS.GRANTED;
         }
       } catch (error) {
@@ -1044,52 +1087,35 @@ export const BluetoothProvider = ({ children }) => {
     return true; // iOS handles permissions automatically
   }, []);
 
-  const syncBluetoothEnabledState = useCallback(async () => {
-    if (!bleAvailable) {
-      setIsEnabled(true);
-      return true;
-    }
-
-    if (!ensureBleManagerReady() || !bleManagerRef.current) {
-      setIsEnabled(false);
-      return false;
-    }
-
+  const getBlePowerStateSafe = useCallback(async () => {
+    if (!bleAvailable || !bleManagerRef.current) return null;
     try {
       const state = await bleManagerRef.current.state();
-      lastBleStateRef.current = state;
-      const poweredOn = state === 'PoweredOn';
-      setIsEnabled(poweredOn);
-      return poweredOn;
-    } catch (error) {
-      const errMsg = String(error?.message || error || '');
-
-      // Recover automatically when native BLE manager is torn down.
-      if (/destroyed/i.test(errMsg)) {
-        cleanupBleManager();
-        if (ensureBleManagerReady() && bleManagerRef.current) {
-          try {
-            const retriedState = await bleManagerRef.current.state();
-            lastBleStateRef.current = retriedState;
-            const retriedPoweredOn = retriedState === 'PoweredOn';
-            setIsEnabled(retriedPoweredOn);
-            return retriedPoweredOn;
-          } catch {
-            // fall through to last known state fallback
-          }
-        }
-      } else {
-        console.error('Failed to read Bluetooth adapter state:', error);
-      }
-
-      const lastKnownPoweredOn = lastBleStateRef.current === 'PoweredOn';
-      if (lastKnownPoweredOn) {
-        setIsEnabled(true);
-        return true;
-      }
-      return false;
+      return state;
+    } catch (e) {
+      // On Android 12+ this can throw if BLUETOOTH_CONNECT isn't granted yet.
+      return 'Unknown';
     }
-  }, [cleanupBleManager, ensureBleManagerReady]);
+  }, []);
+
+  const warnIfLocationServicesOffForBle = useCallback(async () => {
+    if (Platform.OS !== 'android') return;
+    const apiLevel = Platform.Version;
+    // Android 11 and below commonly require Location Services ON for BLE scanning.
+    if (typeof apiLevel === 'number' && apiLevel >= 31) return;
+
+    try {
+      const enabled = await Location.hasServicesEnabledAsync();
+      if (!enabled) {
+        Alert.alert(
+          'Location Services Required',
+          'On some Android devices, BLE scanning won\'t find devices unless Location Services (GPS) is turned on.'
+        );
+      }
+    } catch {
+      // best-effort only
+    }
+  }, []);
 
   // Request to enable Bluetooth
   const requestEnable = useCallback(async () => {
@@ -1108,24 +1134,39 @@ export const BluetoothProvider = ({ children }) => {
     if (!hasPermissions) {
       Alert.alert(
         'Permissions Required',
-        'Bluetooth and nearby-device permissions are required. Please allow them in app settings.'
+        'Bluetooth permissions are required to connect to devices. Please allow Nearby devices/Bluetooth permissions.'
+      );
+      setIsEnabled(false);
+      return false;
+    }
+
+    // On Android, programmatically toggling Bluetooth is unreliable/unsupported on many devices.
+    // Treat this button as a permission + state check.
+    const currentState = await getBlePowerStateSafe();
+    if (currentState === 'PoweredOn') {
+      setIsEnabled(true);
+      return true;
+    }
+
+    if (currentState === 'PoweredOff') {
+      setIsEnabled(false);
+      Alert.alert('Bluetooth Required', 'Please turn on Bluetooth in your device settings.');
+      return false;
+    }
+
+    if (currentState === 'Unauthorized') {
+      setIsEnabled(false);
+      Alert.alert(
+        'Permissions Required',
+        'Bluetooth permission is required. Please allow Nearby devices/Bluetooth permissions in Settings.'
       );
       return false;
     }
 
-    const alreadyEnabled = await syncBluetoothEnabledState();
-    if (alreadyEnabled) {
-      return true;
-    }
-    
-    if (Platform.OS === 'android') {
-      // Android 12+ often rejects programmatic enable() even when BT is already on.
-      // Avoid false-negative popups and ask user to toggle from system settings only when truly off.
-      showTemporaryStatus('Bluetooth is off. Please enable it in device settings.', 4000);
-      return false;
-    }
-    return await syncBluetoothEnabledState();
-  }, [ensureBleManagerReady, requestPermissions, showTemporaryStatus, syncBluetoothEnabledState]);
+    // "Unknown" / transient states: don't claim it's disabled; scanning can still work.
+    setIsEnabled(true);
+    return true;
+  }, [getBlePowerStateSafe, isEnabled, requestPermissions]);
 
   // Scan for BLE devices - NO SYSTEM PAIRING REQUIRED!
   // This is why you can connect directly from the app
@@ -1154,6 +1195,18 @@ export const BluetoothProvider = ({ children }) => {
       Alert.alert('Permissions Required', 'Bluetooth and Location permissions are required to scan for devices.');
       return;
     }
+
+    await warnIfLocationServicesOffForBle();
+
+    const state = await getBlePowerStateSafe();
+    // Only block scanning when we are sure BLE is not powered on.
+    // "Unknown" can happen briefly during permission prompts or OEM quirks.
+    if (state && state !== 'PoweredOn' && state !== 'Unknown') {
+      Alert.alert('Bluetooth Required', 'Please turn on Bluetooth to scan for devices.');
+      return;
+    }
+
+    console.log('Starting BLE scan. state=', state, 'apiLevel=', Platform.Version);
 
     setIsScanning(true);
     setAvailableDevices([]);
@@ -1193,18 +1246,22 @@ export const BluetoothProvider = ({ children }) => {
         { allowDuplicates: false },
         (error, device) => {
           if (error) {
-            console.error('Scan error:', error);
+            const errCode = error?.errorCode ?? error?.code;
+            const errMsg = error?.message || `${error}`;
+            console.error('Scan error:', errCode, errMsg);
+            Alert.alert('Scan Error', `${errMsg}${errCode ? `\n(code: ${errCode})` : ''}`);
             setIsScanning(false);
             return;
           }
 
-          // Filter for HikeSafe devices by advertised name, localName, or NUS service UUID.
-          if (isLikelyHikeSafeDevice(device)) {
+          const deviceName = device?.name || device?.localName;
+          // Filter for HikeSafe devices by name (also accept legacy SOS-Device names)
+          if (device && deviceName && (deviceName.startsWith('HikeSafe-D') || deviceName.startsWith('SOS-Device'))) {
             if (!foundDevices.has(device.id)) {
               const displayName = device.name || device.localName || 'HikeSafe Device';
               foundDevices.set(device.id, {
                 id: device.id,
-                name: displayName,
+                name: deviceName,
                 address: device.id,
                 rssi: device.rssi,
               });
@@ -1226,7 +1283,7 @@ export const BluetoothProvider = ({ children }) => {
       console.error('Scan error:', error);
       setIsScanning(false);
     }
-  }, [ensureBleManagerReady, requestPermissions, showTemporaryStatus]);
+  }, [getBlePowerStateSafe, requestPermissions, warnIfLocationServicesOffForBle]);
 
   // Parse incoming BLE data from device
   const parseBluetoothData = useCallback((data) => {
