@@ -14,6 +14,11 @@
 #include <Crypto.h>
 #include <AES.h>
 
+std::queue<String> bleCommandQueue; // Declare BLE command queue
+
+AES aes; // Declare AES object
+byte aesKey[16] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F}; // Declare AES key
+
 #ifdef ESP32
 #include <esp_gatts_api.h>
 #endif
@@ -91,6 +96,7 @@ struct ConnectedMobile {
   String token;         
   String nickname;
   unsigned long lastSeen;
+  bool isInLobby; // New flag to track lobby participation per phone
   bool isAlert;
   int lastRssi;         
   float latitude;       
@@ -107,6 +113,7 @@ void clearMobileSlot(uint8_t idx) {
   connectedMobiles[idx].token = "";
   connectedMobiles[idx].nickname = "";
   connectedMobiles[idx].lastSeen = 0;
+  connectedMobiles[idx].isInLobby = false; // Reset lobby flag
   connectedMobiles[idx].isAlert = false;
   connectedMobiles[idx].lastRssi = 0;
   connectedMobiles[idx].latitude = 0.0;
@@ -166,7 +173,10 @@ const unsigned long ecBroadcastInterval = 45000;
 
 uint32_t currentLobbyCode = 0;
 bool lobbyHostActive = false;                 
-String pendingLobbyVerifyNonce = "";          
+bool discoveryActive = false;
+unsigned long discoveryStartTime = 0;
+uint32_t pendingLobbyCode = 0;
+String pendingLobbyVerifyNonce = "";                    
 uint32_t pendingLobbyVerifyCode = 0;
 String myNickname = "Hiker";
 String myECName   = "None";
@@ -613,9 +623,16 @@ void loop() {
     lastGPSCheck = millis();
     sendStatusUpdate();
   }
-  if (millis() - lastDisplayUpdate >= 1000) {
+    if (millis() - lastDisplayUpdate >= 1000) {
     lastDisplayUpdate = millis();
     updateDisplay();
+  }
+
+  // Handle lobby discovery timeout
+  if (discoveryActive && (millis() - discoveryStartTime > 5000)) {
+    discoveryActive = false;
+    sendToPhone("ERROR:LOBBY_NOT_FOUND");
+    logLobbyEvent("Discovery timeout for lobby: " + String(pendingLobbyCode));
   }
 }
 
@@ -708,7 +725,7 @@ void processBLECommand(const String& cmd) {
   } else if (cmd == "OK") {
     logLobbyEvent("OK command received");
     if (receivedSOS || receivedMorse) {
-      receivedSOS = receivedMorse = sosActive = false;
+      receivedSOS = receivedMorse = false;
       digitalWrite(SOS_LED, LOW);
       digitalWrite(BUZZER, LOW);
       updateDisplay();
@@ -719,28 +736,121 @@ void processBLECommand(const String& cmd) {
     logLobbyEvent("ON_MY_WAY command received");
     sendLoRaMessage(MSG_ON_MY_WAY, 0);
     sendToPhone("STATUS:ON_MY_WAY_SENT");
-  } else if (cmd.startsWith("LOBBY:")) {
+    } else if (cmd.startsWith("LOBBY:")) {
     uint32_t nextCode = cmd.substring(6).toInt();
-    String encryptedCode = encryptLobbyCode(nextCode);
-    logLobbyEvent("Encrypted LOBBY code: " + encryptedCode);
-    if (!authenticateLobbyCode(nextCode, encryptedCode)) {
-      logLobbyEvent("Authentication failed for LOBBY code: " + String(nextCode));
-      sendToPhone("ERROR:AUTH_FAILED");
+    
+    // Safety: If already in a lobby, prevent accidental overwrite
+    if (currentLobbyCode > 0) {
+      if (currentLobbyCode == nextCode) {
+        // Tag this specific mobile as being in the lobby
+        for (int i = 0; i < connectedMobileCount; i++) {
+          connectedMobiles[i].isInLobby = true;
+        }
+        sendToPhone("STATUS:LOBBY_SET," + String(currentLobbyCode));
+      } else {
+        sendToPhone("ERROR:LOBBY_EXISTS," + String(currentLobbyCode));
+      }
       return;
     }
-    setLobbyCode(nextCode, false);
+    
+    // ... discovery logic ...
   } else if (cmd.startsWith("CREATE_LOBBY:")) {
     uint32_t lobbyCode = cmd.substring(13).toInt();
-    if (lobbyCode < 1000 || lobbyCode > 9999) {
-      logLobbyEvent("Invalid lobby code for creation: " + String(lobbyCode));
-      sendToPhone("ERROR:INVALID_LOBBY_CODE");
+    
+    if (currentLobbyCode > 0) {
+      sendToPhone("ERROR:LOBBY_EXISTS," + String(currentLobbyCode));
       return;
     }
-    String creator = "User"; // Replace "User" with actual creator info if available
-    createLobby(lobbyCode, creator);
-  } else {
-    logLobbyEvent("Unknown command received: " + cmd);
-    sendToPhone("ERROR:UNKNOWN_COMMAND");
+
+    setLobbyCode(lobbyCode, true);
+    // Mark ALL currently connected mobiles as being in the newly created lobby
+    for (int i = 0; i < connectedMobileCount; i++) {
+      connectedMobiles[i].isInLobby = true;
+    }
+    sendToPhone("STATUS:LOBBY_CREATED," + String(lobbyCode));
+  } else if (cmd.startsWith("LEAVE_LOBBY")) {
+    // Determine which phone sent the command via token if provided, 
+    // otherwise we assume the sender wants to be removed.
+    // For now, we'll look for a token or just handle the logic globally but safely.
+    
+    // Safety: Only clear the hardware lobby if NO connected mobiles 
+    // are currently in a lobby session.
+    bool anyoneElseInLobby = false;
+    
+    // If the command was "LEAVE_LOBBY:<token>"
+    if (cmd.indexOf(':') != -1) {
+      String token = cmd.substring(12);
+      for (int i = 0; i < connectedMobileCount; i++) {
+        if (connectedMobiles[i].token == token) {
+          connectedMobiles[i].isInLobby = false;
+          logLobbyEvent("Mobile M" + String(connectedMobiles[i].mobileID) + " left the lobby.");
+        } else if (connectedMobiles[i].isInLobby) {
+          anyoneElseInLobby = true;
+        }
+      }
+    } else {
+      // Legacy/Simple: Clear all (not recommended for multi-phone)
+      for (int i = 0; i < connectedMobileCount; i++) connectedMobiles[i].isInLobby = false;
+    }
+
+    if (!anyoneElseInLobby) {
+      logLobbyEvent("Last member left. Clearing hardware lobby: " + String(currentLobbyCode));
+      setLobbyCode(0, false);
+      sendToPhone("STATUS:LOBBY_CLEARED");
+    } else {
+      sendToPhone("STATUS:MEMBER_LEFT");
+    }
+  } else if (cmd.startsWith("NICK:")) {
+  String nick = cmd.substring(5);
+  if (nick.length() > 0) {
+    myNickname = nick;
+    preferences.putString("nickname", nick);
+    sendLoRaNickname();
+  }
+  } else if (cmd.startsWith("EC:")) {
+  String payload = cmd.substring(3);
+  int comma = payload.indexOf(',');
+  if (comma > 0) {
+    myECName = payload.substring(0, comma);
+    myECPhone = payload.substring(comma + 1);
+    preferences.putString("ec_name", myECName);
+    preferences.putString("ec_phone", myECPhone);
+    sendLoRaEmergencyContact();
+  }
+  } else if (cmd.startsWith("MSG:")) {
+  int comma = cmd.indexOf(',', 4);
+  if (comma > 4) {
+    int target = cmd.substring(4, comma).toInt();
+    String text = cmd.substring(comma + 1);
+    sendLoRaTextMessage(target, text, 0);
+  }
+  } else if (cmd.startsWith("CLAIM:")) {
+  String token = cmd.substring(6);
+  for (int i = 0; i < connectedMobileCount; i++) {
+    if (connectedMobiles[i].token == "" || connectedMobiles[i].token == token) {
+      connectedMobiles[i].token = token;
+      sendToPhone("CLAIMED:" + token + "," + String(connectedMobiles[i].mobileID));
+      break;
+    }
+  }
+  } else if (cmd.startsWith("PLOC:")) {
+  int firstComma = cmd.indexOf(',', 5);
+  int secondComma = cmd.indexOf(',', firstComma + 1);
+  int thirdComma = cmd.indexOf(',', secondComma + 1);
+  if (firstComma > 0 && secondComma > 0 && thirdComma > 0) {
+    String token = cmd.substring(5, firstComma);
+    int mId = cmd.substring(firstComma + 1, secondComma).toInt();
+    float lat = cmd.substring(secondComma + 1, thirdComma).toFloat();
+    float lng = cmd.substring(thirdComma + 1).toFloat();
+    for (int i = 0; i < connectedMobileCount; i++) {
+      if (connectedMobiles[i].mobileID == mId && connectedMobiles[i].token == token) {
+        connectedMobiles[i].latitude = lat;
+        connectedMobiles[i].longitude = lng;
+        connectedMobiles[i].lastSeen = millis();
+        break;
+      }
+    }
+  }
   }
 }
 
@@ -753,7 +863,8 @@ void sendStatusUpdate() {
 
   packet += String(gps.satellites.value()) + "," +
             String(lastRssi) + "," +
-            String(connectedMobileCount); 
+            String(connectedMobileCount) + "," +
+            String(currentLobbyCode); // Added lobby code to heartbeat
 
   if (lastKnownDistance >= 0)
     packet += "," + String(lastKnownDistance, 1);
@@ -858,10 +969,13 @@ void receiveLoRaMessage() {
   
   int currentRssi = LoRa.packetRssi(); 
 
-  if (packetSize == sizeof(LoRaMessage)) {
+    if (packetSize == sizeof(LoRaMessage)) {
     LoRaMessage msg;
     LoRa.readBytes((uint8_t*)&msg, sizeof(msg));
-    if (msg.lobbyCode != currentLobbyCode) return;
+    
+    // Safety: Always process packets from Lobby 0 (Discovery/Broadcast) 
+    // or packets that match our current lobby.
+    if (msg.lobbyCode != 0 && msg.lobbyCode != currentLobbyCode) return;
     if (msg.deviceID  == DEVICE_ID) return;
 
     remoteDevice = msg.deviceID;
@@ -920,10 +1034,13 @@ void receiveLoRaMessage() {
              String(msg.longitude, 6);
     sendToPhone(alert);
 
-  } else if (packetSize == sizeof(LoRaTextMessage)) {
+    } else if (packetSize == sizeof(LoRaTextMessage)) {
     LoRaTextMessage txtMsg;
     LoRa.readBytes((uint8_t*)&txtMsg, sizeof(txtMsg));
-    if (txtMsg.lobbyCode != currentLobbyCode) return;
+    
+    // Safety: Always process packets from Lobby 0 (Discovery/Broadcast) 
+    // or packets that match our current lobby.
+    if (txtMsg.lobbyCode != 0 && txtMsg.lobbyCode != currentLobbyCode) return;
     if (txtMsg.targetID  != DEVICE_ID && txtMsg.targetID != 0) return;
     if (txtMsg.deviceID  == DEVICE_ID) return;
 
@@ -945,6 +1062,31 @@ void receiveLoRaMessage() {
     txtMsg.text[MAX_TEXT_LEN - 1] = '\0';
 
     String text = String(txtMsg.text);
+    
+    // --- LOBBY DISCOVERY HANDLERS ---
+    if (text.startsWith("__LOBBY_QUERY__:")) {
+      uint32_t queriedCode = text.substring(16).toInt();
+      // If we are in the lobby they are looking for, respond with an ACK
+      if (currentLobbyCode > 0 && currentLobbyCode == queriedCode) {
+        sendLoRaTextMessage(txtMsg.deviceID, "__LOBBY_ACK__:" + String(queriedCode), 0);
+      }
+      return;
+    }
+
+        if (text.startsWith("__LOBBY_ACK__:")) {
+      uint32_t ackedCode = text.substring(14).toInt();
+      if (discoveryActive && ackedCode == pendingLobbyCode) {
+        discoveryActive = false;
+        setLobbyCode(ackedCode, false);
+        // Mark the mobiles as part of the joined lobby
+        for (int i = 0; i < connectedMobileCount; i++) {
+          connectedMobiles[i].isInLobby = true;
+        }
+        sendToPhone("STATUS:LOBBY_VERIFIED," + String(ackedCode));
+      }
+      return;
+    }
+
     if (text.startsWith("__LOBBY_VERIFY__:")) {
       const String nonce = text.substring(String("__LOBBY_VERIFY__:").length());
       if (nonce.length() > 0) {
@@ -1217,8 +1359,8 @@ String encryptLobbyCode(uint32_t lobbyCode) {
   byte plainText[16] = {0};
   byte cipherText[16] = {0};
   memcpy(plainText, &lobbyCode, sizeof(lobbyCode));
-  aes.setKey(aesKey, aes.keySize());
-  aes.encryptBlock(cipherText, plainText);
+  aes.set_key(aesKey, sizeof(aesKey)); // Use set_key instead of setKey
+  aes.encrypt(cipherText, plainText); // Use encrypt instead of encryptBlock
   String encrypted = "";
   for (int i = 0; i < 16; i++) {
     encrypted += String(cipherText[i], HEX);

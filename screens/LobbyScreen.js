@@ -10,25 +10,12 @@ import { useBluetoothDevice } from '../context/BluetoothContext';
 
 const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
   const { colors } = useTheme();
+    const [isSubmitting, setIsSubmitting] = useState(false);
   const { createLobby, joinLobby, syncLobbyToDevice, lobbyCode, isInLobby, rememberEnabled, rememberedUsername, rememberedJoinCode, setRememberEnabled, saveRememberData, clearRememberData, myNickname } = useLobby();
   const { sendCommand, isConnected, statusMessage, memberLocations } = useBluetoothDevice();
   
-  // For tracking lobby validation
-  const [validationState, setValidationState] = useState(null); // null, 'syncing', 'verifying', 'confirmed'
-  const pendingJoinRef = useRef(null);
-  const validationTimeoutRef = useRef(null);
-  const validationStateRef = useRef(null); // Ref to track current state for timeout callbacks
-  
-  // Keep ref in sync with state
-  useEffect(() => {
-    validationStateRef.current = validationState;
-  }, [validationState]);
-  
+    // Create mode fields
   const [mode, setMode] = useState('join');
-  // remember flag is managed in LobbyContext
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  
-  // Create mode fields
   const [lobbyName, setLobbyName] = useState('');
   const [maxMember, setMaxMember] = useState('10');
   
@@ -60,97 +47,8 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     };
   }, []);
 
-  const getJoinButtonText = () => {
-    if (!isSubmitting) return 'Enter Lobby';
-    if (validationState === 'syncing') return 'Syncing to device...';
-    if (validationState === 'verifying') return 'Verifying lobby...';
-    if (validationState === 'confirmed') return 'Entering...';
-    return 'Joining...';
-  };
-
-  // Monitor for device confirmation (STATUS:LOBBY_SET)
-  useEffect(() => {
-    if (validationState !== 'syncing') return;
-    if (!statusMessage) return;
-    if (!pendingJoinRef.current) return;
-
-    const match = statusMessage.match(/Lobby\s(\d{4})\ssynced\sto\sdevice/i);
-    const confirmedCode = match ? parseInt(match[1], 10) : null;
-    const expectedCode = pendingJoinRef.current?.code;
-
-    if (confirmedCode && expectedCode && confirmedCode === expectedCode) {
-      if (validationTimeoutRef.current) {
-        clearTimeout(validationTimeoutRef.current);
-        validationTimeoutRef.current = null;
-      }
-
-      // Ask the LoRa device to verify the lobby exists.
-      // Firmware supports:
-      // - local host confirm (multi-phone on one device): STATUS:LOBBY_VERIFIED,...,LOCAL
-      // - LoRa confirm (multi-device lobby): STATUS:LOBBY_VERIFIED,...,LORA
-      const nonce = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-      pendingJoinRef.current.nonce = nonce;
-      setValidationState('verifying');
-
-      // Device will either confirm locally (if hosting) or broadcast LoRa verify and confirm on ACK.
-      sendCommand && sendCommand(`VERIFY_LOBBY:${expectedCode},${nonce}`);
-
-      // If no ACK within 6 seconds, treat as lobby not found.
-      validationTimeoutRef.current = setTimeout(() => {
-        if (validationStateRef.current === 'verifying') {
-          setIsSubmitting(false);
-          setValidationState(null);
-          pendingJoinRef.current = null;
-          Alert.alert(
-            'Lobby Not Found',
-            'No devices responded for this lobby code. Make sure the host device is powered on and nearby, then try again.'
-          );
-        }
-      }, 6000);
-    }
-  }, [statusMessage, validationState]);
-
-  // Monitor for device-side verification success (STATUS:LOBBY_VERIFIED,...)
-  useEffect(() => {
-    if (validationState !== 'verifying') return;
-    if (!statusMessage) return;
-    if (!pendingJoinRef.current?.nonce) return;
-
-    const parts = statusMessage.split(',');
-    if (parts.length < 3) return;
-    if (parts[0] !== 'LOBBY_VERIFIED') return;
-
-    const verifiedCode = parseInt(parts[1], 10);
-    const verifiedNonce = (parts[2] || '').trim();
-    const expectedCode = pendingJoinRef.current?.code;
-
-    if (!Number.isNaN(verifiedCode) && expectedCode && verifiedCode === expectedCode && verifiedNonce === pendingJoinRef.current.nonce) {
-      if (validationTimeoutRef.current) {
-        clearTimeout(validationTimeoutRef.current);
-        validationTimeoutRef.current = null;
-      }
-
-      setValidationState('confirmed');
-      completeJoin(true);
-    }
-  }, [statusMessage, validationState]);
-
-  const completeJoin = async (membersFound) => {
-    if (!pendingJoinRef.current) return;
-    
-    const { code, name } = pendingJoinRef.current;
-    
-    try {
-      const numericCode = typeof code === 'string' ? parseInt(code, 10) : code;
-      await joinLobby(numericCode, name);
-      setValidationState(null);
-      pendingJoinRef.current = null;
-      onLogin();
-    } catch (error) {
-      Alert.alert('Error', 'Failed to join lobby: ' + error.message);
-    } finally {
-      setIsSubmitting(false);
-    }
+    const getJoinButtonText = () => {
+    return isSubmitting ? 'Joining...' : 'Enter Lobby';
   };
 
   const handleCreateLobby = async () => {
@@ -163,7 +61,7 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     if (!isConnected) {
       Alert.alert(
         'Device Required',
-        'You must connect to your HikeSafe device before creating a lobby. The lobby code is synced to your device for LoRa communication.',
+        'You must connect to your HikeSafe device before creating a lobby.',
         [{ text: 'OK' }]
       );
       return;
@@ -173,15 +71,13 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
     try {
       const code = await createLobby(lobbyName.trim(), parseInt(maxMember) || 10);
       
-      // Try syncing lobby code to device, but do not hard-fail lobby creation on temporary BLE drops.
-      if (isConnected) {
-        const success = await syncLobbyToDevice(sendCommand, code, { asHost: true });
-        if (!success) {
-          Alert.alert(
-            'Lobby Created',
-            'Lobby was created, but device sync is pending. Keep Bluetooth connected and it will retry automatically.'
-          );
-        }
+      // Try syncing lobby code to device
+      const success = await syncLobbyToDevice(sendCommand, code, { asHost: true });
+      if (!success) {
+        Alert.alert(
+          'Lobby Created',
+          'Lobby was created locally, but device sync failed. Keep Bluetooth connected and it will retry automatically.'
+        );
       }
       
       onShowCreateSuccess({ 
@@ -213,11 +109,11 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       return;
     }
     
-    // Require device connection to join lobby (device verifies code was set).
+    // Require device connection to join lobby
     if (!isConnected) {
       Alert.alert(
         'Device Required',
-        'Connect to your HikeSafe device before joining. The lobby code must be synced to the device for LoRa communication.',
+        'Connect to your HikeSafe device before joining.',
         [{ text: 'OK' }]
       );
       return;
@@ -237,55 +133,41 @@ const LobbyScreen = ({ onLogin, onShowCreateSuccess }) => {
       return;
     }
     
-    // Start validation process
     performJoinLobby();
   };
   
-  const performJoinLobby = async () => {
+    const performJoinLobby = async () => {
     setIsSubmitting(true);
-    setValidationState('syncing');
-    
-    // Store pending join info
-    pendingJoinRef.current = {
-      code: parseInt(joinCode, 10),
-      name: username.trim() || 'Hiker'
-    };
     
     try {
       const parsedCode = parseInt(joinCode, 10);
-
-      // Send lobby code to device first.
       const success = await syncLobbyToDevice(sendCommand, parsedCode);
-      if (!success) {
-        setIsSubmitting(false);
-        setValidationState(null);
-        pendingJoinRef.current = null;
-        Alert.alert('Error', 'Failed to sync lobby code to device. Please try again.');
-        return;
-      }
-
-      // Wait for device confirmation via STATUS:LOBBY_SET,<code>
-      // If no confirmation within 5 seconds, fail.
-      if (validationTimeoutRef.current) {
-        clearTimeout(validationTimeoutRef.current);
-      }
-
-      validationTimeoutRef.current = setTimeout(() => {
-        if (validationStateRef.current === 'syncing') {
-          setIsSubmitting(false);
-          setValidationState(null);
-          pendingJoinRef.current = null;
-          Alert.alert('Error', 'Device did not confirm lobby code. Please try again.');
-        }
-      }, 5000);
+      
+      // We don't call joinLobby() here yet because the hardware is doing a 5-second discovery search.
+      // If the hardware finds the lobby, it will send STATUS:LOBBY_VERIFIED.
+      // If it doesn't, it sends ERROR:LOBBY_NOT_FOUND which BluetoothContext will show as an Alert.
       
     } catch (error) {
       Alert.alert('Error', 'Failed to join lobby: ' + error.message);
       setIsSubmitting(false);
-      setValidationState(null);
-      pendingJoinRef.current = null;
     }
   };
+
+  // Listen for the verification success to actually transition the UI
+  useEffect(() => {
+    if (!isSubmitting) return;
+    if (!statusMessage) return;
+
+    if (statusMessage.startsWith('LOBBY_VERIFIED,')) {
+      const code = parseInt(statusMessage.split(',')[1], 10);
+      joinLobby(code, username.trim() || 'Hiker').then(() => {
+        setIsSubmitting(false);
+        onLogin();
+      });
+    } else if (statusMessage.includes('ERROR:LOBBY_NOT_FOUND') || statusMessage.includes('LOBBY_EXISTS')) {
+      setIsSubmitting(false);
+    }
+  }, [statusMessage, isSubmitting]);
 
   // (button text function moved above to support verify state)
 

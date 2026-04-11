@@ -477,44 +477,40 @@ export const LobbyProvider = ({ children }) => {
     return true;
   }, [isHost, persistPreferredHostDeviceId, recalculateHost]);
 
-  // Create a new lobby (user becomes host)
-  const createLobby = useCallback(async (code, userName = 'Member') => {
-    if (!isConnected) {
-      Alert.alert(
-        'Device Required',
-        'You must connect to your HikeSafe device before creating a lobby.',
-        [{ text: 'OK' }]
-      );
-      return;
+    // Create a new lobby (user becomes host)
+  const createLobby = useCallback(async (name, max = 10) => {
+    const code = generateLobbyCode();
+    const now = Date.now();
+    
+    setLobbyCodeState(code);
+    setLobbyName(name);
+    setMaxMembers(max);
+    setIsHost(true);
+    setIsInLobby(true);
+    
+    const userName = myNickname || 'Host';
+    setLobbyMembers([{ 
+      id: 'self', 
+      name: userName, 
+      isHost: true, 
+      isSelf: true, 
+      joinedAt: now, 
+      isOffline: false,
+      deviceId: myDeviceId
+    }]);
+    
+    setHostDeviceId(myDeviceId);
+    setPreferredHostDeviceId(myDeviceId);
+    
+    await persistLobbyData(code, name, 'host', max);
+    if (myDeviceId !== null) {
+      await persistHostDeviceId(myDeviceId);
+      await persistPreferredHostDeviceId(myDeviceId);
     }
-
-    if (isInLobby) {
-      Alert.alert(
-        'Lobby Exists',
-        `You are already in a lobby with code ${lobbyCode}. Please leave the current lobby before creating a new one.`,
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      const success = await sendCommand(`CREATE_LOBBY:${code}`);
-      if (success) {
-        setLobbyCodeState(code);
-        setIsHost(true);
-        setIsInLobby(true);
-        setLobbyMembers([{ id: 'self', name: userName, isHost: true, isSelf: true, joinedAt: Date.now(), isOffline: false }]);
-        Alert.alert('Success', `Lobby created with code ${code}`);
-      } else {
-        Alert.alert('Error', 'Failed to create lobby. Please try again.');
-      }
-    } catch (error) {
-      Alert.alert('Error', `Failed to create lobby: ${error.message}`);
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [isConnected, isInLobby, lobbyCode, sendCommand]);
+    
+    console.log(`Created lobby ${name} with code ${code}`);
+    return code;
+  }, [myDeviceId, myNickname, persistHostDeviceId, persistPreferredHostDeviceId]);
 
   // Join an existing lobby with code
   const joinLobby = useCallback(async (code, userName = 'Member') => {
@@ -542,75 +538,68 @@ export const LobbyProvider = ({ children }) => {
     return numericCode;
   }, [myDeviceId, persistHostDeviceId, persistPreferredHostDeviceId]);
 
-  // Send lobby code to ESP32 device via BLE
-  // - `LOBBY:####` sets the device lobby (join)
-  // - `HOSTLOBBY:####` sets the device lobby and marks this device as hosting (create)
+    // Sync lobby code to ESP32 device via BLE
   const syncLobbyToDevice = useCallback(async (bleCommandFn, targetCode = null, options = null) => {
     const codeToSync = targetCode ?? lobbyCode;
     const asHost = !!options?.asHost;
 
     if (!codeToSync) {
-      console.log('No lobby code to sync');
+      // If we are trying to sync but have no code, we should probably be in state 0
       return false;
     }
     
     const commandFn = bleCommandFn || sendLobbyCommand;
-    if (!commandFn) {
-      console.log('No BLE command function available');
-      return false;
-    }
+    if (!commandFn) return false;
     
     try {
-      // Send command to ESP32
-      const cmd = asHost ? `HOSTLOBBY:${codeToSync}` : `LOBBY:${codeToSync}`;
+      const cmd = asHost ? `CREATE_LOBBY:${codeToSync}` : `LOBBY:${codeToSync}`;
       const success = await commandFn(cmd);
+      
       if (success) {
-        console.log(`Synced lobby code ${codeToSync} to device`);
         await clearPendingDeviceLobbySync();
       } else {
+        // If it failed (e.g. device said LOBBY_EXISTS), we need to check if it's the SAME code
+        // and if so, we can consider that a success for the app's state.
         await setPendingDeviceLobbySync(codeToSync);
       }
       return success;
     } catch (error) {
-      console.error('Failed to sync lobby to device:', error);
       await setPendingDeviceLobbySync(codeToSync);
       return false;
     }
   }, [clearPendingDeviceLobbySync, lobbyCode, sendLobbyCommand, setPendingDeviceLobbySync]);
 
-  // Leave current lobby
-  const leaveLobby = useCallback(async () => {
-    // Send code 0 to device to clear lobby filter
-    if (sendLobbyCommand) {
-      try {
-        // IMPORTANT: Do NOT send `LOBBY:0` here.
-        // In multi-phone scenarios, multiple phones can be connected to the same LoRa device.
-        // Clearing the device lobby would kick *all* phones off the lobby.
-        // await sendLobbyCommand('LOBBY:0');
-      } catch (e) {
-        console.log('Could not clear device lobby:', e);
+    // Leave current lobby
+    const leaveLobby = useCallback(async () => {
+      // 1. Tell the physical device to reset this phone's session
+      if (sendLobbyCommand) {
+        try {
+          // Use the token to tell the hardware ONLY this phone is leaving
+          const token = await AsyncStorage.getItem('@hikesafe_phone_token');
+          await sendLobbyCommand(`LEAVE_LOBBY:${token}`);
+        } catch (e) {
+          console.log('Device leave command failed:', e);
+        }
       }
-    }
     
-    setLobbyCodeState(null);
-    setLobbyName('');
-    setMaxMembers(10);
-    setIsHost(false);
-    setIsInLobby(false);
-    setHostDeviceId(null);
-    setPreferredHostDeviceId(null);
-    setMyDeviceIdState(null);
-    setLobbyMembers([]);
-    setMemberNicknames({});
-    setRememberEnabled(false);
-    setRememberedUsername('');
-    setRememberedJoinCode('');
-    await clearRememberStorage();
+      // 2. Clear all local state immediately
+      setLobbyCodeState(null);
+      setLobbyName('');
+      setIsHost(false);
+      setIsInLobby(false);
+      setHostDeviceId(null);
+      setPreferredHostDeviceId(null);
+      setMyDeviceIdState(null);
+      setLobbyMembers([]);
+      setPendingDeviceLobbySyncCode(null);
     
-    await clearPersistedLobby();
-    await AsyncStorage.removeItem(MEMBER_NICKNAMES_KEY);
-    console.log('Left lobby');
-  }, [sendLobbyCommand]);
+      // 3. Wipe all persistence
+      await clearPersistedLobby();
+      await AsyncStorage.removeItem(MEMBER_NICKNAMES_KEY);
+      await AsyncStorage.removeItem(PENDING_DEVICE_LOBBY_SYNC_KEY);
+    
+      console.log('Lobby memory cleared successfully for this member');
+    }, [sendLobbyCommand, clearPersistedLobby]);
 
   const clearAccount = useCallback(async () => {
     // Best-effort: clear lobby filter on device
