@@ -130,21 +130,21 @@ const EditProfileScreen = ({ onBack }) => {
             flexDirection: 'row',
             alignItems: 'center',
             justifyContent: 'center',
-            paddingTop: insets.top + 10,
-            paddingBottom: 15,
-            height: insets.top + 60,
+            paddingTop:  15,
+            paddingBottom: 10,
+            height: 55,
           },
         ]}
       >
-        <TouchableOpacity onPress={onBack} style={{ position: 'absolute', left: 16, bottom: 12, padding: 4 }}>
+        <TouchableOpacity onPress={onBack} style={{ position: 'absolute', left: 16, bottom: 10, padding: 4 }}>
           <ArrowLeft size={24} color={colors.textDark} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 20, bottom: -4 }]}>
+        <Text style={[styles.headerTitle, { color: colors.textDark, fontWeight: '700', fontSize: 20, bottom: 0, lineHeight: 24 }]}>
           EDIT PROFILE
         </Text>
         <Image
           source={require('../../assets/hike_logo.png')}
-          style={{ position: 'absolute', right: 16, bottom: 6, width: 36, height: 36, resizeMode: 'contain' }}
+          style={{ position: 'absolute', right: 16, bottom: 10, width: 34, height: 34, resizeMode: 'contain' }}
         />
       </View>
 
@@ -181,13 +181,14 @@ const EditProfileScreen = ({ onBack }) => {
             paddingBottom: 24,
             borderWidth: 1,
             borderColor: colors.glassBorder,
+            backgroundColor: '#e9edf1',
             overflow: 'hidden',
             position: 'relative',
             marginBottom: 24,
           }}
         >
           <BlurView intensity={colors.glassIntensity} tint={colors.glassTint} style={StyleSheet.absoluteFillObject} />
-          <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+          <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(233, 237, 241, 0.72)' }]} />
 
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 18 }}>
             <User size={18} color={colors.primary} />

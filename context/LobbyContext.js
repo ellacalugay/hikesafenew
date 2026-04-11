@@ -56,12 +56,20 @@ export const LobbyProvider = ({ children }) => {
   const [preferredHostDeviceId, setPreferredHostDeviceId] = useState(null);
   const [myDeviceId, setMyDeviceIdState] = useState(null);
   const [sendLobbyCommand, setSendLobbyCommand] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [emergencyContacts, setEmergencyContacts] = useState({});
   const [myEmergencyContact, setMyEmergencyContactState] = useState({ name: '', phone: '' });
   const [rememberEnabled, setRememberEnabled] = useState(false);
   const [rememberedUsername, setRememberedUsername] = useState('');
   const [rememberedJoinCode, setRememberedJoinCode] = useState('');
   const [pendingDeviceLobbySyncCode, setPendingDeviceLobbySyncCode] = useState(null);
+
+  // BluetoothContext registers the low-level sender here. Treat sender presence as connection for lobby actions.
+  const isConnected = typeof sendLobbyCommand === 'function';
+  const sendCommand = useCallback(async (command) => {
+    if (!sendLobbyCommand) return false;
+    return sendLobbyCommand(command);
+  }, [sendLobbyCommand]);
 
   // Synchronous reference to lobby members to avoid relying on async state updater ordering.
   const lobbyMembersRef = useRef([]);

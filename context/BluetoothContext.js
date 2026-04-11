@@ -1704,6 +1704,9 @@ export const BluetoothProvider = ({ children }) => {
           if (status === 'SENDING_SOS') {
             setIsSosTrailSharingActive(true);
           }
+
+          // Status displayed via setStatusMessage below.
+          return;
         } else if (status === 'SENDING_OK') {
           // Clear active emergency state for this connected device when OK is sent.
           setActiveAlert(prev => {
@@ -1716,10 +1719,15 @@ export const BluetoothProvider = ({ children }) => {
           stopEmergencySignals();
           setStatusMessage('Emergency cleared (OK sent)');
           setIsSosTrailSharingActive(false);
+
+          // Keep the friendly message; don't overwrite with the raw status token.
+          showTemporaryStatus('Emergency cleared (OK sent)', 3000);
+          return;
         } else {
-          setStatusMessage(status);
+          // Default: display raw status string briefly.
+          showTemporaryStatus(status, 3000);
+          return;
         }
-        showTemporaryStatus(status, 3000);
       }
 
       // Nickname sync from device: NICK:[DEVICE_ID],[NICKNAME]
