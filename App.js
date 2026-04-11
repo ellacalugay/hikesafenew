@@ -164,9 +164,8 @@ function AppNavigator() {
     });
   };
 
-  // BYPASS LOBBY: Go straight to Dashboard for testing
-  const handleDeviceSetupComplete = (navigation) => {
-    navigation.navigate('Dashboard');
+    const handleDeviceSetupComplete = (navigation) => {
+    navigation.navigate('OnboardingName');
   };
 
   const handleShowReminder = () => setShowReminder(true);
