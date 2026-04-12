@@ -24,7 +24,6 @@ import Dashboard from './screens/Dashboard';
 
 import ReminderModal from './components/modals/ReminderModal';
 import TermsModal from './components/modals/TermsModal';
-import SuccessModal from './components/modals/SuccessModal';
 
 // Startup loader visibility (helps ensure you can actually see it on fast reloads).
 const MIN_STARTUP_LOADER_MS = 1500;
@@ -117,8 +116,6 @@ function AppNavigator() {
   const [resumeAfterReconnect, setResumeAfterReconnect] = useState(false);
   const [showReminder, setShowReminder] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
-  const [lobbyData, setLobbyData] = useState({ lobbyName: '', groupId: '', maxMember: '' });
 
   // Global safety net: if the LoRa device powers off / goes out of range and the BLE link drops,
   // reset navigation to DeviceSetup from anywhere (Lobby, Dashboard, sub-screens) so the user
@@ -133,7 +130,6 @@ function AppNavigator() {
     try {
       setShowTerms(false);
       setShowReminder(false);
-      setShowSuccess(false);
     } catch {
       // ignore
     }
@@ -152,8 +148,6 @@ function AppNavigator() {
   }, [isConnected, navigationRef]);
 
   const handleEnterDashboard = (navigation) => {
-    setShowSuccess(false);
-
     const nav = navigation || navigationRef;
     if (typeof nav?.isReady === 'function' && !nav.isReady()) return;
     // Clear Lobby/Onboarding from stack so transparent dashboard content
@@ -176,11 +170,6 @@ function AppNavigator() {
     const nav = navigation || navigationRef;
     if (typeof nav?.isReady === 'function' && !nav.isReady()) return;
     nav?.navigate?.('Lobby');
-  };
-
-  const handleCreateLobbySuccess = (data) => {
-    setLobbyData(data);
-    setShowSuccess(true);
   };
 
   const handleLogout = async (navigation) => {
@@ -215,13 +204,12 @@ function AppNavigator() {
     const backAction = () => {
       if (showTerms) { setShowTerms(false); return true; }
       if (showReminder) { setShowReminder(false); return true; }
-      if (showSuccess) { setShowSuccess(false); return true; }
       return false;
     };
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => backHandler.remove();
-  }, [showTerms, showReminder, showSuccess]);
+  }, [showTerms, showReminder]);
 
   const navTheme = {
     ...DefaultTheme,
@@ -309,7 +297,6 @@ function AppNavigator() {
             {({ navigation }) => (
               <LobbyScreen
                 onLogin={() => handleEnterDashboard(navigation)}
-                onShowCreateSuccess={handleCreateLobbySuccess}
               />
             )}
           </Stack.Screen>
@@ -338,11 +325,6 @@ function AppNavigator() {
         onShowTerms={() => setShowTerms(true)}
       />
       <TermsModal visible={showTerms} onClose={() => setShowTerms(false)} />
-      <SuccessModal
-        visible={showSuccess}
-        lobbyData={lobbyData}
-        onContinue={() => handleEnterDashboard()}
-      />
     </>
   );
 }

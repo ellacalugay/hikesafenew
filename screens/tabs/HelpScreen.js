@@ -67,7 +67,7 @@ const HelpScreen = ({ onBack }) => {
   const faqs = [
     {
       question: "How do I join a hiking lobby?",
-      answer: "Enter your username and the Group ID provided by your hiking group leader. Then tap 'Enter Lobby' to join."
+      answer: "Enter your name and any 4-digit Group Code. Anyone using the same code will be in your group. Then tap 'Enter Lobby' to join."
     },
     {
       question: "How does the compass work?",
