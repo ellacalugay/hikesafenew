@@ -233,7 +233,7 @@ const MembersTab = ({ onNavigateToLocation }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { myLocation, memberLocations, isConnected, removeMemberLocation } = useBluetoothDevice();
-  const { lobbyCode, lobbyName, getMemberNickname, setMemberNickname, myNickname } = useLobby();
+  const { lobbyCode, lobbyName, getMemberNickname, setMemberNickname, myNickname, lobbyMembers } = useLobby();
   
   // Nickname editing state
   const [showNicknameModal, setShowNicknameModal] = useState(false);
@@ -270,9 +270,40 @@ const MembersTab = ({ onNavigateToLocation }) => {
     );
   };
 
+  // Prefer LobbyContext member list (does not require GPS). Merge in location/alert/offline info from BluetoothContext.
+  const mergedMembers = useMemo(() => {
+    const byId = new Map();
+    (memberLocations || []).forEach(m => {
+      if (m && typeof m.deviceId === 'number') byId.set(m.deviceId, m);
+    });
+
+    const ids = (lobbyMembers || [])
+      .filter(m => m && !m.isSelf && typeof m.deviceId === 'number' && !Number.isNaN(m.deviceId))
+      .map(m => m.deviceId);
+
+    // Fallback: if lobbyMembers isn't populated yet, show whatever we have from memberLocations.
+    const sourceIds = ids.length > 0 ? ids : Array.from(byId.keys());
+
+    return sourceIds
+      .map(deviceId => {
+        const loc = byId.get(deviceId);
+        if (loc) return loc;
+        return {
+          deviceId,
+          lat: null,
+          lng: null,
+          satellites: 0,
+          lastUpdate: null,
+          alertType: null,
+          isOffline: false,
+          mobiles: [],
+        };
+      });
+  }, [lobbyMembers, memberLocations]);
+
   // Sort members: SOS first, then online, then offline
   const sortedMembers = useMemo(() => {
-    return [...memberLocations].sort((a, b) => {
+    return [...mergedMembers].sort((a, b) => {
       // SOS/MORSE alerts first
       const aAlert = a.alertType === 'SOS' || a.alertType === 'MORSE' ? 1 : 0;
       const bAlert = b.alertType === 'SOS' || b.alertType === 'MORSE' ? 1 : 0;
@@ -284,14 +315,14 @@ const MembersTab = ({ onNavigateToLocation }) => {
       // Then by device ID
       return a.deviceId - b.deviceId;
     });
-  }, [memberLocations]);
+  }, [mergedMembers]);
 
   const stats = useMemo(() => ({
-    total: memberLocations.length + 1, // +1 for self
-    online: memberLocations.filter(m => !m.isOffline).length + 1,
-    offline: memberLocations.filter(m => m.isOffline).length,
-    alerts: memberLocations.filter(m => m.alertType === 'SOS' || m.alertType === 'MORSE').length,
-  }), [memberLocations]);
+    total: mergedMembers.length + 1, // +1 for self
+    online: mergedMembers.filter(m => !m.isOffline).length + 1,
+    offline: mergedMembers.filter(m => m.isOffline).length,
+    alerts: mergedMembers.filter(m => m.alertType === 'SOS' || m.alertType === 'MORSE').length,
+  }), [mergedMembers]);
 
   return (
     <View style={[localStyles.container, { backgroundColor: 'transparent' }]}>

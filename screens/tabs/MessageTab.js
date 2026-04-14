@@ -12,18 +12,23 @@ const MessageTab = ({ onOpenChat }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { isConnected, memberLocations, getConversations, unreadCount } = useBluetoothDevice();
-  const { getMemberNickname } = useLobby();
+  const { getMemberNickname, lobbyMembers } = useLobby();
   const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
   const conversations = getConversations();
   
-  // Get known devices from memberLocations that we can message
-  const knownDevices = memberLocations.map(m => ({
-    deviceId: m.deviceId,
-    name: getMemberNickname(m.deviceId),
-    online: Date.now() - m.lastUpdate < 60000, // Online if updated within 1 minute
-  }));
+  // Get known devices from lobbyMembers (does not require GPS). Merge in online/offline from memberLocations when present.
+  const knownDevices = (lobbyMembers || [])
+    .filter(m => m && !m.isSelf && typeof m.deviceId === 'number' && !Number.isNaN(m.deviceId))
+    .map(m => {
+      const loc = (memberLocations || []).find(x => x && x.deviceId === m.deviceId) || null;
+      const name = getMemberNickname(m.deviceId) || `Device ${m.deviceId}`;
+      const online = loc
+        ? (!loc.isOffline && (Date.now() - (loc.lastUpdate || 0) < 60000))
+        : false;
+      return { deviceId: m.deviceId, name, online };
+    });
   
   // Filter conversations and devices based on search query
   const filteredConversations = conversations.filter(conv => 
