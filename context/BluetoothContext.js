@@ -2256,6 +2256,18 @@ export const BluetoothProvider = ({ children }) => {
       return false;
     }
 
+    if (!device || typeof device.id !== 'string' || !device.id.trim()) {
+      Alert.alert('Connection Failed', 'Invalid device selected. Please rescan and try again.');
+      return false;
+    }
+
+    console.log('[BLE] connectToDevice: tapped', {
+      id: device.id,
+      name: device.name,
+      platform: Platform.OS,
+      apiLevel: Platform.OS === 'android' ? Platform.Version : undefined,
+    });
+
     if (!ensureBleManagerReady() || !bleManagerRef.current) {
       Alert.alert('Bluetooth Unavailable', 'Bluetooth service is not ready yet. Please try again.');
       return false;
@@ -2274,22 +2286,31 @@ export const BluetoothProvider = ({ children }) => {
     }
 
     // Stop scanning if still running
-    bleManagerRef.current.stopDeviceScan();
+    try {
+      bleManagerRef.current.stopDeviceScan();
+    } catch {
+      // best-effort
+    }
     setIsConnecting(true);
 
     try {
       // Connect to the BLE device
+      console.log('[BLE] Step: connectToDevice() start', { id: device.id });
       const connectedDev = await bleManagerRef.current.connectToDevice(device.id, {
         timeout: 10000,
       });
+      console.log('[BLE] Step: connectToDevice() ok', { id: device.id });
 
       // MTU negotiation is optional and has caused native instability on some Android devices.
       // Keep default MTU for connection stability.
       
       // Discover services and characteristics
+      console.log('[BLE] Step: discoverAllServicesAndCharacteristics() start', { id: device.id });
       await connectedDev.discoverAllServicesAndCharacteristics();
+      console.log('[BLE] Step: discoverAllServicesAndCharacteristics() ok', { id: device.id });
       
       // Subscribe to TX characteristic for notifications (device → app)
+      console.log('[BLE] Step: monitorCharacteristicForService() start', { id: device.id });
       const subscription = connectedDev.monitorCharacteristicForService(
         NUS_SERVICE_UUID,
         NUS_TX_CHAR_UUID,
@@ -2324,8 +2345,10 @@ export const BluetoothProvider = ({ children }) => {
           }
         }
       );
+      console.log('[BLE] Step: monitorCharacteristicForService() ok', { id: device.id });
       
       // Listen for disconnection events
+      console.log('[BLE] Step: onDisconnected() subscribe', { id: device.id });
       const disconnectSubscription = connectedDev.onDisconnected((error, disconnectedDevice) => {
         console.log('Device disconnected:', error?.message || 'Connection closed');
         disconnectFromDevice(device.id, { skipCancel: true });
