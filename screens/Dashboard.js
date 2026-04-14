@@ -44,7 +44,7 @@ const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
 const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const { colors, isDarkMode } = useTheme();
   const { activeAlert, dismissAlert, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
-  const { lobbyCode, lobbyName, isHost, leaveLobby, isInLobby, hostDeviceId, myDeviceId, getEmergencyContactForDevice, getMemberNickname } = useLobby();
+  const { lobbyCode, lobbyName, leaveLobby, isInLobby, getEmergencyContactForDevice, getMemberNickname } = useLobby();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState('home');
   const [tabHistory, setTabHistory] = useState(['home']);
@@ -162,9 +162,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
     goToLocationTab();
   }, [goToLocationTab, showLocationServicesBlocked]);
 
-  const tabOrder = isHost
-    ? ['home', 'location', 'message', 'members', 'profile']
-    : ['home', 'location', 'message', 'profile'];
+  const tabOrder = ['home', 'location', 'message', 'members', 'profile'];
 
   const subScreens = ['editProfile', 'chat', 'settings', 'help', 'reportProblem'];
 
@@ -348,12 +346,6 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
     setShowLobbyModal(true);
   };
 
-  const adminDisplay = hostDeviceId === null || hostDeviceId === undefined
-    ? 'Electing...'
-    : myDeviceId === hostDeviceId
-      ? `You (${getMemberNickname(hostDeviceId)})`
-      : getMemberNickname(hostDeviceId);
-
   const renderContentForTab = (tabKey) => {
     switch (tabKey) {
       case 'home':
@@ -385,7 +377,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
       case 'settings': return <SettingsScreen onBack={goBackTab} onDeleteAccount={onDeleteAccount} />;
       case 'help': return <HelpScreen onBack={goBackTab} />;
       case 'reportProblem': return <ReportProblemScreen onBack={goBackTab} />;
-      case 'members': return isHost ? <MembersTab /> : <HomeTab onChangeTab={changeTab} onLobbyPress={handleLobbyPress} />;
+      case 'members': return <MembersTab />;
       default: return <HomeTab />;
     }
   };
@@ -505,9 +497,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
           <TabIcon icon={Home} label="Home" active={activeTab === 'home'} onPress={() => changeTab('home')} colors={colors} />
           <TabIcon icon={MapPin} label="Loc" active={activeTab === 'location'} onPress={handleLocationTabPress} colors={colors} />
           <TabIcon icon={MessageCircle} label="Chat" active={activeTab === 'message'} onPress={() => changeTab('message')} colors={colors} />
-          {isHost && (
-            <TabIcon icon={Users} label="Members" active={activeTab === 'members'} onPress={() => changeTab('members')} colors={colors} />
-          )}
+          <TabIcon icon={Users} label="Members" active={activeTab === 'members'} onPress={() => changeTab('members')} colors={colors} />
           <TabIcon icon={User} label="Prof" active={activeTab === 'profile'} onPress={() => changeTab('profile')} colors={colors} />
         </View>
       )}
@@ -683,14 +673,6 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                         <Text style={{ color: colors.gray, fontSize: 12, fontWeight: '600' }}>MEMBERS</Text>
                         <Text style={{ color: colors.textDark, fontWeight: '600' }}>{memberLocations.length + 1}</Text>
                       </View>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                        <Text style={{ color: colors.gray, fontSize: 12, fontWeight: '600' }}>ROLE</Text>
-                        <Text style={{ color: colors.primary, fontWeight: '600' }}>{isHost ? 'Host' : 'Member'}</Text>
-                      </View>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
-                        <Text style={{ color: colors.gray, fontSize: 12, fontWeight: '600' }}>CURRENT ADMIN</Text>
-                        <Text style={{ color: colors.primary, fontWeight: '600' }}>{adminDisplay}</Text>
-                      </View>
                     </View>
 
                     <Text style={{ color: '#000', fontSize: 12, textAlign: 'center', marginBottom: 4, lineHeight: 18 }}>
@@ -703,7 +685,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                         onPress={async () => {
                           await leaveLobby();
                           setShowLobbyModal(false);
-                          Alert.alert('Left Lobby', 'Lobby cleared for this phone. The device lobby was not changed (multi-phone safe).');
+                          Alert.alert('Left Lobby', 'Lobby cleared for this phone.');
                         }}
                       >
                         <Text style={{ color: 'white', fontWeight: '600' }}>Leave</Text>
@@ -725,17 +707,15 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                     </View>
 
                     {/* View Members Button */}
-                    {isHost && (
-                      <TouchableOpacity
-                        style={[styles.modalButton, { backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.primary, marginTop: 10 }]}
-                        onPress={() => {
-                          setShowLobbyModal(false);
-                          changeTab('members');
-                        }}
-                      >
-                        <Text style={{ color: colors.primary, fontWeight: '600' }}>View Members</Text>
-                      </TouchableOpacity>
-                    )}
+                    <TouchableOpacity
+                      style={[styles.modalButton, { backgroundColor: colors.cardBg, borderWidth: 1, borderColor: colors.primary, marginTop: 10 }]}
+                      onPress={() => {
+                        setShowLobbyModal(false);
+                        changeTab('members');
+                      }}
+                    >
+                      <Text style={{ color: colors.primary, fontWeight: '600' }}>View Members</Text>
+                    </TouchableOpacity>
                   </ScrollView>
                 ) : (
                   <>

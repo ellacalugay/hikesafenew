@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Modal, TextInput, Alert, KeyboardAvoidingView, Platform } from 'react-native';
-import { Users, MapPin, Radio, AlertTriangle, CheckCircle, WifiOff, Crown, Navigation, Edit2, X, Trash2, UserMinus } from 'lucide-react-native';
+import { Users, MapPin, Radio, AlertTriangle, CheckCircle, WifiOff, Navigation, Edit2, X, Trash2, UserMinus } from 'lucide-react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { useBluetoothDevice } from '../../context/BluetoothContext';
 import { useLobby } from '../../context/LobbyContext';
@@ -33,7 +33,7 @@ const formatTimeSince = (timestamp) => {
   return `${Math.floor(seconds / 86400)}d ago`;
 };
 
-const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname, myNickname, onRemove, isUserHost }) => {
+const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname, myNickname, onRemove }) => {
   const distance = myLocation.valid && member.lat && member.lng
     ? calculateDistance(myLocation.lat, myLocation.lng, member.lat, member.lng)
     : null;
@@ -60,8 +60,7 @@ const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname
   // Show correct host/member label
   const getDisplayName = () => {
     if (isMe) {
-      const roleSuffix = isUserHost ? 'Host' : 'Member';
-      return myNickname ? `${myNickname} (You - ${roleSuffix})` : `You (${roleSuffix})`;
+      return myNickname ? `${myNickname} (You)` : 'You';
     }
     return nickname;
   };
@@ -80,9 +79,7 @@ const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname
       <View style={localStyles.memberHeader}>
         <View style={localStyles.memberInfo}>
           <View style={[localStyles.avatar, { backgroundColor: getStatusColor() }]}>
-            {isMe && isUserHost ? (
-              <Crown size={20} color="#fff" />
-            ) : isMe ? (
+            {isMe ? (
               <Text style={localStyles.avatarText}>ME</Text>
             ) : (
               <Text style={localStyles.avatarText}>D{member.deviceId}</Text>
@@ -236,15 +233,12 @@ const MembersTab = ({ onNavigateToLocation }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { myLocation, memberLocations, isConnected, removeMemberLocation } = useBluetoothDevice();
-  const { lobbyCode, lobbyName, isHost, lobbyMembers, getMemberNickname, setMemberNickname, myNickname, preferredHostDeviceId, electNewHost } = useLobby();
+  const { lobbyCode, lobbyName, getMemberNickname, setMemberNickname, myNickname } = useLobby();
   
   // Nickname editing state
   const [showNicknameModal, setShowNicknameModal] = useState(false);
   const [editingDeviceId, setEditingDeviceId] = useState(null);
   const [editingNickname, setEditingNickname] = useState('');
-
-  // Admin re-election state (host only)
-  const [showReelectModal, setShowReelectModal] = useState(false);
 
   const handleEditNickname = (deviceId, currentNickname) => {
     setEditingDeviceId(deviceId);
@@ -276,38 +270,6 @@ const MembersTab = ({ onNavigateToLocation }) => {
     );
   };
 
-  const reelectCandidates = useMemo(() => {
-    // Only show online, non-self members as eligible admins
-    return (lobbyMembers || [])
-      .filter(m => m && !m.isSelf)
-      .filter(m => m.deviceId !== null && m.deviceId !== undefined)
-      .filter(m => !m.isOffline)
-      .sort((a, b) => (a.joinedAt || Number.MAX_SAFE_INTEGER) - (b.joinedAt || Number.MAX_SAFE_INTEGER));
-  }, [lobbyMembers]);
-
-  const handleElectNewAdmin = (deviceId) => {
-    const name = getMemberNickname(deviceId);
-    Alert.alert(
-      'Re-elect Admin',
-      `Make ${name} the new admin?\n\nThey will become the preferred admin and will automatically reclaim admin when they reconnect.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm',
-          style: 'default',
-          onPress: async () => {
-            const ok = await electNewHost(deviceId);
-            if (!ok) {
-              Alert.alert('Unable to re-elect', 'Only the current admin can re-elect a new admin.');
-              return;
-            }
-            setShowReelectModal(false);
-          },
-        },
-      ]
-    );
-  };
-
   // Sort members: SOS first, then online, then offline
   const sortedMembers = useMemo(() => {
     return [...memberLocations].sort((a, b) => {
@@ -331,112 +293,6 @@ const MembersTab = ({ onNavigateToLocation }) => {
     alerts: memberLocations.filter(m => m.alertType === 'SOS' || m.alertType === 'MORSE').length,
   }), [memberLocations]);
 
-  if (!isHost) {
-    // Non-hosts can see members but not manage them
-    return (
-      <View style={[localStyles.container, { backgroundColor: 'transparent' }]}>
-        <View style={{ flex: 1, backgroundColor: 'transparent' }}>
-        {/* Header for Members */}
-        <View style={[localStyles.header, { backgroundColor: colors.primary }]}>
-          <View style={localStyles.headerTop}>
-            <View>
-              <Text style={localStyles.headerTitle}>Group Members</Text>
-              <Text style={localStyles.headerSubtitle}>
-                {lobbyName || 'My Lobby'} • Code: {lobbyCode}
-              </Text>
-            </View>
-            <View style={[localStyles.hostBadge, { backgroundColor: 'transparent', borderColor: colors.glassBorder }]}>
-              <BlurView
-                intensity={colors.glassIntensity}
-                tint={colors.glassTint}
-                style={StyleSheet.absoluteFillObject}
-              />
-              <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
-              <Text style={[localStyles.hostBadgeText, { color: colors.gray }]}>MEMBER</Text>
-            </View>
-          </View>
-          
-          {/* Stats Row */}
-          <View style={localStyles.statsRow}>
-            <View style={localStyles.stat}>
-              <Text style={localStyles.statValue}>{stats.total}</Text>
-              <Text style={localStyles.statLabel}>Total</Text>
-            </View>
-            <View style={localStyles.stat}>
-              <Text style={[localStyles.statValue, { color: '#4CAF50' }]}>{stats.online}</Text>
-              <Text style={localStyles.statLabel}>Online</Text>
-            </View>
-            <View style={localStyles.stat}>
-              <Text style={[localStyles.statValue, { color: '#9E9E9E' }]}>{stats.offline}</Text>
-              <Text style={localStyles.statLabel}>Offline</Text>
-            </View>
-            <View style={localStyles.stat}>
-              <Text style={[localStyles.statValue, { color: '#F44336' }]}>{stats.alerts}</Text>
-              <Text style={localStyles.statLabel}>Alerts</Text>
-            </View>
-          </View>
-        </View>
-
-        <ScrollView 
-          contentContainerStyle={[localStyles.scrollContent, { paddingBottom: insets.bottom + 90 }]}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Self Card */}
-          <MemberCard 
-            member={{
-              deviceId: 'You',
-              lat: myLocation.lat,
-              lng: myLocation.lng,
-              isOffline: false,
-              lastUpdate: Date.now(),
-            }}
-            myLocation={myLocation}
-            colors={colors}
-            isMe={true}
-            myNickname={myNickname}
-            isUserHost={false}
-          />
-
-          {/* Other Members (read-only for non-hosts) */}
-          {sortedMembers.length > 0 ? (
-            sortedMembers.map((member) => (
-              <MemberCard 
-                key={member.deviceId}
-                member={member}
-                myLocation={myLocation}
-                colors={colors}
-                isMe={false}
-                nickname={getMemberNickname(member.deviceId)}
-                // No onEditNickname or onRemove for non-hosts
-              />
-            ))
-          ) : (
-            <View style={localStyles.emptyState}>
-              <Radio size={40} color={colors.gray} />
-              <Text style={[localStyles.emptyTitle, { color: colors.textDark }]}>
-                No other members yet
-              </Text>
-              <Text style={[localStyles.emptyText, { color: colors.gray }]}>
-                Waiting for others to join with code: {lobbyCode}
-              </Text>
-            </View>
-          )}
-
-          {/* Connection Warning */}
-          {!isConnected && (
-            <View style={[localStyles.warningBanner, { backgroundColor: '#FFF3E0' }]}>
-              <WifiOff size={18} color="#F57C00" />
-              <Text style={localStyles.warningText}>
-                Device not connected. Connect to your HikeSafe device to see real-time member data.
-              </Text>
-            </View>
-          )}
-        </ScrollView>
-          </View>
-        </View>
-    );
-  }
-
   return (
     <View style={[localStyles.container, { backgroundColor: 'transparent' }]}>
       <View style={{ flex: 1, backgroundColor: 'transparent' }}>
@@ -444,32 +300,10 @@ const MembersTab = ({ onNavigateToLocation }) => {
       <View style={[localStyles.header, { backgroundColor: colors.primary }]}>
         <View style={localStyles.headerTop}>
           <View>
-            <Text style={localStyles.headerTitle}>Manage Members</Text>
+            <Text style={localStyles.headerTitle}>Group Members</Text>
             <Text style={localStyles.headerSubtitle}>
-              {lobbyName || 'Your Lobby'} • Code: {lobbyCode}
+              {lobbyName || 'My Lobby'} • Code: {lobbyCode}
             </Text>
-          </View>
-          <View style={{ alignItems: 'flex-end', gap: 8 }}>
-            <View style={[localStyles.hostBadge, { backgroundColor: 'transparent', borderColor: colors.glassBorder }]}>
-              <BlurView
-                intensity={colors.glassIntensity}
-                tint={colors.glassTint}
-                style={StyleSheet.absoluteFillObject}
-              />
-              <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
-              <Crown size={14} color={colors.primary} />
-              <Text style={[localStyles.hostBadgeText, { color: colors.primary }]}>HOST</Text>
-            </View>
-
-            <TouchableOpacity
-              onPress={() => setShowReelectModal(true)}
-              style={[localStyles.reelectBtn, { borderColor: 'rgba(255,255,255,0.45)' }]}
-              disabled={reelectCandidates.length === 0}
-            >
-              <Text style={[localStyles.reelectText, { color: '#fff', opacity: reelectCandidates.length === 0 ? 0.6 : 1 }]}>
-                RE-ELECT ADMIN
-              </Text>
-            </TouchableOpacity>
           </View>
         </View>
         
@@ -511,7 +345,6 @@ const MembersTab = ({ onNavigateToLocation }) => {
           colors={colors}
           isMe={true}
           myNickname={myNickname}
-          isUserHost={true}
         />
 
         {/* Other Members */}
@@ -606,57 +439,6 @@ const MembersTab = ({ onNavigateToLocation }) => {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Re-elect Admin Modal */}
-      <Modal
-        visible={showReelectModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowReelectModal(false)}
-      >
-        <View style={localStyles.modalOverlay}>
-          <View style={[localStyles.modalContent, { backgroundColor: colors.modalBg }]}>
-            <View style={localStyles.modalHeader}>
-              <Text style={[localStyles.modalTitle, { color: colors.textDark }]}>Re-elect Admin</Text>
-              <TouchableOpacity onPress={() => setShowReelectModal(false)}>
-                <X size={24} color={colors.gray} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={[localStyles.modalLabel, { color: colors.gray }]}>Select a new admin (online members only)</Text>
-
-            <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
-              {reelectCandidates.length === 0 ? (
-                <Text style={{ color: colors.gray, paddingVertical: 10 }}>
-                  No eligible members are online right now.
-                </Text>
-              ) : (
-                reelectCandidates.map((m) => {
-                  const deviceId = m.deviceId;
-                  const name = getMemberNickname(deviceId);
-                  const isPreferred = preferredHostDeviceId === deviceId;
-                  return (
-                    <TouchableOpacity
-                      key={String(deviceId)}
-                      onPress={() => handleElectNewAdmin(deviceId)}
-                      style={[localStyles.candidateRow, { borderColor: colors.borderColor }]}
-                    >
-                      <View style={{ flex: 1 }}>
-                        <Text style={[localStyles.candidateName, { color: colors.textDark }]}>
-                          {name}
-                        </Text>
-                        <Text style={[localStyles.candidateMeta, { color: colors.gray }]}>
-                          Device {deviceId}{isPreferred ? ' • Current preferred admin' : ''}
-                        </Text>
-                      </View>
-                      <Crown size={16} color={colors.primary} />
-                    </TouchableOpacity>
-                  );
-                })
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
       </View>
     </View>
   );

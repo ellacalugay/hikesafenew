@@ -7,13 +7,10 @@ const LobbyContext = createContext(null);
 // Storage keys
 const LOBBY_CODE_KEY = '@hikesafe_lobby_code';
 const LOBBY_NAME_KEY = '@hikesafe_lobby_name';
-const LOBBY_ROLE_KEY = '@hikesafe_lobby_role';
 const LOBBY_MAX_MEMBERS_KEY = '@hikesafe_lobby_max_members';
 const MEMBER_NICKNAMES_KEY = '@hikesafe_member_nicknames';
 const MY_NICKNAME_KEY = '@hikesafe_my_nickname';
 const DEVICE_NICKNAME_KEY = '@hikesafe_device_nickname';
-const HOST_DEVICE_ID_KEY = '@hikesafe_host_device_id';
-const PREFERRED_HOST_DEVICE_ID_KEY = '@hikesafe_preferred_host_device_id';
 const MY_DEVICE_ID_KEY = '@hikesafe_my_device_id';
 const EMERGENCY_CONTACTS_KEY = '@hikesafe_emergency_contacts';
 const MY_EMERGENCY_CONTACT_KEY = '@hikesafe_my_emergency_contact';
@@ -42,18 +39,12 @@ export const LobbyProvider = ({ children }) => {
   const [lobbyCode, setLobbyCodeState] = useState(null);
   const [lobbyName, setLobbyName] = useState('');
   const [maxMembers, setMaxMembers] = useState(10);
-  const [isHost, setIsHost] = useState(false);
   const [isInLobby, setIsInLobby] = useState(false);
   const [lobbyMembers, setLobbyMembers] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [memberNicknames, setMemberNicknames] = useState({}); 
   const [myNickname, setMyNicknameState] = useState('');
   const [deviceNickname, setDeviceNicknameState] = useState(''); 
-  const [hostDeviceId, setHostDeviceId] = useState(null);
-  // The "primary" admin/host we prefer whenever they're online.
-  // Auto-failover will temporarily pick another host, but when preferred rejoins,
-  // they reclaim admin automatically.
-  const [preferredHostDeviceId, setPreferredHostDeviceId] = useState(null);
   const [myDeviceId, setMyDeviceIdState] = useState(null);
   const [sendLobbyCommand, setSendLobbyCommand] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -119,23 +110,19 @@ export const LobbyProvider = ({ children }) => {
   const loadPersistedLobby = async () => {
     try {
       const [
-        savedCode, savedName, savedRole, savedMax, savedNicknames,
-        savedMyNickname, savedDeviceNick, savedHostDeviceId, savedMyDeviceId,
-        savedPreferredHostDeviceId,
+        savedCode, savedName, savedMax, savedNicknames,
+        savedMyNickname, savedDeviceNick, savedMyDeviceId,
         savedEmergencyContacts, savedMyEmergencyContact,
         savedRemember, savedRememberName, savedRememberCode, savedRememberExpiry,
         savedPendingDeviceLobbySync,
       ] = await Promise.all([
         AsyncStorage.getItem(LOBBY_CODE_KEY),
         AsyncStorage.getItem(LOBBY_NAME_KEY),
-        AsyncStorage.getItem(LOBBY_ROLE_KEY),
         AsyncStorage.getItem(LOBBY_MAX_MEMBERS_KEY),
         AsyncStorage.getItem(MEMBER_NICKNAMES_KEY),
         AsyncStorage.getItem(MY_NICKNAME_KEY),
         AsyncStorage.getItem(DEVICE_NICKNAME_KEY),
-        AsyncStorage.getItem(HOST_DEVICE_ID_KEY),
         AsyncStorage.getItem(MY_DEVICE_ID_KEY),
-        AsyncStorage.getItem(PREFERRED_HOST_DEVICE_ID_KEY),
         AsyncStorage.getItem(EMERGENCY_CONTACTS_KEY),
         AsyncStorage.getItem(MY_EMERGENCY_CONTACT_KEY),
         AsyncStorage.getItem(REMEMBER_KEY),
@@ -152,30 +139,10 @@ export const LobbyProvider = ({ children }) => {
         setIsInLobby(true);
         console.log('Loaded persisted lobby:', savedCode);
       }
-
-      const parsedHostId = savedHostDeviceId ? parseInt(savedHostDeviceId, 10) : null;
       const parsedMyId = savedMyDeviceId ? parseInt(savedMyDeviceId, 10) : null;
-      const parsedPreferredHostId = savedPreferredHostDeviceId ? parseInt(savedPreferredHostDeviceId, 10) : null;
-
-      if (!isNaN(parsedHostId) && parsedHostId !== null) {
-        setHostDeviceId(parsedHostId);
-      }
-
-      if (!isNaN(parsedPreferredHostId) && parsedPreferredHostId !== null) {
-        setPreferredHostDeviceId(parsedPreferredHostId);
-      } else if (!isNaN(parsedHostId) && parsedHostId !== null) {
-        // Back-compat: if we only had a host stored, treat it as the preferred host.
-        setPreferredHostDeviceId(parsedHostId);
-      }
 
       if (!isNaN(parsedMyId) && parsedMyId !== null) {
         setMyDeviceIdState(parsedMyId);
-      }
-
-      if (parsedHostId !== null && parsedMyId !== null && !isNaN(parsedHostId) && !isNaN(parsedMyId)) {
-        setIsHost(parsedHostId === parsedMyId);
-      } else {
-        setIsHost(savedRole === 'host');
       }
       
       if (savedNicknames) {
@@ -305,7 +272,6 @@ export const LobbyProvider = ({ children }) => {
       await Promise.all([
         AsyncStorage.setItem(LOBBY_CODE_KEY, code.toString()),
         AsyncStorage.setItem(LOBBY_NAME_KEY, name),
-        AsyncStorage.setItem(LOBBY_ROLE_KEY, role),
         AsyncStorage.setItem(LOBBY_MAX_MEMBERS_KEY, max.toString()),
       ]);
     } catch (error) {
@@ -318,10 +284,7 @@ export const LobbyProvider = ({ children }) => {
       await Promise.all([
         AsyncStorage.removeItem(LOBBY_CODE_KEY),
         AsyncStorage.removeItem(LOBBY_NAME_KEY),
-        AsyncStorage.removeItem(LOBBY_ROLE_KEY),
         AsyncStorage.removeItem(LOBBY_MAX_MEMBERS_KEY),
-        AsyncStorage.removeItem(HOST_DEVICE_ID_KEY),
-        AsyncStorage.removeItem(PREFERRED_HOST_DEVICE_ID_KEY),
         AsyncStorage.removeItem(MY_DEVICE_ID_KEY),
         AsyncStorage.removeItem(REMEMBER_KEY),
         AsyncStorage.removeItem(REMEMBER_USERNAME_KEY),
@@ -332,38 +295,6 @@ export const LobbyProvider = ({ children }) => {
       console.error('Failed to clear lobby data:', error);
     }
   };
-
-  const persistRole = useCallback(async (role) => {
-    try {
-      await AsyncStorage.setItem(LOBBY_ROLE_KEY, role);
-    } catch (error) {
-      console.error('Failed to persist role:', error);
-    }
-  }, []);
-
-  const persistHostDeviceId = useCallback(async (deviceId) => {
-    try {
-      if (deviceId === null || deviceId === undefined) {
-        await AsyncStorage.removeItem(HOST_DEVICE_ID_KEY);
-      } else {
-        await AsyncStorage.setItem(HOST_DEVICE_ID_KEY, String(deviceId));
-      }
-    } catch (error) {
-      console.error('Failed to persist host device id:', error);
-    }
-  }, []);
-
-  const persistPreferredHostDeviceId = useCallback(async (deviceId) => {
-    try {
-      if (deviceId === null || deviceId === undefined) {
-        await AsyncStorage.removeItem(PREFERRED_HOST_DEVICE_ID_KEY);
-      } else {
-        await AsyncStorage.setItem(PREFERRED_HOST_DEVICE_ID_KEY, String(deviceId));
-      }
-    } catch (error) {
-      console.error('Failed to persist preferred host device id:', error);
-    }
-  }, []);
 
   const persistMyDeviceId = useCallback(async (deviceId) => {
     try {
@@ -417,75 +348,7 @@ export const LobbyProvider = ({ children }) => {
     await clearRememberStorage();
   }, []);
 
-  const sortByJoinTime = (a, b) => {
-    const aJoin = a.joinedAt || Number.MAX_SAFE_INTEGER;
-    const bJoin = b.joinedAt || Number.MAX_SAFE_INTEGER;
-    if (aJoin !== bJoin) return aJoin - bJoin;
-    return (a.deviceId || Number.MAX_SAFE_INTEGER) - (b.deviceId || Number.MAX_SAFE_INTEGER);
-  };
-
-  const getNextHostCandidate = (members, excludedDeviceId = null) => {
-    const candidates = members
-      .filter(m => m.deviceId !== null && m.deviceId !== undefined)
-      .filter(m => !m.isOffline)
-      .filter(m => m.deviceId !== excludedDeviceId)
-      .sort(sortByJoinTime);
-    return candidates.length > 0 ? candidates[0].deviceId : null;
-  };
-
-  const recalculateHost = useCallback(async (preferredId = null, excludedDeviceId = null) => {
-    const currentMembers = lobbyMembersRef.current;
-
-    const preferredOnline = preferredId !== null && preferredId !== undefined
-      ? currentMembers.some(m => m && m.deviceId === preferredId && !m.isOffline && m.deviceId !== excludedDeviceId)
-      : false;
-
-    const nextHostId = preferredOnline ? preferredId : getNextHostCandidate(currentMembers, excludedDeviceId);
-    const shouldPersistPreferred = (preferredId === null || preferredId === undefined) && nextHostId !== null;
-
-    setLobbyMembers(prev => prev.map(member => ({
-      ...member,
-      isHost: nextHostId !== null && member.deviceId === nextHostId,
-    })));
-
-    setHostDeviceId(nextHostId);
-
-    if (nextHostId === null || myDeviceId === null) {
-      setIsHost(false);
-      await persistRole('member');
-    } else {
-      const amHost = nextHostId === myDeviceId;
-      setIsHost(amHost);
-      await persistRole(amHost ? 'host' : 'member');
-    }
-
-    await persistHostDeviceId(nextHostId);
-
-    if (shouldPersistPreferred) {
-      setPreferredHostDeviceId(nextHostId);
-      await persistPreferredHostDeviceId(nextHostId);
-    }
-
-    return nextHostId;
-  }, [myDeviceId, persistHostDeviceId, persistPreferredHostDeviceId, persistRole]);
-
-  const transferHostToFirstJoined = useCallback(async (excludedDeviceId = null) => {
-    return recalculateHost(preferredHostDeviceId, excludedDeviceId);
-  }, [preferredHostDeviceId, recalculateHost]);
-
-  const electNewHost = useCallback(async (deviceId) => {
-    if (!isHost) return false;
-    if (deviceId === null || deviceId === undefined || Number.isNaN(deviceId)) return false;
-
-    setPreferredHostDeviceId(deviceId);
-    await persistPreferredHostDeviceId(deviceId);
-
-    // Recalculate immediately using the new preference so the new admin takes effect.
-    await recalculateHost(deviceId, null);
-    return true;
-  }, [isHost, persistPreferredHostDeviceId, recalculateHost]);
-
-    // Create a new lobby (user becomes host)
+  // Create a new lobby
   const createLobby = useCallback(async (name, max = 10) => {
     const code = generateLobbyCode();
     const now = Date.now();
@@ -493,32 +356,23 @@ export const LobbyProvider = ({ children }) => {
     setLobbyCodeState(code);
     setLobbyName(name);
     setMaxMembers(max);
-    setIsHost(true);
     setIsInLobby(true);
     
     const userName = myNickname || 'Host';
     setLobbyMembers([{ 
       id: 'self', 
       name: userName, 
-      isHost: true, 
       isSelf: true, 
       joinedAt: now, 
       isOffline: false,
       deviceId: myDeviceId
     }]);
-    
-    setHostDeviceId(myDeviceId);
-    setPreferredHostDeviceId(myDeviceId);
-    
-    await persistLobbyData(code, name, 'host', max);
-    if (myDeviceId !== null) {
-      await persistHostDeviceId(myDeviceId);
-      await persistPreferredHostDeviceId(myDeviceId);
-    }
+
+    await persistLobbyData(code, name, 'member', max);
     
     console.log(`Created lobby ${name} with code ${code}`);
     return code;
-  }, [myDeviceId, myNickname, persistHostDeviceId, persistPreferredHostDeviceId]);
+  }, [myDeviceId, myNickname]);
 
   // Create a new lobby without requiring a device connection
   const createLobbyWithoutDevice = useCallback(async (name, maxMembers = 10) => {
@@ -563,82 +417,81 @@ export const LobbyProvider = ({ children }) => {
     setLobbyCodeState(numericCode);
     setLobbyName(''); // Will be synced from host later
     setMaxMembers(10);
-    setIsHost(false);
     setIsInLobby(true);
-    setLobbyMembers([{ id: 'self', name: userName, isHost: false, isSelf: true, joinedAt: now, isOffline: false, deviceId: myDeviceId }]);
-    setHostDeviceId(null);
-    setPreferredHostDeviceId(null);
+    setLobbyMembers([{ id: 'self', name: userName, isSelf: true, joinedAt: now, isOffline: false, deviceId: myDeviceId }]);
     
     await persistLobbyData(numericCode, '', 'member', 10);
-    await persistHostDeviceId(null);
-    await persistPreferredHostDeviceId(null);
     
     console.log(`Joined lobby with code ${numericCode}`);
     return numericCode;
-  }, [myDeviceId, persistHostDeviceId, persistPreferredHostDeviceId]);
+  }, [myDeviceId]);
 
     // Sync lobby code to ESP32 device via BLE
-  const syncLobbyToDevice = useCallback(async (bleCommandFn, targetCode = null, options = null) => {
-    const codeToSync = targetCode ?? lobbyCode;
-    const asHost = !!options?.asHost;
+    // "Lobby" is treated as a simple 4-digit channel selector.
+    // Sync is best-effort: if BLE isn't available yet, we persist a pending sync code and retry on reconnect.
+    const syncLobbyToDevice = useCallback(async (bleCommandFn, targetCode = null) => {
+      const codeToSync = targetCode ?? lobbyCode;
 
-    if (!codeToSync) {
-      // If we are trying to sync but have no code, we should probably be in state 0
-      return false;
-    }
-    
-    const commandFn = bleCommandFn || sendLobbyCommand;
-    if (!commandFn) return false;
-    
-    try {
-      const cmd = asHost ? `CREATE_LOBBY:${codeToSync}` : `LOBBY:${codeToSync}`;
-      const success = await commandFn(cmd);
-      
-      if (success) {
-        await clearPendingDeviceLobbySync();
-      } else {
-        // If it failed (e.g. device said LOBBY_EXISTS), we need to check if it's the SAME code
-        // and if so, we can consider that a success for the app's state.
-        await setPendingDeviceLobbySync(codeToSync);
+      if (codeToSync === null || codeToSync === undefined) {
+        return false;
       }
-      return success;
-    } catch (error) {
-      await setPendingDeviceLobbySync(codeToSync);
-      return false;
-    }
-  }, [clearPendingDeviceLobbySync, lobbyCode, sendLobbyCommand, setPendingDeviceLobbySync]);
 
-    // Leave current lobby
-    const leaveLobby = useCallback(async () => {
-      // 1. Tell the physical device to reset this phone's session
-      if (sendLobbyCommand) {
-        try {
-          // Use the token to tell the hardware ONLY this phone is leaving
-          const token = await AsyncStorage.getItem('@hikesafe_phone_token');
-          await sendLobbyCommand(`LEAVE_LOBBY:${token}`);
-        } catch (e) {
-          console.log('Device leave command failed:', e);
+      const numeric = typeof codeToSync === 'string' ? parseInt(codeToSync, 10) : Number(codeToSync);
+      if (Number.isNaN(numeric)) {
+        return false;
+      }
+
+      const commandFn = bleCommandFn || sendLobbyCommand;
+      if (!commandFn) {
+        // No BLE sender yet (not connected). Remember for later.
+        if (numeric >= 1000 && numeric <= 9999) {
+          await setPendingDeviceLobbySync(numeric);
         }
+        return false;
       }
-    
-      // 2. Clear all local state immediately
-      setLobbyCodeState(null);
-      setLobbyName('');
-      setIsHost(false);
-      setIsInLobby(false);
-      setHostDeviceId(null);
-      setPreferredHostDeviceId(null);
-      setMyDeviceIdState(null);
-      setLobbyMembers([]);
-      setPendingDeviceLobbySyncCode(null);
-    
-      // 3. Wipe all persistence
-      await clearPersistedLobby();
-      await AsyncStorage.removeItem(MEMBER_NICKNAMES_KEY);
-      await AsyncStorage.removeItem(PENDING_DEVICE_LOBBY_SYNC_KEY);
-    
-      console.log('Lobby memory cleared successfully for this member');
-    }, [sendLobbyCommand, clearPersistedLobby]);
+
+      try {
+        // Special case: LOBBY:0 clears the device filter.
+        const cmd = (numeric === 0) ? 'LOBBY:0' : `LOBBY:${numeric}`;
+        const success = await commandFn(cmd);
+
+        if (success) {
+          await clearPendingDeviceLobbySync();
+        } else {
+          if (numeric >= 1000 && numeric <= 9999) {
+            await setPendingDeviceLobbySync(numeric);
+          }
+        }
+
+        return success;
+      } catch (error) {
+        if (numeric >= 1000 && numeric <= 9999) {
+          await setPendingDeviceLobbySync(numeric);
+        }
+        return false;
+      }
+    }, [clearPendingDeviceLobbySync, lobbyCode, sendLobbyCommand, setPendingDeviceLobbySync]);
+
+  // Leave current lobby
+  // Multi-phone safe: clears local state only (does not change the device lobby/channel).
+  const leaveLobby = useCallback(async () => {
+    setLobbyCodeState(null);
+    setLobbyName('');
+    setIsInLobby(false);
+    setMyDeviceIdState(null);
+    setLobbyMembers([]);
+    setMemberNicknames({});
+    setPendingDeviceLobbySyncCode(null);
+    setRememberEnabled(false);
+    setRememberedUsername('');
+    setRememberedJoinCode('');
+
+    await clearPersistedLobby();
+    await AsyncStorage.removeItem(MEMBER_NICKNAMES_KEY);
+    await AsyncStorage.removeItem(PENDING_DEVICE_LOBBY_SYNC_KEY);
+
+    console.log('Left lobby');
+  }, [clearPersistedLobby]);
 
   const clearAccount = useCallback(async () => {
     // Best-effort: clear lobby filter on device
@@ -655,10 +508,7 @@ export const LobbyProvider = ({ children }) => {
     setLobbyCodeState(null);
     setLobbyName('');
     setMaxMembers(10);
-    setIsHost(false);
     setIsInLobby(false);
-    setHostDeviceId(null);
-    setPreferredHostDeviceId(null);
     setMyDeviceIdState(null);
     setLobbyMembers([]);
     setMemberNicknames({});
@@ -674,13 +524,10 @@ export const LobbyProvider = ({ children }) => {
       await Promise.all([
         AsyncStorage.removeItem(LOBBY_CODE_KEY),
         AsyncStorage.removeItem(LOBBY_NAME_KEY),
-        AsyncStorage.removeItem(LOBBY_ROLE_KEY),
         AsyncStorage.removeItem(LOBBY_MAX_MEMBERS_KEY),
         AsyncStorage.removeItem(MEMBER_NICKNAMES_KEY),
         AsyncStorage.removeItem(MY_NICKNAME_KEY),
         AsyncStorage.removeItem(DEVICE_NICKNAME_KEY),
-        AsyncStorage.removeItem(HOST_DEVICE_ID_KEY),
-        AsyncStorage.removeItem(PREFERRED_HOST_DEVICE_ID_KEY),
         AsyncStorage.removeItem(MY_DEVICE_ID_KEY),
         AsyncStorage.removeItem(EMERGENCY_CONTACTS_KEY),
         AsyncStorage.removeItem(MY_EMERGENCY_CONTACT_KEY),
@@ -706,17 +553,7 @@ export const LobbyProvider = ({ children }) => {
       if (!prev || prev.length === 0) return prev;
       return prev.map(member => member.id === 'self' ? { ...member, deviceId } : member);
     });
-
-    if (isHost && (hostDeviceId === null || hostDeviceId === undefined)) {
-      setHostDeviceId(deviceId);
-      await persistHostDeviceId(deviceId);
-      await persistRole('host');
-    } else if (hostDeviceId !== null && hostDeviceId !== undefined) {
-      const amHost = hostDeviceId === deviceId;
-      setIsHost(amHost);
-      await persistRole(amHost ? 'host' : 'member');
-    }
-  }, [hostDeviceId, isHost, persistHostDeviceId, persistMyDeviceId, persistRole]);
+  }, [persistMyDeviceId]);
 
   const registerMemberSync = useCallback(async (deviceId, joinedAt = Date.now(), options = {}) => {
     if (deviceId === null || deviceId === undefined || Number.isNaN(deviceId)) {
@@ -745,7 +582,6 @@ export const LobbyProvider = ({ children }) => {
           id: `device-${deviceId}`,
           deviceId,
           name: `Device ${deviceId}`,
-          isHost: false,
           isOffline: false,
           joinedAt: safeJoinTime,
           isSelf,
@@ -756,14 +592,7 @@ export const LobbyProvider = ({ children }) => {
     if (isSelf) {
       await setMyDeviceId(deviceId);
     }
-
-    if (hostDeviceId === null || hostDeviceId === undefined) {
-      await transferHostToFirstJoined();
-    } else if (preferredHostDeviceId !== null && preferredHostDeviceId !== undefined && deviceId === preferredHostDeviceId) {
-      // Preferred admin rejoined: reclaim admin.
-      await recalculateHost(preferredHostDeviceId, null);
-    }
-  }, [hostDeviceId, preferredHostDeviceId, recalculateHost, setMyDeviceId, transferHostToFirstJoined]);
+  }, [setMyDeviceId]);
 
   const setMemberOffline = useCallback(async (deviceId, isOffline = true) => {
     if (deviceId === null || deviceId === undefined || Number.isNaN(deviceId)) {
@@ -775,14 +604,7 @@ export const LobbyProvider = ({ children }) => {
         ? { ...member, isOffline }
         : member
     ));
-
-    if (isOffline && hostDeviceId === deviceId) {
-      await transferHostToFirstJoined(deviceId);
-    } else if (!isOffline && preferredHostDeviceId !== null && preferredHostDeviceId !== undefined && deviceId === preferredHostDeviceId) {
-      // Preferred admin came back online: reclaim admin.
-      await recalculateHost(preferredHostDeviceId, null);
-    }
-  }, [hostDeviceId, preferredHostDeviceId, recalculateHost, transferHostToFirstJoined]);
+  }, []);
 
   // Add a member to the lobby (called when receiving device data)
   const addMember = useCallback((member) => {
@@ -797,22 +619,8 @@ export const LobbyProvider = ({ children }) => {
 
   // Remove a member from the lobby
   const removeMember = useCallback((memberId) => {
-    const found = lobbyMembersRef.current.find(m => m && m.id === memberId);
-    const removedDeviceId = found?.deviceId ?? null;
-
     setLobbyMembers(prev => prev.filter(m => m.id !== memberId));
-
-    if (removedDeviceId !== null && removedDeviceId === hostDeviceId) {
-      transferHostToFirstJoined(removedDeviceId);
-    }
-  }, [hostDeviceId, transferHostToFirstJoined]);
-
-  useEffect(() => {
-    if (!isInLobby || myDeviceId === null || hostDeviceId === null) return;
-    const amHost = myDeviceId === hostDeviceId;
-    setIsHost(amHost);
-    persistRole(amHost ? 'host' : 'member');
-  }, [hostDeviceId, isInLobby, myDeviceId, persistRole]);
+  }, []);
 
   // Set nickname for a device (host only)
   const setMemberNickname = useCallback(async (deviceId, nickname) => {
@@ -883,44 +691,11 @@ export const LobbyProvider = ({ children }) => {
     setSendLobbyCommand(() => commandFn);
   }, []);
 
-  const checkExistingLobby = useCallback(async () => {
-    if (!isConnected) {
-      Alert.alert(
-        'Device Required',
-        'You must connect to your HikeSafe device to check for existing lobbies.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-
-    try {
-      const response = await sendCommand('QUERY_LOBBY');
-      if (response.startsWith('ERROR:')) {
-        Alert.alert('Error', 'Failed to retrieve lobby information.');
-        return;
-      }
-
-      const [status, code, creator] = response.split(',');
-      if (status === 'LOBBY_EXISTS') {
-        Alert.alert(
-          'Lobby Exists',
-          `A lobby already exists with code ${code}, created by ${creator}. Please leave the current lobby before creating a new one.`,
-          [{ text: 'OK' }]
-        );
-      } else {
-        Alert.alert('No Lobby', 'No existing lobby found.');
-      }
-    } catch (error) {
-      Alert.alert('Error', `Failed to check for existing lobby: ${error.message}`);
-    }
-  }, [isConnected, sendCommand]);
-
   const value = {
     // State
     lobbyCode,
     lobbyName,
     maxMembers,
-    isHost,
     isInLobby,
     lobbyMembers,
     isLoading,
@@ -929,8 +704,6 @@ export const LobbyProvider = ({ children }) => {
     deviceNickname,
     emergencyContacts,
     myEmergencyContact,
-    hostDeviceId,
-    preferredHostDeviceId,
     myDeviceId,
     rememberEnabled,
     rememberedUsername,
@@ -948,8 +721,6 @@ export const LobbyProvider = ({ children }) => {
     setMyDeviceId,
     registerMemberSync,
     setMemberOffline,
-    transferHostToFirstJoined,
-    electNewHost,
     registerBleCommandSender,
     
     setMemberNickname,
