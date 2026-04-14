@@ -173,11 +173,6 @@ const unsigned long ecBroadcastInterval = 45000;
 
 uint32_t currentLobbyCode = 0;
 bool lobbyHostActive = false;                 
-bool discoveryActive = false;
-unsigned long discoveryStartTime = 0;
-uint32_t pendingLobbyCode = 0;
-String pendingLobbyVerifyNonce = "";                    
-uint32_t pendingLobbyVerifyCode = 0;
 String myNickname = "Hiker";
 String myECName   = "None";
 String myECPhone  = "0000000000";
@@ -608,15 +603,19 @@ void loop() {
   } else if (receivedMorse) {
     digitalWrite(GREEN_LED, LOW);
     blinkMorseSOSNonBlocking();
+  } else if (sosActive) {
+    digitalWrite(GREEN_LED, LOW);
+    blinkNormalSOSNonBlocking();
+  } else if (morseActive) {
+    digitalWrite(GREEN_LED, LOW);
+    blinkMorseSOSNonBlocking();
   } else if (separationAlert) {
     handleSeparationAlarmNonBlocking();
   } else {
-    if (!sosActive && !morseActive) {
-      digitalWrite(SOS_LED,   LOW);
-      digitalWrite(BUZZER,    LOW);
-      digitalWrite(GREEN_LED, LOW);
-      alarmStep = 0;
-    }
+    digitalWrite(SOS_LED,   LOW);
+    digitalWrite(BUZZER,    LOW);
+    digitalWrite(GREEN_LED, LOW);
+    alarmStep = 0;
   }
 
   if (millis() - lastGPSCheck >= 2000) {
@@ -628,12 +627,6 @@ void loop() {
     updateDisplay();
   }
 
-  // Handle lobby discovery timeout
-  if (discoveryActive && (millis() - discoveryStartTime > 5000)) {
-    discoveryActive = false;
-    sendToPhone("ERROR:LOBBY_NOT_FOUND");
-    logLobbyEvent("Discovery timeout for lobby: " + String(pendingLobbyCode));
-  }
 }
 
 // ============================================================
@@ -736,32 +729,26 @@ void processBLECommand(const String& cmd) {
     logLobbyEvent("ON_MY_WAY command received");
     sendLoRaMessage(MSG_ON_MY_WAY, 0);
     sendToPhone("STATUS:ON_MY_WAY_SENT");
-    } else if (cmd.startsWith("LOBBY:")) {
+  } else if (cmd.startsWith("LOBBY:")) {
     uint32_t nextCode = cmd.substring(6).toInt();
-    
-    // Safety: If already in a lobby, prevent accidental overwrite
-    if (currentLobbyCode > 0) {
-      if (currentLobbyCode == nextCode) {
-        // Tag this specific mobile as being in the lobby
-        for (int i = 0; i < connectedMobileCount; i++) {
-          connectedMobiles[i].isInLobby = true;
-        }
-        sendToPhone("STATUS:LOBBY_SET," + String(currentLobbyCode));
-      } else {
-        sendToPhone("ERROR:LOBBY_EXISTS," + String(currentLobbyCode));
+
+    // `LOBBY:<code>` is now a direct channel selector. Any phone can set/overwrite.
+    if (nextCode == 0) {
+      setLobbyCode(0, false);
+      for (int i = 0; i < connectedMobileCount; i++) {
+        connectedMobiles[i].isInLobby = false;
       }
       return;
     }
-    
-    // ... discovery logic ...
+
+    setLobbyCode(nextCode, false);
+    for (int i = 0; i < connectedMobileCount; i++) {
+      connectedMobiles[i].isInLobby = true;
+    }
   } else if (cmd.startsWith("CREATE_LOBBY:")) {
     uint32_t lobbyCode = cmd.substring(13).toInt();
-    
-    if (currentLobbyCode > 0) {
-      sendToPhone("ERROR:LOBBY_EXISTS," + String(currentLobbyCode));
-      return;
-    }
 
+    // `CREATE_LOBBY:<code>` is equivalent to setting the channel, but marks host flag.
     setLobbyCode(lobbyCode, true);
     // Mark ALL currently connected mobiles as being in the newly created lobby
     for (int i = 0; i < connectedMobileCount; i++) {
@@ -822,7 +809,17 @@ void processBLECommand(const String& cmd) {
   if (comma > 4) {
     int target = cmd.substring(4, comma).toInt();
     String text = cmd.substring(comma + 1);
-    sendLoRaTextMessage(target, text, 0);
+
+    if (currentLobbyCode == 0) {
+      // Do not allow lobby-0 messages; require lobby join first.
+      sendToPhone("STATUS:JOIN_LOBBY_FIRST");
+    } else {
+      sendLoRaTextMessage(target, text, 0);
+
+      // Local echo so other phones connected to this same hub can see the message.
+      // The app treats the numeric field as the conversation target (0 = broadcast).
+      sendToPhone("ECHO_MSG:" + String(target) + "," + text);
+    }
   }
   } else if (cmd.startsWith("CLAIM:")) {
   String token = cmd.substring(6);
@@ -898,6 +895,9 @@ void sendLoRaMessage(uint8_t msgType, uint8_t mobileID) {
 }
 
 void sendLoRaLocationMessage(uint8_t msgType, uint8_t mobileID, float lat, float lng, uint8_t satellites) {
+  // Lobby 0 means "not joined"; do not transmit group traffic.
+  // Prevents accidental lobby-0 broadcasts being received by everyone.
+  if (currentLobbyCode == 0) return;
   LoRaMessage msg;
   msg.lobbyCode  = currentLobbyCode;
   msg.deviceID   = DEVICE_ID;
@@ -914,6 +914,8 @@ void sendLoRaLocationMessage(uint8_t msgType, uint8_t mobileID, float lat, float
 }
 
 void sendLoRaTextMessage(uint8_t targetDevice, String message, uint8_t mobileID) {
+  // Lobby 0 means "not joined"; do not transmit group traffic.
+  if (currentLobbyCode == 0) return;
   LoRaTextMessage textMsg;
   textMsg.lobbyCode = currentLobbyCode;
   textMsg.deviceID  = DEVICE_ID;
@@ -1063,48 +1065,6 @@ void receiveLoRaMessage() {
 
     String text = String(txtMsg.text);
     
-    // --- LOBBY DISCOVERY HANDLERS ---
-    if (text.startsWith("__LOBBY_QUERY__:")) {
-      uint32_t queriedCode = text.substring(16).toInt();
-      // If we are in the lobby they are looking for, respond with an ACK
-      if (currentLobbyCode > 0 && currentLobbyCode == queriedCode) {
-        sendLoRaTextMessage(txtMsg.deviceID, "__LOBBY_ACK__:" + String(queriedCode), 0);
-      }
-      return;
-    }
-
-        if (text.startsWith("__LOBBY_ACK__:")) {
-      uint32_t ackedCode = text.substring(14).toInt();
-      if (discoveryActive && ackedCode == pendingLobbyCode) {
-        discoveryActive = false;
-        setLobbyCode(ackedCode, false);
-        // Mark the mobiles as part of the joined lobby
-        for (int i = 0; i < connectedMobileCount; i++) {
-          connectedMobiles[i].isInLobby = true;
-        }
-        sendToPhone("STATUS:LOBBY_VERIFIED," + String(ackedCode));
-      }
-      return;
-    }
-
-    if (text.startsWith("__LOBBY_VERIFY__:")) {
-      const String nonce = text.substring(String("__LOBBY_VERIFY__:").length());
-      if (nonce.length() > 0) {
-        sendLoRaTextMessage(txtMsg.deviceID, "__LOBBY_ACK__:" + nonce, 0);
-      }
-      return;
-    }
-
-    if (text.startsWith("__LOBBY_ACK__:")) {
-      const String nonce = text.substring(String("__LOBBY_ACK__:").length());
-      if (pendingLobbyVerifyNonce.length() > 0 && nonce == pendingLobbyVerifyNonce && pendingLobbyVerifyCode == currentLobbyCode) {
-        sendToPhone("STATUS:LOBBY_VERIFIED," + String(currentLobbyCode) + "," + nonce + ",LORA");
-        pendingLobbyVerifyNonce = "";
-        pendingLobbyVerifyCode = 0;
-      }
-      return;
-    }
-
     sendToPhone("MSG:" + String(txtMsg.deviceID) + ",M" + String(txtMsg.mobileID) + "," + text + ",RSSI:" + String(currentRssi));
     digitalWrite(GREEN_LED, HIGH); delay(200); digitalWrite(GREEN_LED, LOW);
 
@@ -1355,37 +1315,4 @@ String getTimestamp() {
   return String(buffer);
 }
 
-String encryptLobbyCode(uint32_t lobbyCode) {
-  byte plainText[16] = {0};
-  byte cipherText[16] = {0};
-  memcpy(plainText, &lobbyCode, sizeof(lobbyCode));
-  aes.set_key(aesKey, sizeof(aesKey)); // Use set_key instead of setKey
-  aes.encrypt(cipherText, plainText); // Use encrypt instead of encryptBlock
-  String encrypted = "";
-  for (int i = 0; i < 16; i++) {
-    encrypted += String(cipherText[i], HEX);
-  }
-  return encrypted;
-}
 
-bool authenticateLobbyCode(uint32_t receivedCode, const String& encryptedCode) {
-  String encryptedReceived = encryptLobbyCode(receivedCode);
-  return encryptedReceived == encryptedCode;
-}
-
-void createLobby(uint32_t lobbyCode, const String& creator) {
-  if (currentLobbyCode > 0) {
-    String existingCreator = preferences.getString("lobby_creator", "Unknown");
-    logLobbyEvent("Lobby creation rejected. Existing lobby code: " + String(currentLobbyCode) + ", Creator: " + existingCreator);
-    sendToPhone("ERROR:LOBBY_EXISTS," + String(currentLobbyCode) + ", Creator: " + existingCreator);
-    return;
-  }
-
-  currentLobbyCode = lobbyCode;
-  lobbyHostActive = true;
-  preferences.putUInt("lobby_code", lobbyCode);
-  preferences.putBool("lobby_host", true);
-  preferences.putString("lobby_creator", creator);
-  logLobbyEvent("Lobby created with code: " + String(lobbyCode) + ", Creator: " + creator);
-  sendToPhone("STATUS:LOBBY_CREATED," + String(lobbyCode));
-}

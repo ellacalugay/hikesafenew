@@ -229,8 +229,7 @@ Transport:
 - `OK`
 - `ON_MY_WAY`
 - `LOBBY:<code>`
-- `HOSTLOBBY:<code>`
-- `VERIFY_LOBBY:<code>,<nonce>`
+- `CREATE_LOBBY:<code>`
 - `NICK:<name>`
 - `EC:<name>,<phone>`
 - `MSG:<targetId>,<text>` (where `targetId=0` means broadcast)
@@ -263,7 +262,6 @@ Alerts:
 Status + acks:
 
 - `STATUS:LOBBY_SET,<code>`
-- `STATUS:LOBBY_VERIFIED,<code>,<nonce>,LOCAL|LORA`
 - `STATUS:NICK_SET,<name>`
 - `STATUS:EC_SET`
 - `STATUS:SENDING_SOS` / `STATUS:SENDING_MORSE_SOS` / `STATUS:SENDING_OK`
