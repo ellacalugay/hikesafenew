@@ -405,6 +405,15 @@ void setupPreferences() {
   myNickname = preferences.getString("nickname", "Hiker");
   myECName = preferences.getString("ec_name", "None");
   myECPhone = preferences.getString("ec_phone", "0000000000");
+
+  // Enforce 4-digit lobby codes only (1000-9999). Clear any legacy/invalid stored value.
+  if (currentLobbyCode != 0 && (currentLobbyCode < 1000 || currentLobbyCode > 9999)) {
+    Serial.printf("[WARN] Invalid saved lobby_code=%lu; clearing to 0\n", (unsigned long)currentLobbyCode);
+    currentLobbyCode = 0;
+    lobbyHostActive = false;
+    preferences.putUInt("lobby_code", 0);
+    preferences.putBool("lobby_host", false);
+  }
 }
 
 void saveLobbyPreferences(uint32_t lobbyCode, bool isHost) {
@@ -741,6 +750,13 @@ void processBLECommand(const String& cmd) {
       return;
     }
 
+    // Enforce 4-digit lobby codes only.
+    if (nextCode < 1000 || nextCode > 9999) {
+      logLobbyEvent("Rejecting invalid LOBBY code from BLE: " + String(nextCode));
+      sendToPhone("STATUS:INVALID_LOBBY," + String(nextCode));
+      return;
+    }
+
     setLobbyCode(nextCode, false);
     for (int i = 0; i < connectedMobileCount; i++) {
       connectedMobiles[i].isInLobby = true;
@@ -749,6 +765,12 @@ void processBLECommand(const String& cmd) {
     uint32_t lobbyCode = cmd.substring(13).toInt();
 
     // `CREATE_LOBBY:<code>` is equivalent to setting the channel, but marks host flag.
+    if (lobbyCode != 0 && (lobbyCode < 1000 || lobbyCode > 9999)) {
+      logLobbyEvent("Rejecting invalid CREATE_LOBBY code from BLE: " + String(lobbyCode));
+      sendToPhone("STATUS:INVALID_LOBBY," + String(lobbyCode));
+      return;
+    }
+
     setLobbyCode(lobbyCode, true);
     // Mark ALL currently connected mobiles as being in the newly created lobby
     for (int i = 0; i < connectedMobileCount; i++) {
@@ -1292,12 +1314,25 @@ void logLobbyEvent(const String& event) {
 }
 
 void setLobbyCode(uint32_t lobbyCode, bool isHost) {
+  const uint32_t prevLobbyCode = currentLobbyCode;
+  if (lobbyCode != 0 && (lobbyCode < 1000 || lobbyCode > 9999)) {
+    logLobbyEvent("Rejecting invalid lobby code: " + String(lobbyCode));
+    sendToPhone("STATUS:INVALID_LOBBY," + String(lobbyCode));
+    return;
+  }
+
   currentLobbyCode = lobbyCode;
   lobbyHostActive = isHost;
   preferences.putUInt("lobby_code", lobbyCode);
   preferences.putBool("lobby_host", isHost);
   logLobbyEvent("Lobby code set: " + String(lobbyCode) + ", Host: " + String(isHost));
   sendToPhone("STATUS:LOBBY_SET," + String(lobbyCode));
+  // Let other LoRa devices discover us immediately on lobby change (no GPS required).
+  // Uses the existing app-side JOIN_TS parsing (it doesn't require a real timestamp).
+  if (lobbyCode > 0 && lobbyCode != prevLobbyCode) {
+    sendLoRaTextMessage(0, "__JOINED_TS__:", 0);
+  }
+
   if (lobbyCode > 0) {
     delay(200);
     sendLoRaEmergencyContact();
@@ -1314,5 +1349,3 @@ String getTimestamp() {
   snprintf(buffer, sizeof(buffer), "%02lu:%02lu:%02lu", hours, minutes, seconds);
   return String(buffer);
 }
-
-

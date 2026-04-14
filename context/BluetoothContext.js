@@ -100,6 +100,7 @@ export const BluetoothProvider = ({ children }) => {
   const lobbyCodeRef = useRef(lobbyCode);
   const deviceLobbyCodeRef = useRef(null);
   const lastLobbyChangePromptRef = useRef({ code: null, ts: 0 });
+  const lastLobbyMismatchDropRef = useRef({ ts: 0, desired: null, device: null });
 
   useEffect(() => {
     isInLobbyRef.current = isInLobby;
@@ -1640,13 +1641,39 @@ export const BluetoothProvider = ({ children }) => {
       // STATUS messages from own device
       else if (trimmed.startsWith('STATUS:')) {
         const status = trimmed.substring(7);
+
+        // STATUS:INVALID_LOBBY,<code>
+        if (status.startsWith('INVALID_LOBBY,')) {
+          const parts = status.split(',').map(p => p.trim());
+          const bad = parts.length >= 2 ? parts[1] : '';
+          showTemporaryStatus(`Invalid lobby code: ${bad}. Use 4 digits (1000–9999).`, 4000);
+          return;
+        }
+
+        // STATUS:JOIN_LOBBY_FIRST
+        if (status === 'JOIN_LOBBY_FIRST') {
+          showTemporaryStatus('Join a lobby first (enter a 4-digit code).', 3500);
+          return;
+        }
         
         // STATUS:LOBBY_SET,<code>
         if (status.startsWith('LOBBY_SET,')) {
           const parts = status.split(',').map(p => p.trim());
           const code = parts.length >= 2 ? parseInt(parts[1], 10) : NaN;
 
-          if (!Number.isNaN(code) && code > 0) {
+          const isValidLobbyCode = !Number.isNaN(code) && code >= 1000 && code <= 9999;
+
+          const prevHubLobby = deviceLobbyCodeRef.current;
+
+          if (!Number.isNaN(code) && code > 0 && !isValidLobbyCode) {
+            // Keep the value for safety gating (prevents cross-lobby leaks),
+            // but do not prompt/sync to an invalid lobby code.
+            deviceLobbyCodeRef.current = code;
+            showTemporaryStatus(`Ignoring invalid hub lobby: ${code}`, 3000);
+            return;
+          }
+
+          if (isValidLobbyCode) {
             deviceLobbyCodeRef.current = code;
             showTemporaryStatus(`Lobby set: ${code}`, 3000);
 
@@ -1657,7 +1684,10 @@ export const BluetoothProvider = ({ children }) => {
               isInLobbyRef.current &&
               typeof localLobby === 'number' &&
               localLobby > 0 &&
-              localLobby !== code
+              localLobby !== code &&
+              typeof prevHubLobby === 'number' &&
+              prevHubLobby > 0 &&
+              prevHubLobby !== code
             ) {
               const now = Date.now();
               const last = lastLobbyChangePromptRef.current || { code: null, ts: 0 };
@@ -1845,12 +1875,22 @@ export const BluetoothProvider = ({ children }) => {
         const desiredLobby = lobbyCodeRef.current;
         const deviceLobby = deviceLobbyCodeRef.current;
         if (desiredLobby && deviceLobby !== null && deviceLobby !== undefined && desiredLobby !== deviceLobby) {
+          const now = Date.now();
+          const last = lastLobbyMismatchDropRef.current || { ts: 0 };
+          if (now - (last.ts || 0) > 4000 || last.desired !== desiredLobby || last.device !== deviceLobby) {
+            lastLobbyMismatchDropRef.current = { ts: now, desired: desiredLobby, device: deviceLobby };
+            showTemporaryStatus(`Ignoring chat (lobby mismatch: phone ${desiredLobby}, hub ${deviceLobby})`, 2500);
+          }
           return;
         }
         const firstComma = trimmed.indexOf(',');
         if (firstComma > 4) {
           const fromId = parseInt(trimmed.substring(4, firstComma), 10);
           const remaining = trimmed.substring(firstComma + 1);
+
+          if (!Number.isNaN(fromId) && isInLobbyRef.current) {
+            registerMemberSync(fromId, Date.now(), { source: 'incoming-msg' });
+          }
           
           // Parse mobile ID (Mx format) if present
           let mobileId = 0;
@@ -1979,6 +2019,12 @@ export const BluetoothProvider = ({ children }) => {
         const desiredLobby = lobbyCodeRef.current;
         const deviceLobby = deviceLobbyCodeRef.current;
         if (desiredLobby && deviceLobby !== null && deviceLobby !== undefined && desiredLobby !== deviceLobby) {
+          const now = Date.now();
+          const last = lastLobbyMismatchDropRef.current || { ts: 0 };
+          if (now - (last.ts || 0) > 4000 || last.desired !== desiredLobby || last.device !== deviceLobby) {
+            lastLobbyMismatchDropRef.current = { ts: now, desired: desiredLobby, device: deviceLobby };
+            showTemporaryStatus(`Ignoring chat (lobby mismatch: phone ${desiredLobby}, hub ${deviceLobby})`, 2500);
+          }
           return;
         }
         const firstComma = trimmed.indexOf(',');
@@ -2824,32 +2870,13 @@ export const BluetoothProvider = ({ children }) => {
     // Prevent "global" lobby-0 broadcasts and cross-lobby sends.
     // The LoRa device's lobby code is what actually gates radio traffic.
     const desiredLobby = lobbyCodeRef.current;
-    const deviceLobby = deviceLobbyCodeRef.current;
+    const isValidLobby = typeof desiredLobby === 'number' && desiredLobby >= 1000 && desiredLobby <= 9999;
 
-    if (!desiredLobby) {
+    if (!isValidLobby) {
       Alert.alert('No Lobby', 'Enter a 4-digit lobby code first.');
       return false;
     }
 
-    // If we don't yet know the device lobby (no SELF/STATUS yet), try syncing and ask the user to retry.
-    if (!deviceLobby || deviceLobby !== desiredLobby) {
-      try {
-        showTemporaryStatus('Syncing lobby to device…', 2500);
-        if (typeof syncLobbyToDevice === 'function') {
-          await syncLobbyToDevice(sendCommand, desiredLobby);
-        }
-      } catch {
-        // ignore
-      }
-
-      const deviceLabel = !deviceLobby || deviceLobby === 0 ? 'not set' : String(deviceLobby);
-      Alert.alert(
-        'Lobby Not Synced',
-        `Your device lobby is ${deviceLabel} but this phone is set to ${desiredLobby}. Wait for sync (Bluetooth) then try again.`
-      );
-      return false;
-    }
-    
     // Device MAX_TEXT_LEN = 50
     const truncatedText = text.substring(0, 50);
     const command = `MSG:${toDeviceId},${truncatedText}`;
@@ -2865,6 +2892,52 @@ export const BluetoothProvider = ({ children }) => {
     };
     
     setMessages(prev => [...prev, newMessage].slice(-MAX_MESSAGES_IN_MEMORY));
+
+    const waitForDeviceLobby = (expectedLobby, timeoutMs = 6000) => new Promise((resolve) => {
+      const start = Date.now();
+      const intervalId = setInterval(() => {
+        const current = deviceLobbyCodeRef.current;
+        if (typeof current === 'number' && current === expectedLobby) {
+          clearInterval(intervalId);
+          resolve(true);
+          return;
+        }
+        if (Date.now() - start >= timeoutMs) {
+          clearInterval(intervalId);
+          resolve(false);
+        }
+      }, 150);
+    });
+
+    // Ensure the device lobby matches this phone lobby before sending.
+    // Auto-sync + wait for `STATUS:LOBBY_SET,<code>` (or SELF lobby field) so the user doesn't have to retry manually.
+    const beforeLobby = deviceLobbyCodeRef.current;
+    if (typeof beforeLobby !== 'number' || beforeLobby !== desiredLobby) {
+      try {
+        showTemporaryStatus('Syncing lobby to device…', 2500);
+        if (typeof syncLobbyToDevice === 'function') {
+          await syncLobbyToDevice(sendCommand, desiredLobby);
+        }
+      } catch {
+        // ignore
+      }
+
+      const synced = await waitForDeviceLobby(desiredLobby, 6000);
+      if (!synced) {
+        const afterLobby = deviceLobbyCodeRef.current;
+        const deviceLabel = typeof afterLobby === 'number' ? String(afterLobby) : 'unknown';
+        setMessages(prev => prev.map(msg =>
+          msg.id === newMessage.id
+            ? { ...msg, pending: false, failed: true }
+            : msg
+        ));
+        Alert.alert(
+          'Lobby Not Synced',
+          `Could not confirm the hub switched to lobby ${desiredLobby} (device is ${deviceLabel}). Please wait a moment and try again.`
+        );
+        return false;
+      }
+    }
     
     const success = await sendCommand(command);
     
@@ -2875,7 +2948,7 @@ export const BluetoothProvider = ({ children }) => {
     ));
     
     return success;
-  }, [isConnected, sendCommand]);
+  }, [isConnected, sendCommand, showTemporaryStatus, syncLobbyToDevice]);
   
   // Send broadcast message (targetID = 0 means all devices)
   const sendBroadcastMessage = useCallback(async (text) => {
