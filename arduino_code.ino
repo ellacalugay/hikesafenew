@@ -643,9 +643,22 @@ void loop() {
 // ============================================================
 void sendToPhone(String msg) {
   if (connectedMobileCount > 0) {
+    // BLE notifications are limited by the negotiated MTU.
+    // Many phones default to MTU=23 (20-byte payload). If we notify longer strings,
+    // they can be truncated and the app will miss fields (e.g. lobby in SELF / STATUS).
+    // Chunk the outgoing message into <= 20-byte notifications; the app reassembles
+    // by buffering until a '\n' is received.
     msg += "\n";
-    pTxCharacteristic->setValue((uint8_t*)msg.c_str(), msg.length());
-    pTxCharacteristic->notify();
+    const int chunkSize = 20;
+    const int totalLen = msg.length();
+    for (int i = 0; i < totalLen; i += chunkSize) {
+      const int end = (i + chunkSize < totalLen) ? (i + chunkSize) : totalLen;
+      const String chunk = msg.substring(i, end);
+      pTxCharacteristic->setValue((uint8_t*)chunk.c_str(), chunk.length());
+      pTxCharacteristic->notify();
+      // Small gap helps avoid dropped notifications on some stacks.
+      delay(5);
+    }
   }
 }
 
@@ -843,6 +856,44 @@ void processBLECommand(const String& cmd) {
       sendToPhone("ECHO_MSG:" + String(target) + "," + text);
     }
   }
+  } else if (cmd.startsWith("DM:")) {
+  // Direct message (phone-targeted) via hub.
+  // Format: DM:<targetDevice>,<fromMobileId>,<toMobileId>,<text>
+  int comma1 = cmd.indexOf(',', 3);
+  int comma2 = (comma1 > 0) ? cmd.indexOf(',', comma1 + 1) : -1;
+  int comma3 = (comma2 > 0) ? cmd.indexOf(',', comma2 + 1) : -1;
+  if (comma1 > 3 && comma2 > comma1 && comma3 > comma2) {
+    int target = cmd.substring(3, comma1).toInt();
+    int fromMobile = cmd.substring(comma1 + 1, comma2).toInt();
+    int toMobile = cmd.substring(comma2 + 1, comma3).toInt();
+    String text = cmd.substring(comma3 + 1);
+
+    if (currentLobbyCode == 0) {
+      // Keep DM behavior consistent with normal chat: require lobby join.
+      sendToPhone("STATUS:JOIN_LOBBY_FIRST");
+      return;
+    }
+
+    if (toMobile < 1 || toMobile > MAX_MOBILE_PHONES) {
+      sendToPhone("STATUS:INVALID_DM_TARGET," + String(toMobile));
+      return;
+    }
+    if (fromMobile < 0 || fromMobile > MAX_MOBILE_PHONES) {
+      fromMobile = 0;
+    }
+
+    // Tag the payload so receiving phones can filter locally.
+    // Format in text: __DM__:<toMobileId>:<fromMobileId>:<text>
+    String tagged = "__DM__:" + String(toMobile) + ":" + String(fromMobile) + ":" + text;
+
+    // If the target is this same hub, do NOT transmit over LoRa.
+    if (target != DEVICE_ID) {
+      sendLoRaTextMessage(target, tagged, (uint8_t)fromMobile);
+    }
+
+    // Local echo to all connected phones (apps will filter by toMobileId).
+    sendToPhone("ECHO_MSG:" + String(target) + "," + tagged);
+  }
   } else if (cmd.startsWith("CLAIM:")) {
   String token = cmd.substring(6);
   for (int i = 0; i < connectedMobileCount; i++) {
@@ -874,6 +925,7 @@ void processBLECommand(const String& cmd) {
 }
 
 void sendStatusUpdate() {
+  static unsigned long lastLobbyStatusSent = 0;
   String packet = "SELF:";
   if (gps.location.isValid())
     packet += String(gps.location.lat(), 6) + "," + String(gps.location.lng(), 6) + ",";
@@ -891,6 +943,13 @@ void sendStatusUpdate() {
     packet += ",---";
 
   sendToPhone(packet);
+
+  // Lightweight lobby confirmation heartbeat for the app (no UI spam).
+  // Helps newer app builds confirm lobby even if STATUS:LOBBY_SET was missed.
+  if (millis() - lastLobbyStatusSent >= 5000) {
+    lastLobbyStatusSent = millis();
+    sendToPhone("STATUS:LOBBY," + String(currentLobbyCode));
+  }
 
   for (uint8_t i = 0; i < connectedMobileCount; i++) {
     if (connectedMobiles[i].mobileID == 0) continue;

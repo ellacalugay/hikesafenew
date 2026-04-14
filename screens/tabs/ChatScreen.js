@@ -29,16 +29,19 @@ const ChatScreen = ({ onBack, chatName }) => {
     connectionHealth,
     loraSignalStrength,
     myLocation,
+    myMobileId,
     getMessagesForDevice, 
     sendMessage, 
+    sendDirectMessage,
     sendBroadcastMessage,
     markMessagesAsRead,
     clearChatHistory
   } = useBluetoothDevice();
-  const { getMemberNickname } = useLobby();
+  const { getMemberNickname, myDeviceId } = useLobby();
   
   const [messageText, setMessageText] = useState('');
   const [sending, setSending] = useState(false);
+  const [dmTarget, setDmTarget] = useState('all'); // 'all' | 1..4
   const scrollViewRef = useRef();
 
   const pulseAnim = useRef(new Animated.Value(0)).current;
@@ -61,6 +64,12 @@ const ChatScreen = ({ onBack, chatName }) => {
   
   const isBroadcast = chatInfo.type === 'broadcast' || chatInfo.deviceId === 0;
   const deviceId = chatInfo.deviceId;
+
+  const isSelfHubChat = !isBroadcast && typeof myDeviceId === 'number' && myDeviceId !== null && deviceId === myDeviceId;
+  const dmTargets = useMemo(() => {
+    // For the local hub chat, force a specific recipient to avoid accidental LoRa sends.
+    return isSelfHubChat ? [1, 2, 3, 4] : ['all', 1, 2, 3, 4];
+  }, [isSelfHubChat]);
   
   // Get messages for this conversation
   const messages = deviceId !== null ? getMessagesForDevice(deviceId) : [];
@@ -80,7 +89,15 @@ const ChatScreen = ({ onBack, chatName }) => {
       if (isBroadcast) {
         await sendBroadcastMessage(messageText.trim());
       } else {
-        await sendMessage(deviceId, messageText.trim());
+        if (dmTarget !== 'all') {
+          await sendDirectMessage(deviceId, dmTarget, messageText.trim());
+        } else {
+          if (isSelfHubChat) {
+            Alert.alert('Choose Recipient', 'Select a recipient mobile (M1–M4) to message another phone connected to this hub.');
+            return;
+          }
+          await sendMessage(deviceId, messageText.trim());
+        }
       }
       setMessageText('');
     } catch (error) {
@@ -466,6 +483,54 @@ const ChatScreen = ({ onBack, chatName }) => {
 
         {/* Input Area */}
         <View style={[localStyles.composeWrap, { paddingBottom: insets.bottom + (Platform.OS === 'ios' ? 12 : 8) }]}>
+          {/* DM Recipient Picker (direct chats only) */}
+          {!isBroadcast && deviceId !== null && deviceId !== 0 && (
+            <View
+              style={[
+                localStyles.dmPicker,
+                { backgroundColor: ui.surfaceContainerHigh, borderColor: ui.outlineVariant },
+              ]}
+            >
+              <Text style={[localStyles.dmPickerLabel, { color: ui.onSurfaceVariant }]}>TO</Text>
+              {dmTargets.map((t) => {
+                const key = String(t);
+                const selected = dmTarget === t;
+                const disabled = isSelfHubChat && t === 'all';
+                const label = t === 'all' ? 'ALL' : `M${t}`;
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    disabled={disabled}
+                    onPress={() => setDmTarget(t)}
+                    style={[
+                      localStyles.dmPill,
+                      {
+                        borderColor: selected ? ui.primary : ui.outlineVariant,
+                        backgroundColor: selected ? ui.primaryContainer : 'transparent',
+                        opacity: disabled ? 0.5 : 1,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={{
+                        color: selected ? ui.onSurface : ui.onSurfaceVariant,
+                        fontSize: 12,
+                        fontWeight: '800',
+                        fontFamily: 'PublicSans_700Bold',
+                      }}
+                    >
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+
+              {myMobileId ? (
+                <Text style={[localStyles.dmPickerHint, { color: ui.onSurfaceVariant }]}>{`YOU: M${myMobileId}`}</Text>
+              ) : null}
+            </View>
+          )}
+
           <View
             style={[
               localStyles.composeBar,
@@ -532,6 +597,36 @@ const ChatScreen = ({ onBack, chatName }) => {
 };
 
 const localStyles = StyleSheet.create({
+  dmPicker: {
+    marginHorizontal: 14,
+    marginBottom: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  dmPickerLabel: {
+    fontSize: 12,
+    fontWeight: '900',
+    fontFamily: 'PublicSans_700Bold',
+    letterSpacing: 1.2,
+    marginRight: 4,
+  },
+  dmPill: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  dmPickerHint: {
+    marginLeft: 'auto',
+    fontSize: 12,
+    fontWeight: '800',
+    fontFamily: 'PublicSans_700Bold',
+  },
   topBar: {
     paddingHorizontal: 18,
     paddingBottom: 8,

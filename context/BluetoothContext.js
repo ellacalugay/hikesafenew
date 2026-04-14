@@ -99,13 +99,42 @@ export const BluetoothProvider = ({ children }) => {
   const isInLobbyRef = useRef(isInLobby);
   const lobbyCodeRef = useRef(lobbyCode);
   const deviceLobbyCodeRef = useRef(null);
+  const hubReportsLobbyRef = useRef(false);
+  const lastHubLobbySupportHintRef = useRef(0);
   const lastLobbyChangePromptRef = useRef({ code: null, ts: 0 });
   const lastLobbyMismatchDropRef = useRef({ ts: 0, desired: null, device: null });
+  // Multi-hub safety: treat the first chosen hub as "active" and ignore others.
+  // We keep this stable across list reorderings and reset lobby-confirmation state when it changes.
+  const activeHubIdRef = useRef(null);
+  const lastActiveHubIdRef = useRef(null);
 
   useEffect(() => {
     isInLobbyRef.current = isInLobby;
     lobbyCodeRef.current = lobbyCode;
   }, [isInLobby, lobbyCode]);
+
+  // Keep a stable "active hub" selection. If the active hub disconnects, fall back to the first remaining.
+  // Reset hub lobby confirmation state when switching hubs to avoid stale lobby mismatches.
+  useEffect(() => {
+    const list = Array.isArray(connectedDevicesList) ? connectedDevicesList : [];
+
+    const currentActive = activeHubIdRef.current;
+    const stillConnected = currentActive && list.some(d => d?.id === currentActive);
+
+    if (!stillConnected) {
+      activeHubIdRef.current = list.length > 0 ? list[0].id : null;
+    }
+
+    const nextActive = activeHubIdRef.current;
+    if (lastActiveHubIdRef.current !== nextActive) {
+      lastActiveHubIdRef.current = nextActive;
+      deviceLobbyCodeRef.current = null;
+      hubReportsLobbyRef.current = false;
+      lastHubLobbySupportHintRef.current = 0;
+      lastLobbyChangePromptRef.current = { code: null, ts: 0 };
+      lastLobbyMismatchDropRef.current = { ts: 0, desired: null, device: null };
+    }
+  }, [connectedDevicesList]);
 
   // Connection state - MULTI-DEVICE SUPPORT
   const [isEnabled, setIsEnabled] = useState(false);
@@ -258,6 +287,9 @@ export const BluetoothProvider = ({ children }) => {
 
   // Multi-device refs: key = device.id, value = { subscriptionRef, disconnectSubRef }
   const deviceConnectionsRef = useRef(new Map()); // Map<deviceId, { subscription, disconnectSubscription, device }>
+
+  // BLE RX framing: notifications can split lines arbitrarily. Buffer per device until a full '\n'-terminated line arrives.
+  const rxLineBufferRef = useRef(new Map()); // Map<deviceId, string>
 
   // Serialize BLE writes to avoid overlapping GATT operations (common cause of flakiness).
   const writeQueueRef = useRef(Promise.resolve());
@@ -1267,12 +1299,34 @@ export const BluetoothProvider = ({ children }) => {
   }, [getBlePowerStateSafe, requestPermissions, warnIfLocationServicesOffForBle]);
 
   // Parse incoming BLE data from device
-  const parseBluetoothData = useCallback((data) => {
+  const parseBluetoothData = useCallback((data, sourceDeviceId = null) => {
     if (!data) return;
+
+    // When multiple hubs are connected, this app does not support routing messages per-hub.
+    // Treat the first connected hub as the "active" hub and ignore notifications from others,
+    // otherwise secondary hubs can overwrite lobby confirmation and block chat.
+    const activeHubId = activeHubIdRef.current || connectedDevicesListRef.current?.[0]?.id || null;
+    if (sourceDeviceId && activeHubId && sourceDeviceId !== activeHubId) {
+      return;
+    }
 
     setLastDataReceived(Date.now());
 
-    const lines = data.split('\n').filter(line => line.trim());
+    const bufferKey = sourceDeviceId || '__default__';
+    const prev = rxLineBufferRef.current.get(bufferKey) || '';
+    let combined = prev + data;
+    // Prevent unbounded growth if a device sends garbage without newlines.
+    if (combined.length > 8192) {
+      combined = combined.slice(-8192);
+    }
+
+    const chunks = combined.split('\n');
+    const remainder = chunks.length > 0 ? chunks[chunks.length - 1] : '';
+    rxLineBufferRef.current.set(bufferKey, remainder);
+    const lines = chunks
+      .slice(0, -1)
+      .map(l => l.replace(/\r/g, ''))
+      .filter(line => line.trim());
 
     lines.forEach(line => {
       let trimmed = '';
@@ -1306,11 +1360,27 @@ export const BluetoothProvider = ({ children }) => {
 
                 // FIX: Passive Sync - Update app lobby code if hardware says we are in one
                 if (parts.length >= 6) {
-                  const deviceLobby = parseInt(parts[5], 10);
-                  if (!Number.isNaN(deviceLobby)) {
+                  const rawLobbyField = (parts[5] || '').toString().trim();
+                  const deviceLobby = parseInt(rawLobbyField, 10);
+                  const isValidLobbyOrZero =
+                    !Number.isNaN(deviceLobby) && (deviceLobby === 0 || (deviceLobby >= 1000 && deviceLobby <= 9999));
+
+                  if (isValidLobbyOrZero) {
                     deviceLobbyCodeRef.current = deviceLobby;
+                    hubReportsLobbyRef.current = true;
+                  } else {
+                    // Legacy firmware may send SELF without lobby (part[5] is distance).
+                    // Don't overwrite the hub lobby ref with small numbers like 3.
+                    const now = Date.now();
+                    if (now - (lastHubLobbySupportHintRef.current || 0) > 15000) {
+                      lastHubLobbySupportHintRef.current = now;
+                      // Best-effort hint; avoid spamming.
+                      // showTemporaryStatus is defined in this file; safe to call here.
+                      showTemporaryStatus('Hub firmware may be outdated (no lobby in SELF). Please flash latest firmware.', 4000);
+                    }
                   }
-                  if (!isNaN(deviceLobby) && deviceLobby >= 1000 && deviceLobby <= 9999 && !isInLobbyRef.current) {
+
+                  if (isValidLobbyOrZero && deviceLobby >= 1000 && deviceLobby <= 9999 && !isInLobbyRef.current) {
                     // The device is in a lobby but the app isn't. Passively join.
                     console.log(`[Passive Sync] Device is in Lobby ${deviceLobby}. Syncing app...`);
 
@@ -1322,7 +1392,11 @@ export const BluetoothProvider = ({ children }) => {
                       }).catch(() => {});
                     }
 
-                    const connectedDeviceObj = connectedDevicesListRef.current[0] || null;
+                    const connectedDeviceObj = (() => {
+                      const list = connectedDevicesListRef.current || [];
+                      const activeId = activeHubIdRef.current;
+                      return (activeId ? list.find(d => d?.id === activeId) : list[0]) || null;
+                    })();
                     const currentLocalDeviceId = myDeviceId || (connectedDeviceObj ? parseDeviceId(connectedDeviceObj) : null);
                     if (currentLocalDeviceId !== null) {
                       registerMemberSync(currentLocalDeviceId, Date.now(), { isSelf: true, source: 'passive-sync' });
@@ -1655,6 +1729,27 @@ export const BluetoothProvider = ({ children }) => {
           showTemporaryStatus('Join a lobby first (enter a 4-digit code).', 3500);
           return;
         }
+
+        // STATUS:INVALID_DM_TARGET,<mobileId>
+        if (status.startsWith('INVALID_DM_TARGET,')) {
+          const parts = status.split(',').map(p => p.trim());
+          const bad = parts.length >= 2 ? parts[1] : '';
+          showTemporaryStatus(`Invalid DM target mobile: ${bad} (use M1–M4).`, 4000);
+          return;
+        }
+
+        // STATUS:LOBBY,<code> (silent heartbeat used for lobby confirmation)
+        if (status.startsWith('LOBBY,')) {
+          const parts = status.split(',').map(p => p.trim());
+          const code = parts.length >= 2 ? parseInt(parts[1], 10) : NaN;
+          const isValidLobbyOrZero =
+            !Number.isNaN(code) && (code === 0 || (code >= 1000 && code <= 9999));
+          if (isValidLobbyOrZero) {
+            deviceLobbyCodeRef.current = code;
+            hubReportsLobbyRef.current = true;
+          }
+          return;
+        }
         
         // STATUS:LOBBY_SET,<code>
         if (status.startsWith('LOBBY_SET,')) {
@@ -1675,6 +1770,7 @@ export const BluetoothProvider = ({ children }) => {
 
           if (isValidLobbyCode) {
             deviceLobbyCodeRef.current = code;
+            hubReportsLobbyRef.current = true;
             showTemporaryStatus(`Lobby set: ${code}`, 3000);
 
             // Multi-phone-on-one-hub behavior: the hub has a single active lobby.
@@ -1705,7 +1801,11 @@ export const BluetoothProvider = ({ children }) => {
                       onPress: () => {
                         if (typeof joinLobby === 'function') {
                           joinLobby(code, (myNickname || 'Hiker')).then(() => {
-                            const connectedDeviceObj = connectedDevicesListRef.current[0] || null;
+                            const connectedDeviceObj = (() => {
+                              const list = connectedDevicesListRef.current || [];
+                              const activeId = activeHubIdRef.current;
+                              return (activeId ? list.find(d => d?.id === activeId) : list[0]) || null;
+                            })();
                             const currentLocalDeviceId = myDeviceId || (connectedDeviceObj ? parseDeviceId(connectedDeviceObj) : null);
                             if (currentLocalDeviceId !== null) {
                               registerMemberSync(currentLocalDeviceId, Date.now(), { isSelf: true, source: 'lobby-change-prompt' });
@@ -1728,7 +1828,11 @@ export const BluetoothProvider = ({ children }) => {
                 }
               }).catch(() => {});
 
-              const connectedDeviceObj = connectedDevicesListRef.current[0] || null;
+              const connectedDeviceObj = (() => {
+                const list = connectedDevicesListRef.current || [];
+                const activeId = activeHubIdRef.current;
+                return (activeId ? list.find(d => d?.id === activeId) : list[0]) || null;
+              })();
               const currentLocalDeviceId = myDeviceId || (connectedDeviceObj ? parseDeviceId(connectedDeviceObj) : null);
               if (currentLocalDeviceId !== null) {
                 registerMemberSync(currentLocalDeviceId, Date.now(), { isSelf: true, source: 'status-lobby-set' });
@@ -1739,6 +1843,7 @@ export const BluetoothProvider = ({ children }) => {
             clearPendingDeviceLobbySync();
           } else if (code === 0) {
             deviceLobbyCodeRef.current = 0;
+            hubReportsLobbyRef.current = true;
             showTemporaryStatus('Device lobby cleared', 2500);
             clearPendingDeviceLobbySync();
             if (typeof clearLobbyLocalOnly === 'function') {
@@ -1913,6 +2018,45 @@ export const BluetoothProvider = ({ children }) => {
             rssiValue = parseInt(rssiMatch[1], 10);
           }
 
+          // Phone-targeted DM tagging.
+          // Format in text: __DM__:<toMobileId>:<fromMobileId>:<text>
+          // (Older/partial forms may omit fromMobileId; tolerate gracefully.)
+          let dmToMobileId = null;
+          let dmFromMobileId = null;
+          if (typeof text === 'string' && text.startsWith('__DM__:')) {
+            const dmRest = text.substring('__DM__:'.length);
+            const firstSep = dmRest.indexOf(':');
+            if (firstSep > 0) {
+              const toStr = dmRest.substring(0, firstSep).trim();
+              const afterTo = dmRest.substring(firstSep + 1);
+              const secondSep = afterTo.indexOf(':');
+              const fromStr = secondSep >= 0 ? afterTo.substring(0, secondSep).trim() : '';
+              const body = secondSep >= 0 ? afterTo.substring(secondSep + 1) : afterTo;
+
+              const parsedTo = parseInt(toStr, 10);
+              const parsedFrom = fromStr ? parseInt(fromStr, 10) : NaN;
+
+              if (!Number.isNaN(parsedTo) && parsedTo >= 1 && parsedTo <= 4) {
+                dmToMobileId = parsedTo;
+                if (!Number.isNaN(parsedFrom) && parsedFrom >= 0 && parsedFrom <= 4) {
+                  dmFromMobileId = parsedFrom;
+                  // Prefer the explicit DM sender mobile ID.
+                  if (parsedFrom > 0) {
+                    mobileId = parsedFrom;
+                  }
+                }
+
+                // If this phone has a claimed mobile slot, only show DMs intended for it.
+                const myMobile = myMobileIdRef.current;
+                if (typeof myMobile === 'number' && myMobile >= 1 && myMobile <= 4 && myMobile !== dmToMobileId) {
+                  return;
+                }
+
+                text = body;
+              }
+            }
+          }
+
           const isJoinTsMessage =
             text.startsWith('__JOINED_TS__:') ||
             text.startsWith('__JOIN_TS__:') ||
@@ -1980,10 +2124,11 @@ export const BluetoothProvider = ({ children }) => {
             return;
           }
           
-          console.log(`Received MSG from Device ${fromId}${mobileId > 0 ? ` Mobile ${mobileId}` : ''}: ${text}`);
+          const dmSuffix = dmToMobileId ? ` (DM→M${dmToMobileId})` : '';
+          console.log(`Received MSG from Device ${fromId}${mobileId > 0 ? ` Mobile ${mobileId}` : ''}${dmSuffix}: ${text}`);
           
           const newMessage = {
-            id: `msg-${Date.now()}-${fromId}-${mobileId}`,
+            id: `msg-${Date.now()}-${fromId}-${mobileId}${dmToMobileId ? `-dm-${dmToMobileId}` : ''}`,
             from: fromId,
             mobileId: mobileId,
             to: 'me',
@@ -1991,6 +2136,8 @@ export const BluetoothProvider = ({ children }) => {
             timestamp: Date.now(),
             isMine: false,
             rssi: rssiValue,
+            dmToMobileId: dmToMobileId,
+            dmFromMobileId: dmFromMobileId,
           };
           
           setMessages(prev => [...prev, newMessage].slice(-MAX_MESSAGES_IN_MEMORY));
@@ -2030,7 +2177,43 @@ export const BluetoothProvider = ({ children }) => {
         const firstComma = trimmed.indexOf(',');
         if (firstComma > 9) {
           const deviceId = parseInt(trimmed.substring(9, firstComma), 10);
-          const text = trimmed.substring(firstComma + 1);
+          const rawText = trimmed.substring(firstComma + 1);
+
+          let text = rawText;
+          let dmToMobileId = null;
+          let dmFromMobileId = null;
+
+          if (typeof rawText === 'string' && rawText.startsWith('__DM__:')) {
+            const dmRest = rawText.substring('__DM__:'.length);
+            const firstSep = dmRest.indexOf(':');
+            if (firstSep > 0) {
+              const toStr = dmRest.substring(0, firstSep).trim();
+              const afterTo = dmRest.substring(firstSep + 1);
+              const secondSep = afterTo.indexOf(':');
+              const fromStr = secondSep >= 0 ? afterTo.substring(0, secondSep).trim() : '';
+              const body = secondSep >= 0 ? afterTo.substring(secondSep + 1) : afterTo;
+
+              const parsedTo = parseInt(toStr, 10);
+              const parsedFrom = fromStr ? parseInt(fromStr, 10) : NaN;
+              if (!Number.isNaN(parsedTo) && parsedTo >= 1 && parsedTo <= 4) {
+                dmToMobileId = parsedTo;
+                if (!Number.isNaN(parsedFrom) && parsedFrom >= 0 && parsedFrom <= 4) {
+                  dmFromMobileId = parsedFrom;
+                }
+                text = body;
+
+                // Only the DM sender or recipient should surface local-echo DMs.
+                const myMobile = myMobileIdRef.current;
+                if (typeof myMobile === 'number' && myMobile >= 1 && myMobile <= 4) {
+                  const isRecipient = myMobile === dmToMobileId;
+                  const isSender = dmFromMobileId !== null && myMobile === dmFromMobileId;
+                  if (!isRecipient && !isSender) {
+                    return;
+                  }
+                }
+              }
+            }
+          }
 
           // Don't surface internal control traffic as chat.
           if (
@@ -2060,6 +2243,7 @@ export const BluetoothProvider = ({ children }) => {
               msg.isMine &&
               msg.to === deviceId &&
               msg.text === text &&
+              (dmToMobileId ? msg.dmToMobileId === dmToMobileId : !msg.dmToMobileId) &&
               now - msg.timestamp < 15000
             );
 
@@ -2080,11 +2264,14 @@ export const BluetoothProvider = ({ children }) => {
               {
                 id: `echo-${now}-${deviceId}`,
                 from: Number.isNaN(deviceId) ? 0 : deviceId,
+                mobileId: dmFromMobileId || 0,
                 to: 'me',
                 text,
                 timestamp: now,
                 isMine: false,
                 echoed: true,
+                dmToMobileId: dmToMobileId,
+                dmFromMobileId: dmFromMobileId,
               },
             ];
           });
@@ -2381,7 +2568,7 @@ export const BluetoothProvider = ({ children }) => {
             if (characteristic?.value) {
               try {
                 const decoded = Buffer.from(characteristic.value, 'base64').toString('utf-8');
-                parseBluetoothData(decoded);
+                parseBluetoothData(decoded, device.id);
               } catch (e) {
                 console.error('Decode error:', e);
               }
@@ -2476,6 +2663,13 @@ export const BluetoothProvider = ({ children }) => {
     
     // Remove from connected devices list
     setConnectedDevicesList(prev => prev.filter(d => d.id !== deviceId));
+
+    // Clear RX buffer for this device
+    try {
+      rxLineBufferRef.current.delete(deviceId);
+    } catch {
+      // ignore
+    }
     
     // If no more connected devices, clear flags
     if ((connectedDevicesListRef.current?.length || 0) <= 1) {
@@ -2514,138 +2708,147 @@ export const BluetoothProvider = ({ children }) => {
       clearInterval(mockIntervalRef.current);
       mockIntervalRef.current = null;
     }
+
+    // Clear RX buffers
+    try {
+      rxLineBufferRef.current.clear();
+    } catch {
+      // ignore
+    }
   }, [disconnectFromDevice, stopEmergencySignals]);
 
-  // Send command to ALL connected devices via BLE (MULTI-DEVICE BROADCAST)
+  // Send command to the ACTIVE connected device via BLE.
+  // Note: the app UI doesn't support per-hub routing, so broadcasting to multiple hubs
+  // can break lobby sync and message delivery.
   const sendCommand = useCallback(async (command) => {
-    const devicesSnapshot = Array.isArray(connectedDevicesListRef.current)
-      ? connectedDevicesListRef.current
-      : [];
+    const list = Array.isArray(connectedDevicesListRef.current) ? connectedDevicesListRef.current : [];
+    const activeId = activeHubIdRef.current;
+    const activeDevice = (activeId ? list.find(d => d?.id === activeId) : list[0]) || null;
+    const devicesSnapshot = activeDevice ? [activeDevice] : [];
 
-    if (!isConnectedRef.current || devicesSnapshot.length === 0) {
-      Alert.alert('Not Connected', 'Please connect to a device first.');
-      return false;
-    }
-    
-    const cmdWithNewline = command.endsWith('\n') ? command : command + '\n';
-    
-    if (!BleManager || devicesSnapshot.length === 0) {
-      // Mock command handling
-      console.log('Mock sending:', cmdWithNewline);
-      if (command === 'SOS') {
-        showTemporaryStatus('SENDING_SOS', 2000);
-      } else if (command === 'OK') {
-        showTemporaryStatus('SENDING_OK', 2000);
-      }
-      return true;
-    }
-
-    const encoded = Buffer.from(cmdWithNewline, 'utf-8').toString('base64');
-    let successCount = 0;
-    let failureCount = 0;
-
-    // Send to all connected devices in parallel
-    const sendPromises = devicesSnapshot.map(async (deviceInfo) => {
-      if (!isConnectedRef.current) {
-        failureCount++;
-        return false;
-      }
-      const connInfo = deviceConnectionsRef.current.get(deviceInfo.id);
-      if (!connInfo || !connInfo.device) {
-        failureCount++;
+    const run = async () => {
+      if (!isConnectedRef.current || devicesSnapshot.length === 0) {
+        Alert.alert('Not Connected', 'Please connect to a device first.');
         return false;
       }
 
-      try {
-        const dev = connInfo.device;
-        
-        // Defensive: check if connection is still valid
-        try {
-          const stillConnected = await dev.isConnected();
-          if (!stillConnected) {
-            failureCount++;
-            await disconnectFromDevice(deviceInfo.id);
-            return false;
-          }
-        } catch (e) {
+      const cmdWithNewline = command.endsWith('\n') ? command : command + '\n';
+
+      if (!BleManager || devicesSnapshot.length === 0) {
+        // Mock command handling
+        console.log('Mock sending:', cmdWithNewline);
+        if (command === 'SOS') {
+          showTemporaryStatus('SENDING_SOS', 2000);
+        } else if (command === 'OK') {
+          showTemporaryStatus('SENDING_OK', 2000);
+        }
+        return true;
+      }
+
+      const encoded = Buffer.from(cmdWithNewline, 'utf-8').toString('base64');
+      let successCount = 0;
+      let failureCount = 0;
+
+      // Send to the active connected device
+      const sendPromises = devicesSnapshot.map(async (deviceInfo) => {
+        if (!isConnectedRef.current) {
           failureCount++;
-          await disconnectFromDevice(deviceInfo.id);
+          return false;
+        }
+        const connInfo = deviceConnectionsRef.current.get(deviceInfo.id);
+        if (!connInfo || !connInfo.device) {
+          failureCount++;
           return false;
         }
 
-        // Try write with response first
         try {
-          await dev.writeCharacteristicWithResponseForService(
-            NUS_SERVICE_UUID,
-            NUS_RX_CHAR_UUID,
-            encoded
-          );
-          console.log(`Command sent to device ${deviceInfo.id}`);
-          successCount++;
-          return true;
-        } catch (writeError) {
-          const message = (writeError?.message || '').toLowerCase();
-          
-          // If disconnected, handle removal
-          if (message.includes('disconnected') || message.includes('cancel')) {
-            await disconnectFromDevice(deviceInfo.id);
+          const dev = connInfo.device;
+
+          // Defensive: check if connection is still valid
+          try {
+            const stillConnected = await dev.isConnected();
+            if (!stillConnected) {
+              failureCount++;
+              await disconnectFromDevice(deviceInfo.id);
+              return false;
+            }
+          } catch (e) {
             failureCount++;
+            await disconnectFromDevice(deviceInfo.id);
             return false;
           }
-          
-          // Try write without response as fallback
-          if (typeof dev.writeCharacteristicWithoutResponseForService === 'function') {
-            try {
-              await delay(80);
-              if (!isConnectedRef.current) {
-                failureCount++;
-                return false;
-              }
-              await dev.writeCharacteristicWithoutResponseForService(
-                NUS_SERVICE_UUID,
-                NUS_RX_CHAR_UUID,
-                encoded
-              );
-              console.log(`Command sent to device ${deviceInfo.id} (no response)`);
-              successCount++;
-              return true;
-            } catch (fallbackError) {
+
+          // Try write with response first
+          try {
+            await dev.writeCharacteristicWithResponseForService(
+              NUS_SERVICE_UUID,
+              NUS_RX_CHAR_UUID,
+              encoded
+            );
+            console.log(`Command sent to device ${deviceInfo.id}`);
+            successCount++;
+            return true;
+          } catch (writeError) {
+            const message = (writeError?.message || '').toLowerCase();
+
+            // If disconnected, handle removal
+            if (message.includes('disconnected') || message.includes('cancel')) {
+              await disconnectFromDevice(deviceInfo.id);
               failureCount++;
               return false;
             }
+
+            // Try write without response as fallback
+            if (typeof dev.writeCharacteristicWithoutResponseForService === 'function') {
+              try {
+                await delay(80);
+                if (!isConnectedRef.current) {
+                  failureCount++;
+                  return false;
+                }
+                await dev.writeCharacteristicWithoutResponseForService(
+                  NUS_SERVICE_UUID,
+                  NUS_RX_CHAR_UUID,
+                  encoded
+                );
+                console.log(`Command sent to device ${deviceInfo.id} (no response)`);
+                successCount++;
+                return true;
+              } catch (fallbackError) {
+                failureCount++;
+                return false;
+              }
+            }
+
+            failureCount++;
+            return false;
           }
-          
+        } catch (error) {
+          console.error(`Error sending to device ${deviceInfo.id}:`, error);
           failureCount++;
           return false;
         }
-      } catch (error) {
-        console.error(`Error sending to device ${deviceInfo.id}:`, error);
-        failureCount++;
-        return false;
-      }
-    });
+      });
 
-    // Wait for all sends to complete
-    await Promise.all(sendPromises);
+      // Wait for all sends to complete
+      await Promise.all(sendPromises);
 
-    // Provide feedback
-    if (successCount > 0) {
-      if (successCount === devicesSnapshot.length) {
-        // All succeeded
-        console.log(`Command delivered to all ${successCount} devices`);
+      // Provide feedback
+      if (successCount > 0) {
+        console.log(`Command delivered to active device (${successCount} ok)`);
         return true;
       } else {
-        // Partial success
-        console.warn(`Command sent to ${successCount}/${devicesSnapshot.length} devices`);
-        showTemporaryStatus(`Sent to ${successCount}/${devicesSnapshot.length} devices`, 3000);
-        return true; // Consider partial success as OK
+        // All failed
+        console.error('Command failed on all devices', { failureCount });
+        Alert.alert('Send Failed', 'Could not send command to any device.');
+        return false;
       }
-    } else {
-      // All failed
-      console.error('Command failed on all devices');
-      Alert.alert('Send Failed', 'Could not send command to any device.');
-      return false;
-    }
+    };
+
+    // Serialize writes to prevent overlapping GATT operations (common cause of random send failures).
+    const queued = writeQueueRef.current.then(run, run);
+    writeQueueRef.current = queued.catch(() => {});
+    return queued;
   }, [delay, disconnectFromDevice, showTemporaryStatus]);
 
   // Expose BLE command sender to LobbyContext so it can sync lobby code to device.
@@ -2823,7 +3026,7 @@ export const BluetoothProvider = ({ children }) => {
     
     setMessages(prev => [...prev, newMessage].slice(-MAX_MESSAGES_IN_MEMORY));
 
-    const waitForDeviceLobby = (expectedLobby, timeoutMs = 6000) => new Promise((resolve) => {
+    const waitForDeviceLobby = (expectedLobby, timeoutMs = 9000) => new Promise((resolve) => {
       const start = Date.now();
       const intervalId = setInterval(() => {
         const current = deviceLobbyCodeRef.current;
@@ -2843,27 +3046,102 @@ export const BluetoothProvider = ({ children }) => {
     // Auto-sync + wait for `STATUS:LOBBY_SET,<code>` (or SELF lobby field) so the user doesn't have to retry manually.
     const beforeLobby = deviceLobbyCodeRef.current;
     if (typeof beforeLobby !== 'number' || beforeLobby !== desiredLobby) {
+      let syncWriteOk = false;
       try {
         showTemporaryStatus('Syncing lobby to device…', 2500);
         if (typeof syncLobbyToDevice === 'function') {
-          await syncLobbyToDevice(sendCommand, desiredLobby);
+          syncWriteOk = await syncLobbyToDevice(sendCommand, desiredLobby);
         }
       } catch {
         // ignore
       }
 
-      const synced = await waitForDeviceLobby(desiredLobby, 6000);
+      let synced = await waitForDeviceLobby(desiredLobby, 6500);
+
+      // One retry helps when BLE notifications are delayed or the first write was flaky.
+      if (!synced) {
+        try {
+          if (typeof syncLobbyToDevice === 'function') {
+            await syncLobbyToDevice(sendCommand, desiredLobby);
+          }
+        } catch {
+          // ignore
+        }
+        synced = await waitForDeviceLobby(desiredLobby, 3500);
+      }
+
       if (!synced) {
         const afterLobby = deviceLobbyCodeRef.current;
-        const deviceLabel = typeof afterLobby === 'number' ? String(afterLobby) : 'unknown';
+        const isValidAfter =
+          typeof afterLobby === 'number' && (afterLobby === 0 || (afterLobby >= 1000 && afterLobby <= 9999));
+        const deviceLabel = isValidAfter ? String(afterLobby) : 'unknown';
+
+        const supportsLobby = hubReportsLobbyRef.current === true;
+
+        // If the hub has explicitly reported a different valid lobby, do NOT allow sending.
+        const afterIsValidLobby = typeof afterLobby === 'number' && afterLobby >= 1000 && afterLobby <= 9999;
+        const hardMismatch = afterIsValidLobby && afterLobby !== desiredLobby;
+
         setMessages(prev => prev.map(msg =>
           msg.id === newMessage.id
             ? { ...msg, pending: false, failed: true }
             : msg
         ));
+
+        // If we likely wrote the lobby change but can't confirm (older firmware / missed notifications),
+        // allow the user to send anyway with an explicit warning.
+        if (!hardMismatch && syncWriteOk) {
+          const message = supportsLobby
+            ? `Could not confirm the hub switched to lobby ${desiredLobby} (device is ${deviceLabel}).
+
+Send anyway? (May deliver to the wrong group if the hub did not switch.)`
+            : `Could not confirm the hub switched to lobby ${desiredLobby}.
+
+This hub may be running older firmware (no lobby confirmation). If you already flashed the latest firmware, wait ~5s and try again.
+
+Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
+
+          return await new Promise((resolve) => {
+            Alert.alert(
+              'Lobby Not Synced',
+              message,
+              [
+                { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+                {
+                  text: 'Send anyway',
+                  style: 'destructive',
+                  onPress: async () => {
+                    // Re-add the message as pending and attempt the send.
+                    setMessages(prev => prev.map(msg =>
+                      msg.id === newMessage.id
+                        ? { ...msg, pending: true, failed: false }
+                        : msg
+                    ));
+
+                    const ok = await sendCommand(command);
+                    setMessages(prev => prev.map(msg =>
+                      msg.id === newMessage.id
+                        ? { ...msg, pending: false, failed: !ok }
+                        : msg
+                    ));
+
+                    if (ok) {
+                      showTemporaryStatus('Sent without lobby confirmation', 3000);
+                    }
+                    resolve(ok);
+                  },
+                },
+              ],
+              { cancelable: true }
+            );
+          });
+        }
+
         Alert.alert(
           'Lobby Not Synced',
-          `Could not confirm the hub switched to lobby ${desiredLobby} (device is ${deviceLabel}). Please wait a moment and try again.`
+          supportsLobby
+            ? `Could not confirm the hub switched to lobby ${desiredLobby} (device is ${deviceLabel}). Please wait a moment and try again.`
+            : `Could not confirm the hub switched to lobby ${desiredLobby}. This hub may be running older firmware (no lobby confirmation). Please flash the latest hub firmware and try again.`
         );
         return false;
       }
@@ -2877,6 +3155,178 @@ export const BluetoothProvider = ({ children }) => {
         : msg
     ));
     
+    return success;
+  }, [isConnected, sendCommand, showTemporaryStatus, syncLobbyToDevice]);
+
+  // Send a phone-targeted direct message.
+  // This routes through the hub, and is filtered on each phone using the claimed mobile slot (M1..M4).
+  // Format: DM:<targetDevice>,<fromMobileId>,<toMobileId>,<text>
+  const sendDirectMessage = useCallback(async (toDeviceId, toMobileId, text) => {
+    if (!isConnected) {
+      Alert.alert('Not Connected', 'Please connect to a device first.');
+      return false;
+    }
+
+    const desiredLobby = lobbyCodeRef.current;
+    const isValidLobby = typeof desiredLobby === 'number' && desiredLobby >= 1000 && desiredLobby <= 9999;
+    if (!isValidLobby) {
+      Alert.alert('No Lobby', 'Enter a 4-digit lobby code first.');
+      return false;
+    }
+
+    const targetMobile = typeof toMobileId === 'string' ? parseInt(toMobileId, 10) : toMobileId;
+    if (Number.isNaN(targetMobile) || targetMobile < 1 || targetMobile > 4) {
+      Alert.alert('Invalid Recipient', 'Choose a recipient mobile (M1–M4).');
+      return false;
+    }
+
+    const fromMobileId = (typeof myMobileIdRef.current === 'number' && myMobileIdRef.current >= 1 && myMobileIdRef.current <= 4)
+      ? myMobileIdRef.current
+      : 0;
+
+    // Device MAX_TEXT_LEN = 50, and firmware tags DM payloads as:
+    // __DM__:<toMobileId>:<fromMobileId>:<text>
+    const dmPrefix = `__DM__:${targetMobile}:${fromMobileId}:`;
+    const maxBodyLen = Math.max(0, 50 - dmPrefix.length);
+    const truncatedText = String(text || '').substring(0, maxBodyLen);
+
+    const command = `DM:${toDeviceId},${fromMobileId},${targetMobile},${truncatedText}`;
+
+    const newMessage = {
+      id: `dm-${Date.now()}-me-${toDeviceId}-${targetMobile}`,
+      from: 'me',
+      to: toDeviceId,
+      text: truncatedText,
+      timestamp: Date.now(),
+      isMine: true,
+      pending: true,
+      dmToMobileId: targetMobile,
+      dmFromMobileId: fromMobileId,
+    };
+
+    setMessages(prev => [...prev, newMessage].slice(-MAX_MESSAGES_IN_MEMORY));
+
+    const waitForDeviceLobby = (expectedLobby, timeoutMs = 9000) => new Promise((resolve) => {
+      const start = Date.now();
+      const intervalId = setInterval(() => {
+        const current = deviceLobbyCodeRef.current;
+        if (typeof current === 'number' && current === expectedLobby) {
+          clearInterval(intervalId);
+          resolve(true);
+          return;
+        }
+        if (Date.now() - start >= timeoutMs) {
+          clearInterval(intervalId);
+          resolve(false);
+        }
+      }, 150);
+    });
+
+    const beforeLobby = deviceLobbyCodeRef.current;
+    if (typeof beforeLobby !== 'number' || beforeLobby !== desiredLobby) {
+      let syncWriteOk = false;
+      try {
+        showTemporaryStatus('Syncing lobby to device…', 2500);
+        if (typeof syncLobbyToDevice === 'function') {
+          syncWriteOk = await syncLobbyToDevice(sendCommand, desiredLobby);
+        }
+      } catch {
+        // ignore
+      }
+
+      let synced = await waitForDeviceLobby(desiredLobby, 6500);
+      if (!synced) {
+        try {
+          if (typeof syncLobbyToDevice === 'function') {
+            await syncLobbyToDevice(sendCommand, desiredLobby);
+          }
+        } catch {
+          // ignore
+        }
+        synced = await waitForDeviceLobby(desiredLobby, 3500);
+      }
+
+      if (!synced) {
+        const afterLobby = deviceLobbyCodeRef.current;
+        const isValidAfter =
+          typeof afterLobby === 'number' && (afterLobby === 0 || (afterLobby >= 1000 && afterLobby <= 9999));
+        const deviceLabel = isValidAfter ? String(afterLobby) : 'unknown';
+
+        const supportsLobby = hubReportsLobbyRef.current === true;
+
+        const afterIsValidLobby = typeof afterLobby === 'number' && afterLobby >= 1000 && afterLobby <= 9999;
+        const hardMismatch = afterIsValidLobby && afterLobby !== desiredLobby;
+
+        setMessages(prev => prev.map(msg =>
+          msg.id === newMessage.id
+            ? { ...msg, pending: false, failed: true }
+            : msg
+        ));
+
+        if (!hardMismatch && syncWriteOk) {
+          const message = supportsLobby
+            ? `Could not confirm the hub switched to lobby ${desiredLobby} (device is ${deviceLabel}).
+
+Send anyway? (May deliver to the wrong group if the hub did not switch.)`
+            : `Could not confirm the hub switched to lobby ${desiredLobby}.
+
+This hub may be running older firmware (no lobby confirmation). If you already flashed the latest firmware, wait ~5s and try again.
+
+Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
+
+          return await new Promise((resolve) => {
+            Alert.alert(
+              'Lobby Not Synced',
+              message,
+              [
+                { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+                {
+                  text: 'Send anyway',
+                  style: 'destructive',
+                  onPress: async () => {
+                    setMessages(prev => prev.map(msg =>
+                      msg.id === newMessage.id
+                        ? { ...msg, pending: true, failed: false }
+                        : msg
+                    ));
+
+                    const ok = await sendCommand(command);
+                    setMessages(prev => prev.map(msg =>
+                      msg.id === newMessage.id
+                        ? { ...msg, pending: false, failed: !ok }
+                        : msg
+                    ));
+
+                    if (ok) {
+                      showTemporaryStatus('Sent without lobby confirmation', 3000);
+                    }
+                    resolve(ok);
+                  },
+                },
+              ],
+              { cancelable: true }
+            );
+          });
+        }
+
+        Alert.alert(
+          'Lobby Not Synced',
+          supportsLobby
+            ? `Could not confirm the hub switched to lobby ${desiredLobby} (device is ${deviceLabel}). Please wait a moment and try again.`
+            : `Could not confirm the hub switched to lobby ${desiredLobby}. This hub may be running older firmware (no lobby confirmation). Please flash the latest hub firmware and try again.`
+        );
+        return false;
+      }
+    }
+
+    const success = await sendCommand(command);
+
+    setMessages(prev => prev.map(msg =>
+      msg.id === newMessage.id
+        ? { ...msg, pending: false, failed: !success }
+        : msg
+    ));
+
     return success;
   }, [isConnected, sendCommand, showTemporaryStatus, syncLobbyToDevice]);
   
@@ -2977,6 +3427,7 @@ export const BluetoothProvider = ({ children }) => {
     connectedDevicesCount,
     myLocation,
     memberLocations,
+    myMobileId,
     activeAlert,
     statusMessage,
     morseInput,
@@ -3016,6 +3467,7 @@ export const BluetoothProvider = ({ children }) => {
     
     // Messaging
     sendMessage,
+    sendDirectMessage,
     sendBroadcastMessage,
     getMessagesForDevice,
     getConversations,

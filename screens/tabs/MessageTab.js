@@ -11,8 +11,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 const MessageTab = ({ onOpenChat }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { isConnected, memberLocations, getConversations, unreadCount } = useBluetoothDevice();
-  const { getMemberNickname, lobbyMembers } = useLobby();
+  const { isConnected, memberLocations, getConversations, unreadCount, connectedDevicesCount } = useBluetoothDevice();
+  const { getMemberNickname, lobbyMembers, myDeviceId } = useLobby();
   const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -127,6 +127,42 @@ const MessageTab = ({ onOpenChat }) => {
             </View>
           </TouchableOpacity>
         )}
+
+        {/* This Hub (Local Phones) - only when multiple phones are connected to the same hub */}
+        {isConnected &&
+          typeof connectedDevicesCount === 'number' &&
+          connectedDevicesCount > 1 &&
+          typeof myDeviceId === 'number' &&
+          !Number.isNaN(myDeviceId) &&
+          (!searchQuery || 'this hub local phones direct message'.includes(searchQuery.toLowerCase())) && (
+            <TouchableOpacity
+              style={[styles.chatItem, { borderWidth: 1, borderColor: colors.glassBorder }]}
+              onPress={() => onOpenChat({ type: 'direct', name: `This Hub (D${myDeviceId})`, deviceId: myDeviceId })}
+            >
+              <BlurView
+                intensity={colors.glassIntensity}
+                tint={colors.glassTint}
+                style={StyleSheet.absoluteFillObject}
+              />
+              <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+
+              <View style={[localStyles.avatarCircle, { backgroundColor: colors.inputBg }]}>
+                <Users size={16} color={colors.textDark} />
+              </View>
+              <View style={localStyles.chatInfo}>
+                <Text style={[styles.chatName, { color: colors.textDark }]}>This Hub (Local Phones)</Text>
+                <Text style={[localStyles.chatPreview, { color: colors.gray }]} numberOfLines={1}>
+                  Direct message a specific connected phone (M1–M4)
+                </Text>
+              </View>
+              <View style={localStyles.chatMeta}>
+                <Text style={[localStyles.chatTime, { color: colors.gray }]}>{connectedDevicesCount} phones</Text>
+                <View style={localStyles.rightStatusRow}>
+                  <View style={styles.onlineDot} />
+                </View>
+              </View>
+            </TouchableOpacity>
+          )}
         
         {/* Recent Conversations */}
         {filteredConversations.length > 0 && (

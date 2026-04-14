@@ -24,6 +24,9 @@ import MembersTab from './tabs/MembersTab';
 const LOCATION_SERVICES_PREF_KEY = '@hikesafe_location_services_enabled';
 const LOCATION_SERVICES_PROMPTED_KEY = '@hikesafe_location_services_prompted';
 
+const TAB_ORDER = ['home', 'location', 'message', 'members', 'profile'];
+const SUB_SCREENS = ['editProfile', 'chat', 'settings', 'help', 'reportProblem'];
+
 const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
   <TouchableOpacity style={styles.tabItem} onPress={onPress}>
     {active ? (
@@ -162,41 +165,37 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
     goToLocationTab();
   }, [goToLocationTab, showLocationServicesBlocked]);
 
-  const tabOrder = ['home', 'location', 'message', 'members', 'profile'];
-
-  const subScreens = ['editProfile', 'chat', 'settings', 'help', 'reportProblem'];
-
   const getTransitionMode = useCallback((fromTab, toTab) => {
-    const fromIsSub = subScreens.includes(fromTab);
-    const toIsSub = subScreens.includes(toTab);
+    const fromIsSub = SUB_SCREENS.includes(fromTab);
+    const toIsSub = SUB_SCREENS.includes(toTab);
 
     if (!fromIsSub && toIsSub) return 2;
     if (fromIsSub && !toIsSub) return 3;
 
-    const fromIndex = tabOrder.indexOf(fromTab);
-    const toIndex = tabOrder.indexOf(toTab);
+    const fromIndex = TAB_ORDER.indexOf(fromTab);
+    const toIndex = TAB_ORDER.indexOf(toTab);
     if (fromIndex !== -1 && toIndex !== -1) {
       const delta = Math.abs(toIndex - fromIndex);
       return delta === 1 ? 0 : 1;
     }
 
     return 1;
-  }, [subScreens, tabOrder]);
+  }, []);
 
   const getTransitionDirection = useCallback((fromTab, toTab) => {
-    const fromIndex = tabOrder.indexOf(fromTab);
-    const toIndex = tabOrder.indexOf(toTab);
+    const fromIndex = TAB_ORDER.indexOf(fromTab);
+    const toIndex = TAB_ORDER.indexOf(toTab);
 
     if (fromIndex !== -1 && toIndex !== -1) {
       return toIndex > fromIndex ? 1 : -1;
     }
 
-    const fromIsSub = subScreens.includes(fromTab);
-    const toIsSub = subScreens.includes(toTab);
+    const fromIsSub = SUB_SCREENS.includes(fromTab);
+    const toIsSub = SUB_SCREENS.includes(toTab);
     if (!fromIsSub && toIsSub) return 1;
     if (fromIsSub && !toIsSub) return -1;
     return 1;
-  }, [subScreens, tabOrder]);
+  }, []);
 
   const finishTabTransition = useCallback((toTab) => {
     renderedTabRef.current = toTab;
@@ -451,7 +450,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   }, [windowWidth, windowHeight]);
 
   // Hide bottom nav when on sub-screens
-  const showBottomNav = !subScreens.includes(activeTab);
+  const showBottomNav = !SUB_SCREENS.includes(activeTab);
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: colors.background }}>

@@ -21,23 +21,41 @@ const LobbyScreen = ({ onLogin }) => {
   // Initialize local fields.
   // Username is sourced from onboarding nickname and is not editable.
   useEffect(() => {
-    const nextName = (myNickname || rememberedUsername || '').toString();
-    if (nextName && nextName !== username) setUsername(nextName);
-    if (rememberEnabled && rememberedJoinCode) setJoinCode(rememberedJoinCode);
-  }, [rememberEnabled, rememberedUsername, rememberedJoinCode, myNickname, username]);
+    const nextName = String(myNickname || rememberedUsername || '').trim();
+    if (!nextName) return;
+    setUsername(prev => (prev === nextName ? prev : nextName));
+  }, [myNickname, rememberedUsername]);
 
-  // Persist when username/joinCode change and remember is enabled
+  // Apply remembered join code (only when it actually differs).
   useEffect(() => {
-    if (rememberEnabled) {
-      saveRememberData(username, joinCode).catch(e => console.error(e));
+    if (!rememberEnabled) return;
+    const nextCode = String(rememberedJoinCode || '');
+    if (!nextCode) return;
+    setJoinCode(prev => (prev === nextCode ? prev : nextCode));
+  }, [rememberEnabled, rememberedJoinCode]);
+
+  // Persist when username/joinCode change and remember is enabled.
+  // Guard against redundant writes that can cause render loops on some RN builds.
+  useEffect(() => {
+    if (!rememberEnabled) return;
+
+    const nameToSave = String(username || '');
+    const codeToSave = String(joinCode || '');
+
+    // If the context already matches, don't write again.
+    if (nameToSave === String(rememberedUsername || '') && codeToSave === String(rememberedJoinCode || '')) {
+      return;
     }
-  }, [username, joinCode, rememberEnabled, saveRememberData]);
+
+    saveRememberData(nameToSave, codeToSave).catch(e => console.error(e));
+  }, [username, joinCode, rememberEnabled, rememberedUsername, rememberedJoinCode, saveRememberData]);
 
   const getJoinButtonText = () => {
     return isSubmitting ? 'Joining...' : 'Enter Lobby';
   };
 
   const handleJoinLobby = async () => {
+    if (isSubmitting) return;
     if (!joinCode.trim()) {
       Alert.alert('Error', 'Please enter a lobby code');
       return;
@@ -58,6 +76,7 @@ const LobbyScreen = ({ onLogin }) => {
   };
   
     const performJoinLobby = async () => {
+    if (isSubmitting) return;
     setIsSubmitting(true);
     
     try {

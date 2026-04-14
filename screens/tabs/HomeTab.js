@@ -13,7 +13,7 @@ import { calculateDistance } from '../../utils/math';
 const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { isConnected, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, sendSOS } = useBluetoothDevice();
+  const { isConnected, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, sendSOS, sendOK } = useBluetoothDevice();
   const { lobbyCode, lobbyName, myNickname } = useLobby();
 
   // SOS button pulse/blink (subtle) when connected.
@@ -88,6 +88,20 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
 
     await sendSOS();
     Alert.alert('SOS Sent', 'Your SOS signal has been broadcasted to all group members.');
+  };
+
+  const handleSendOk = async () => {
+    if (!isConnected) {
+      Alert.alert('Not Connected', 'Please connect to your device first.');
+      return;
+    }
+
+    try {
+      await sendOK();
+      Alert.alert('OK Sent', 'Your OK signal has been sent.');
+    } catch {
+      Alert.alert('Send Failed', 'Could not send OK. Please try again.');
+    }
   };
   
   return (
@@ -254,6 +268,22 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
           }}
         </Pressable>
 
+        {/* OK Button */}
+        <TouchableOpacity
+          onPress={handleSendOk}
+          disabled={!isConnected}
+          activeOpacity={0.85}
+          style={[
+            localStyles.okButton,
+            {
+              backgroundColor: isConnected ? colors.primary : colors.inputBg,
+              opacity: isConnected ? 1 : 0.6,
+            },
+          ]}
+        >
+          <Text style={[localStyles.okButtonText, { color: isConnected ? colors.textLight : colors.gray }]}>I am OK</Text>
+        </TouchableOpacity>
+
       </ScrollView>
     </View>
   );
@@ -357,6 +387,22 @@ const localStyles = StyleSheet.create({
     textAlign: 'center',
     letterSpacing: 1.2,
     marginTop: 28,
+  },
+
+  okButton: {
+    alignSelf: 'center',
+    marginTop: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 16,
+    minWidth: 220,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  okButtonText: {
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.4,
   },
 
   sosPressable: {
