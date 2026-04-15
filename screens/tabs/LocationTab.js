@@ -174,6 +174,16 @@ const RadarView = ({ myLocation, members, colors, onMemberPress, locationService
   // Find max distance to scale the radar
   const maxDistance = Math.max(
     ...members.map(m => m.distance || 0).filter(d => d > 0),
+    ...members.flatMap(m => {
+      const mobiles = Array.isArray(m?.mobiles) ? m.mobiles : [];
+      if (!myLocation?.valid) return [];
+      return mobiles
+        .map(mobile => {
+          if (!mobile?.lat || !mobile?.lng) return 0;
+          return calculateDistance(myLocation.lat, myLocation.lng, mobile.lat, mobile.lng) || 0;
+        })
+        .filter(d => d > 0);
+    }),
     100 // Minimum 100m range
   );
   
@@ -455,6 +465,16 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
   // Calculate bounds
   const maxDistance = Math.max(
     ...members.map(m => m.distance || 0).filter(d => d > 0),
+    ...members.flatMap(m => {
+      const mobiles = Array.isArray(m?.mobiles) ? m.mobiles : [];
+      if (!myLocation?.valid) return [];
+      return mobiles
+        .map(mobile => {
+          if (!mobile?.lat || !mobile?.lng) return 0;
+          return calculateDistance(myLocation.lat, myLocation.lng, mobile.lat, mobile.lng) || 0;
+        })
+        .filter(d => d > 0);
+    }),
     200 // Minimum 200m view
   );
   
@@ -885,6 +905,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
     isConnected, 
     connectedDevice, 
     myLocation, 
+    phoneLocation,
     memberLocations,
     breadcrumbs,
     remoteBreadcrumbs,
@@ -902,6 +923,28 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
   const [offlineProgress, setOfflineProgress] = useState(null);
 
   const [locationServicesEnabled, setLocationServicesEnabled] = useState(true);
+
+  const effectiveMyLocation = useMemo(() => {
+    const isValid = (loc) => {
+      if (!loc) return false;
+      if (!loc.valid) return false;
+      if (typeof loc.lat !== 'number' || typeof loc.lng !== 'number') return false;
+      if (!Number.isFinite(loc.lat) || !Number.isFinite(loc.lng)) return false;
+      if (loc.lat === 0 && loc.lng === 0) return false;
+      return true;
+    };
+
+    if (isValid(myLocation)) return myLocation;
+    if (isValid(phoneLocation)) {
+      return {
+        lat: phoneLocation.lat,
+        lng: phoneLocation.lng,
+        satellites: typeof myLocation?.satellites === 'number' ? myLocation.satellites : 0,
+        valid: true,
+      };
+    }
+    return myLocation;
+  }, [myLocation, phoneLocation]);
 
   useEffect(() => {
     let alive = true;
@@ -944,11 +987,11 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
     return (memberLocations || []).map(member => ({
       ...member,
       name: getMemberNickname ? getMemberNickname(member.deviceId) : `Device ${member.deviceId}`,
-      distance: myLocation.valid && member.lat && member.lng
-        ? calculateDistance(myLocation.lat, myLocation.lng, member.lat, member.lng)
+      distance: effectiveMyLocation.valid && member.lat && member.lng
+        ? calculateDistance(effectiveMyLocation.lat, effectiveMyLocation.lng, member.lat, member.lng)
         : null,
     }));
-  }, [getMemberNickname, memberLocations, myLocation.lat, myLocation.lng, myLocation.valid]);
+  }, [effectiveMyLocation.lat, effectiveMyLocation.lng, effectiveMyLocation.valid, getMemberNickname, memberLocations]);
 
   // Only show other members' trails when that member has sent an SOS.
   const sosRemoteBreadcrumbs = useMemo(() => {
@@ -977,7 +1020,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
   const offlineTilesAvailable = !!offlineMeta?.tileCount && offlineMeta.tileCount > 0;
 
   const startOfflineDownload = useCallback(async () => {
-    if (!myLocation?.valid) {
+    if (!effectiveMyLocation?.valid) {
       Alert.alert('GPS Required', 'Wait for a valid GPS fix before downloading offline maps.');
       return;
     }
@@ -987,8 +1030,8 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
     }
 
     const estimate = estimateTileCountForRegion({
-      centerLat: myLocation.lat,
-      centerLng: myLocation.lng,
+      centerLat: effectiveMyLocation.lat,
+      centerLng: effectiveMyLocation.lng,
       radiusKm: OFFLINE_DEFAULT_RADIUS_KM,
       zoomMin: OFFLINE_DEFAULT_ZOOM_MIN,
       zoomMax: OFFLINE_DEFAULT_ZOOM_MAX,
@@ -1007,8 +1050,8 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
 
     try {
       const res = await downloadOfflineRegionTilesAsync({
-        centerLat: myLocation.lat,
-        centerLng: myLocation.lng,
+        centerLat: effectiveMyLocation.lat,
+        centerLng: effectiveMyLocation.lng,
         radiusKm: OFFLINE_DEFAULT_RADIUS_KM,
         zoomMin: OFFLINE_DEFAULT_ZOOM_MIN,
         zoomMax: OFFLINE_DEFAULT_ZOOM_MAX,
@@ -1019,8 +1062,8 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
 
       const meta = {
         downloadedAt: Date.now(),
-        centerLat: myLocation.lat,
-        centerLng: myLocation.lng,
+        centerLat: effectiveMyLocation.lat,
+        centerLng: effectiveMyLocation.lng,
         radiusKm: OFFLINE_DEFAULT_RADIUS_KM,
         zoomMin: OFFLINE_DEFAULT_ZOOM_MIN,
         zoomMax: OFFLINE_DEFAULT_ZOOM_MAX,
@@ -1033,7 +1076,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
     } finally {
       setOfflineDownloading(false);
     }
-  }, [myLocation?.lat, myLocation?.lng, myLocation?.valid]);
+  }, [effectiveMyLocation?.lat, effectiveMyLocation?.lng, effectiveMyLocation?.valid]);
 
   const clearOfflineDownload = useCallback(async () => {
     Alert.alert(
@@ -1196,20 +1239,31 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
 
         {/* Topo Map View (MapLibre, offline-capable with cached tiles) */}
         {viewMode === 'map' && (
-          <TopoMapView
-            myLocation={myLocation}
-            members={membersWithDistance}
-            colors={colors}
-            onMemberPress={handleMemberPress}
-            tileUrlTemplate={TILE_URL_TEMPLATE}
-            offlineEnabled={offlineTilesAvailable}
-          />
+          (MapLibreRN && offlineTilesAvailable) ? (
+            <TopoMapView
+              myLocation={effectiveMyLocation}
+              members={membersWithDistance}
+              colors={colors}
+              onMemberPress={handleMemberPress}
+              tileUrlTemplate={TILE_URL_TEMPLATE}
+              offlineEnabled={offlineTilesAvailable}
+            />
+          ) : (
+            <OfflineGridMap
+              myLocation={effectiveMyLocation}
+              members={membersWithDistance}
+              colors={colors}
+              onMemberPress={handleMemberPress}
+              breadcrumbs={breadcrumbs}
+              remoteBreadcrumbsByDevice={sosRemoteBreadcrumbs}
+            />
+          )
         )}
 
         {/* Radar View */}
         {viewMode === 'radar' && (
           <RadarView
-            myLocation={myLocation}
+            myLocation={effectiveMyLocation}
             members={membersWithDistance}
             colors={colors}
             onMemberPress={handleMemberPress}

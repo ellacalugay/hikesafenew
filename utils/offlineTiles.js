@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 const OFFLINE_TILES_DIR = `${FileSystem.documentDirectory}offline-tiles`;
 
@@ -96,6 +96,11 @@ export const downloadOfflineRegionTilesAsync = async ({
     throw new Error('Missing tileUrlTemplate');
   }
 
+  const template = String(tileUrlTemplate);
+  if (!template.includes('{z}') || !template.includes('{x}') || !template.includes('{y}')) {
+    throw new Error('Tile URL template must include {z}, {x}, and {y}.');
+  }
+
   await ensureDirAsync(OFFLINE_TILES_DIR);
 
   const dirPromises = new Map();
@@ -115,6 +120,8 @@ export const downloadOfflineRegionTilesAsync = async ({
 
   let completed = 0;
   let attempted = 0;
+  let failed = 0;
+  let firstErrorMessage = null;
 
   // Build a capped download queue up-front so we can process in concurrent batches.
   const downloadQueue = [];
@@ -131,6 +138,14 @@ export const downloadOfflineRegionTilesAsync = async ({
       }
     }
   }
+
+  if (totalCapped > 0 && downloadQueue.length === 0) {
+    throw new Error('Could not build tile download queue. Check that your GPS coordinates are valid and try again.');
+  }
+
+  const sampleUrl = downloadQueue.length > 0
+    ? buildUrlFromTemplate(template, downloadQueue[0].z, downloadQueue[0].x, downloadQueue[0].y)
+    : null;
 
   const CONCURRENT_DOWNLOADS = Math.max(1, Math.min(32, Math.floor(Number(concurrentDownloads) || 8)));
 
@@ -156,18 +171,22 @@ export const downloadOfflineRegionTilesAsync = async ({
           if (existing.exists && existing.size > 0) {
             completed += 1;
           } else {
-            const url = buildUrlFromTemplate(tileUrlTemplate, z, x, y);
+            const url = buildUrlFromTemplate(template, z, x, y);
             await FileSystem.downloadAsync(url, outUri);
             completed += 1;
           }
-        } catch {
+        } catch (e) {
           // ignore per-tile failures; continue
+          failed += 1;
+          if (!firstErrorMessage) {
+            firstErrorMessage = e?.message ? String(e.message) : String(e);
+          }
         }
       })
     );
 
     if (typeof onProgress === 'function') {
-      onProgress({ completed, attempted, total: totalCapped });
+      onProgress({ completed, attempted, failed, total: totalCapped });
     }
 
     if (typeof shouldCancel === 'function' && shouldCancel()) {
@@ -175,5 +194,15 @@ export const downloadOfflineRegionTilesAsync = async ({
     }
   }
 
-  return { completed, attempted, total: totalCapped, cancelled: false };
+  if (totalCapped > 0 && attempted === 0) {
+    throw new Error('No tiles were attempted. Restart the app / Expo bundler and try again.');
+  }
+
+  if (attempted > 0 && completed === 0) {
+    throw new Error(
+      `No tiles downloaded. Check EXPO_PUBLIC_TILE_URL_TEMPLATE (reachable, usually https, returns PNG/JPG).${sampleUrl ? ` Sample URL: ${sampleUrl}` : ''}${firstErrorMessage ? ` First error: ${firstErrorMessage}` : ''}`
+    );
+  }
+
+  return { completed, attempted, failed, total: totalCapped, cancelled: false };
 };
