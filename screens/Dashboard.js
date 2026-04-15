@@ -4,6 +4,7 @@ import Animated, { Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Home, MapPin, MessageCircle, User, CheckSquare, Square, AlertTriangle, X, Users } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useNavigation } from '@react-navigation/native';
 import { styles } from '../styles/styles';
 import { useTheme } from '../context/ThemeContext';
 import { useBluetoothDevice } from '../context/BluetoothContext';
@@ -46,6 +47,7 @@ const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
 
 const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const { colors, isDarkMode } = useTheme();
+  const navigation = useNavigation();
   const { activeAlert, dismissAlert, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
   const { lobbyCode, lobbyName, leaveLobby, isInLobby, getEmergencyContactForDevice, getMemberNickname } = useLobby();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -685,6 +687,12 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                           await leaveLobby();
                           setShowLobbyModal(false);
                           Alert.alert('Left Lobby', 'Lobby cleared for this phone.');
+
+                          // Make lobby switching obvious: return to the Lobby join screen.
+                          navigation.reset({
+                            index: 0,
+                            routes: [{ name: 'Lobby' }],
+                          });
                         }}
                       >
                         <Text style={{ color: 'white', fontWeight: '600' }}>Leave</Text>

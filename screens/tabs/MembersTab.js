@@ -33,7 +33,7 @@ const formatTimeSince = (timestamp) => {
   return `${Math.floor(seconds / 86400)}d ago`;
 };
 
-const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname, myNickname, onRemove }) => {
+const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname, myNickname, onRemove, myDeviceId, localMobileNicknames, remoteMobileNicknames }) => {
   const distance = myLocation.valid && member.lat && member.lng
     ? calculateDistance(myLocation.lat, myLocation.lng, member.lat, member.lng)
     : null;
@@ -129,7 +129,7 @@ const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname
       </View>
 
       {/* Location Info */}
-      {(member.lat && member.lng) ? (
+      {(Number.isFinite(member.lat) && Number.isFinite(member.lng)) ? (
         <View style={[localStyles.locationRow, { borderTopColor: colors.borderColor }]}>
           <MapPin size={14} color={colors.gray} />
           <Text style={[localStyles.locationText, { color: colors.gray }]}>
@@ -162,15 +162,36 @@ const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname
       {member.mobiles && member.mobiles.length > 0 && (
         <View style={[localStyles.mobilesSection, { borderTopColor: colors.borderColor }]}>
           <Text style={[localStyles.mobilesSectionTitle, { color: colors.gray }]}>
-            📱 Mobile Devices ({member.mobiles.length})
+            📱 Phones ({member.mobiles.length})
           </Text>
           {member.mobiles.map((mobile) => {
-            const mobileDistance = myLocation.valid && mobile.lat && mobile.lng
+            const canComputeDistance =
+              myLocation?.valid === true &&
+              Number.isFinite(myLocation?.lat) &&
+              Number.isFinite(myLocation?.lng) &&
+              Number.isFinite(mobile?.lat) &&
+              Number.isFinite(mobile?.lng);
+
+            const mobileDistance = canComputeDistance
               ? calculateDistance(myLocation.lat, myLocation.lng, mobile.lat, mobile.lng)
               : null;
+
+            const mobileId = mobile?.mobileId;
+            const isLocalHub = typeof member?.deviceId === 'number' && typeof myDeviceId === 'number' && member.deviceId === myDeviceId;
+            const nick = (typeof mobileId === 'number' && mobileId >= 1 && mobileId <= 4)
+              ? (isLocalHub
+                ? (localMobileNicknames && localMobileNicknames[mobileId] ? String(localMobileNicknames[mobileId]) : '')
+                : (remoteMobileNicknames && remoteMobileNicknames[`${member.deviceId}-m${mobileId}`] ? String(remoteMobileNicknames[`${member.deviceId}-m${mobileId}`]) : '')
+              )
+              : '';
+            const label = (nick || '').trim() || 'Unnamed Phone';
+            const avatarText = (nick && String(nick).trim().length > 0)
+              ? String(nick).trim().charAt(0).toUpperCase()
+              : '?';
             
             // RSSI signal strength interpretation
             const getRssiColor = (rssi) => {
+              if (typeof rssi !== 'number' || Number.isNaN(rssi)) return colors.gray;
               if (rssi >= -50) return '#4CAF50'; // Excellent
               if (rssi >= -60) return '#8BC34A'; // Good
               if (rssi >= -70) return '#FFC107'; // Fair
@@ -179,6 +200,7 @@ const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname
             };
             
             const getRssiLabel = (rssi) => {
+              if (typeof rssi !== 'number' || Number.isNaN(rssi)) return 'Unknown';
               if (rssi >= -50) return 'Excellent';
               if (rssi >= -60) return 'Good';
               if (rssi >= -70) return 'Fair';
@@ -186,20 +208,23 @@ const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname
               return 'Very Weak';
             };
 
+            const rssiText = (typeof mobile.rssi === 'number' && !Number.isNaN(mobile.rssi)) ? `${mobile.rssi}` : '--';
+            const hasEstimatedDistance = typeof mobile.estimatedDistance === 'number' && !Number.isNaN(mobile.estimatedDistance) && mobile.estimatedDistance >= 0;
+
             return (
               <View key={mobile.mobileId} style={[localStyles.mobileCard, { backgroundColor: colors.background, borderColor: colors.borderColor }]}>
                 <View style={localStyles.mobileHeader}>
                   <View style={[localStyles.mobileAvatar, { backgroundColor: colors.primary }]}>
-                    <Text style={localStyles.mobileAvatarText}>M{mobile.mobileId}</Text>
+                    <Text style={localStyles.mobileAvatarText}>{avatarText}</Text>
                   </View>
                   <View style={localStyles.mobileInfo}>
                     <Text style={[localStyles.mobileName, { color: colors.textDark }]}>
-                      Mobile {mobile.mobileId}
+                      {label}
                     </Text>
                     <View style={localStyles.rssiRow}>
                       <Radio size={12} color={getRssiColor(mobile.rssi)} />
                       <Text style={[localStyles.rssiLabel, { color: getRssiColor(mobile.rssi) }]}>
-                        {getRssiLabel(mobile.rssi)} ({mobile.rssi} dBm)
+                        {getRssiLabel(mobile.rssi)} ({rssiText} dBm)
                       </Text>
                     </View>
                   </View>
@@ -214,11 +239,15 @@ const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname
                 <View style={[localStyles.mobileLocationRow, { borderTopColor: colors.borderColor }]}>
                   <MapPin size={12} color={colors.gray} />
                   <Text style={[localStyles.mobileLocationText, { color: colors.gray }]}>
-                    {mobile.lat.toFixed(5)}, {mobile.lng.toFixed(5)}
+                    {(Number.isFinite(mobile.lat) && Number.isFinite(mobile.lng))
+                      ? `${mobile.lat.toFixed(5)}, ${mobile.lng.toFixed(5)}`
+                      : 'No GPS data'}
                   </Text>
-                  <Text style={[localStyles.mobileDistLabel, { color: colors.gray }]}>
-                    ~{mobile.estimatedDistance}m away
-                  </Text>
+                  {hasEstimatedDistance ? (
+                    <Text style={[localStyles.mobileDistLabel, { color: colors.gray }]}>
+                      ~{mobile.estimatedDistance}m away
+                    </Text>
+                  ) : null}
                 </View>
               </View>
             );
@@ -232,8 +261,13 @@ const MemberCard = ({ member, myLocation, colors, isMe, nickname, onEditNickname
 const MembersTab = ({ onNavigateToLocation }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { myLocation, memberLocations, isConnected, removeMemberLocation } = useBluetoothDevice();
-  const { lobbyCode, lobbyName, getMemberNickname, setMemberNickname, myNickname, lobbyMembers } = useLobby();
+  const { myLocation, phoneLocation, memberLocations, isConnected, removeMemberLocation, localMobileNicknames, remoteMobileNicknames } = useBluetoothDevice();
+  const { lobbyCode, lobbyName, getMemberNickname, setMemberNickname, myNickname, lobbyMembers, myDeviceId } = useLobby();
+
+  // Prefer phone GPS for distance calculations.
+  const effectiveMyLocation = (phoneLocation && phoneLocation.valid)
+    ? { lat: phoneLocation.lat, lng: phoneLocation.lng, valid: true }
+    : myLocation;
   
   // Nickname editing state
   const [showNicknameModal, setShowNicknameModal] = useState(false);
@@ -277,6 +311,30 @@ const MembersTab = ({ onNavigateToLocation }) => {
       if (m && typeof m.deviceId === 'number') byId.set(m.deviceId, m);
     });
 
+    // Derive remote phone membership from cross-hub nickname metadata.
+    // Keys are "<deviceId>-m<mobileId>".
+    const remoteMobilesByDevice = new Map();
+    try {
+      const entries = remoteMobileNicknames ? Object.entries(remoteMobileNicknames) : [];
+      entries.forEach(([key, nickname]) => {
+        const match = String(key).match(/^(\d+)-m(\d+)$/);
+        if (!match) return;
+        const deviceId = parseInt(match[1], 10);
+        const mobileId = parseInt(match[2], 10);
+        if (Number.isNaN(deviceId) || Number.isNaN(mobileId) || mobileId < 1 || mobileId > 4) return;
+
+        const nick = String(nickname || '').trim();
+        if (!nick) return;
+        if (/^mobile\s*\d+$/i.test(nick)) return;
+
+        const set = remoteMobilesByDevice.get(deviceId) || new Set();
+        set.add(mobileId);
+        remoteMobilesByDevice.set(deviceId, set);
+      });
+    } catch {
+      // ignore
+    }
+
     const ids = (lobbyMembers || [])
       .filter(m => m && !m.isSelf && typeof m.deviceId === 'number' && !Number.isNaN(m.deviceId))
       .map(m => m.deviceId);
@@ -286,9 +344,11 @@ const MembersTab = ({ onNavigateToLocation }) => {
 
     return sourceIds
       .map(deviceId => {
-        const loc = byId.get(deviceId);
-        if (loc) return loc;
-        return {
+        // Never list our own hub as an "other member" card.
+        if (typeof myDeviceId === 'number' && !Number.isNaN(myDeviceId) && deviceId === myDeviceId) {
+          return null;
+        }
+        const base = byId.get(deviceId) || {
           deviceId,
           lat: null,
           lng: null,
@@ -298,8 +358,43 @@ const MembersTab = ({ onNavigateToLocation }) => {
           isOffline: false,
           mobiles: [],
         };
-      });
-  }, [lobbyMembers, memberLocations]);
+
+        // For remote hubs, attach a phone list from known nicknames so MembersTab can show
+        // “Phones” even when we have no MOBILELOC telemetry for that hub.
+        const remoteSet = remoteMobilesByDevice.get(deviceId);
+        if (!remoteSet || remoteSet.size === 0) return base;
+
+        const prevMobiles = Array.isArray(base.mobiles) ? base.mobiles : [];
+        const existing = new Set(
+          prevMobiles
+            .map(m => (m ? parseInt(m.mobileId, 10) : NaN))
+            .filter(n => !Number.isNaN(n) && n >= 1 && n <= 4)
+        );
+
+        const merged = [...prevMobiles];
+        Array.from(remoteSet.values()).forEach((mid) => {
+          if (existing.has(mid)) return;
+          merged.push({
+            mobileId: mid,
+            lat: null,
+            lng: null,
+            rssi: null,
+            estimatedDistance: null,
+            lastUpdate: base.lastUpdate || null,
+          });
+        });
+
+        merged.sort((a, b) => (a?.mobileId || 0) - (b?.mobileId || 0));
+        return { ...base, mobiles: merged };
+      })
+      .filter(Boolean);
+  }, [lobbyMembers, memberLocations, myDeviceId, remoteMobileNicknames]);
+
+  const selfHubEntry = useMemo(() => {
+    if (typeof myDeviceId !== 'number' || Number.isNaN(myDeviceId)) return null;
+    const loc = (memberLocations || []).find(m => m && m.deviceId === myDeviceId) || null;
+    return loc;
+  }, [memberLocations, myDeviceId]);
 
   // Sort members: SOS first, then online, then offline
   const sortedMembers = useMemo(() => {
@@ -366,16 +461,20 @@ const MembersTab = ({ onNavigateToLocation }) => {
         {/* Self (Host) Card */}
         <MemberCard 
           member={{
-            deviceId: 'You',
-            lat: myLocation.lat,
-            lng: myLocation.lng,
+            deviceId: (typeof myDeviceId === 'number' && !Number.isNaN(myDeviceId)) ? myDeviceId : 'You',
+            lat: effectiveMyLocation.lat,
+            lng: effectiveMyLocation.lng,
             isOffline: false,
             lastUpdate: Date.now(),
+            mobiles: Array.isArray(selfHubEntry?.mobiles) ? selfHubEntry.mobiles : [],
           }}
-          myLocation={myLocation}
+          myLocation={effectiveMyLocation}
           colors={colors}
           isMe={true}
           myNickname={myNickname}
+          myDeviceId={myDeviceId}
+          localMobileNicknames={localMobileNicknames}
+          remoteMobileNicknames={remoteMobileNicknames}
         />
 
         {/* Other Members */}
@@ -384,12 +483,15 @@ const MembersTab = ({ onNavigateToLocation }) => {
             <MemberCard 
               key={member.deviceId}
               member={member}
-              myLocation={myLocation}
+              myLocation={effectiveMyLocation}
               colors={colors}
               isMe={false}
               nickname={getMemberNickname(member.deviceId)}
               onEditNickname={handleEditNickname}
               onRemove={handleRemoveMember}
+              myDeviceId={myDeviceId}
+              localMobileNicknames={localMobileNicknames}
+              remoteMobileNicknames={remoteMobileNicknames}
             />
           ))
         ) : (

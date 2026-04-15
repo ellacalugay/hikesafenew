@@ -31,17 +31,52 @@ const ChatScreen = ({ onBack, chatName }) => {
     myLocation,
     myMobileId,
     getMessagesForDevice, 
-    sendMessage, 
     sendDirectMessage,
     sendBroadcastMessage,
+    sendLocalBroadcastMessage,
     markMessagesAsRead,
-    clearChatHistory
+    clearChatHistory,
+    localMobileNicknames,
+    remoteMobileNicknames
   } = useBluetoothDevice();
   const { getMemberNickname, myDeviceId } = useLobby();
+
+  const getIncomingSenderLabel = useMemo(() => {
+    return (msg) => {
+      if (!msg) return 'Unknown';
+
+      const fromDeviceId = msg.from;
+      const isDm = typeof msg.dmToMobileId === 'number' || typeof msg.dmFromMobileId === 'number';
+
+      if (isDm) {
+        const fromMobile = msg.dmFromMobileId || msg.mobileId;
+        const mobileId = (typeof fromMobile === 'number' && fromMobile >= 1 && fromMobile <= 4) ? fromMobile : null;
+        const isSelfHub = typeof myDeviceId === 'number' && typeof fromDeviceId === 'number' && fromDeviceId === myDeviceId;
+
+        const rawNick = mobileId
+          ? (
+            isSelfHub
+              ? (localMobileNicknames?.[mobileId] || '')
+              : (remoteMobileNicknames?.[`${fromDeviceId}-m${mobileId}`] || '')
+          )
+          : '';
+
+        const nick = /^mobile\s*\d+$/i.test(String(rawNick).trim()) ? '' : String(rawNick).trim();
+        if (nick) return nick;
+        return 'Unnamed Phone';
+      }
+
+      // Non-DM: show device nickname (never "Device 0" unless truly unknown)
+      if (typeof fromDeviceId === 'number' && fromDeviceId > 0) {
+        return getMemberNickname(fromDeviceId) || `Device ${fromDeviceId}`;
+      }
+      return 'This Hub';
+    };
+  }, [getMemberNickname, localMobileNicknames, myDeviceId, remoteMobileNicknames]);
   
   const [messageText, setMessageText] = useState('');
   const [sending, setSending] = useState(false);
-  const [dmTarget, setDmTarget] = useState('all'); // 'all' | 1..4
+  const [dmTarget, setDmTarget] = useState(null); // null | 1..4
   const scrollViewRef = useRef();
 
   const pulseAnim = useRef(new Animated.Value(0)).current;
@@ -62,17 +97,82 @@ const ChatScreen = ({ onBack, chatName }) => {
     deviceId: null 
   };
   
-  const isBroadcast = chatInfo.type === 'broadcast' || chatInfo.deviceId === 0;
-  const deviceId = chatInfo.deviceId;
+  const isLocalBroadcast = chatInfo.type === 'localBroadcast' || chatInfo.deviceId === -1;
+  const isBroadcast = isLocalBroadcast || chatInfo.type === 'broadcast' || chatInfo.deviceId === 0;
+  const deviceId = isLocalBroadcast ? -1 : chatInfo.deviceId;
+  const initialMobileId = chatInfo && typeof chatInfo.mobileId === 'number' ? chatInfo.mobileId : null;
+  const hasLockedDmTarget = !!(initialMobileId && initialMobileId >= 1 && initialMobileId <= 4);
 
   const isSelfHubChat = !isBroadcast && typeof myDeviceId === 'number' && myDeviceId !== null && deviceId === myDeviceId;
   const dmTargets = useMemo(() => {
-    // For the local hub chat, force a specific recipient to avoid accidental LoRa sends.
-    return isSelfHubChat ? [1, 2, 3, 4] : ['all', 1, 2, 3, 4];
-  }, [isSelfHubChat]);
+    if (isBroadcast || deviceId === null || deviceId === 0) return [];
+
+    // Prefer explicit nickname mappings; if we know none, don't show a confusing picker.
+    if (isSelfHubChat) {
+      const keys = localMobileNicknames ? Object.keys(localMobileNicknames) : [];
+      const ids = keys
+        .map(k => parseInt(k, 10))
+        .filter(n => !Number.isNaN(n) && n >= 1 && n <= 4);
+      const unique = Array.from(new Set(ids)).sort((a, b) => a - b);
+      const selfId = (typeof myMobileId === 'number' && myMobileId >= 1 && myMobileId <= 4) ? myMobileId : null;
+      return selfId ? unique.filter(t => t !== selfId) : unique;
+    }
+
+    const entries = remoteMobileNicknames ? Object.keys(remoteMobileNicknames) : [];
+    const ids = entries
+      .map(k => {
+        const m = String(k).match(new RegExp(`^${deviceId}-m(\\d+)$`));
+        if (!m) return NaN;
+        return parseInt(m[1], 10);
+      })
+      .filter(n => !Number.isNaN(n) && n >= 1 && n <= 4);
+    const unique = Array.from(new Set(ids)).sort((a, b) => a - b);
+
+    // If we don't know any remote mobiles yet, assume a single primary phone without showing M1–M4.
+    return unique.length > 0 ? unique : [1];
+  }, [deviceId, isBroadcast, isSelfHubChat, localMobileNicknames, myMobileId, remoteMobileNicknames]);
+
+  const shouldShowDmPicker = useMemo(() => {
+    if (isBroadcast || deviceId === null || deviceId === 0) return false;
+    if (hasLockedDmTarget) return false;
+    // Only show picker when we have multiple *named* choices.
+    return Array.isArray(dmTargets) && dmTargets.length > 1;
+  }, [deviceId, dmTargets, hasLockedDmTarget, isBroadcast]);
+
+  // When opening a DM thread (device + mobile), preselect that mobile.
+  useEffect(() => {
+    if (isBroadcast) {
+      setDmTarget(null);
+      return;
+    }
+    if (initialMobileId && initialMobileId >= 1 && initialMobileId <= 4) {
+      setDmTarget(initialMobileId);
+      return;
+    }
+    // If there's exactly one sensible target, select it automatically.
+    if (Array.isArray(dmTargets) && dmTargets.length === 1) {
+      setDmTarget(dmTargets[0]);
+      return;
+    }
+    // Otherwise, keep unselected until the user has enough info (nicknames) to pick.
+    setDmTarget(null);
+  }, [deviceId, dmTargets, initialMobileId, isBroadcast]);
   
   // Get messages for this conversation
-  const messages = deviceId !== null ? getMessagesForDevice(deviceId) : [];
+  const baseMessages = deviceId !== null ? getMessagesForDevice(deviceId) : [];
+  const messages = useMemo(() => {
+    if (isBroadcast) return baseMessages;
+    if (!dmTarget) return [];
+    // Personal chat = DM to a specific mobile on a hub.
+    return baseMessages.filter((m) => {
+      if (!m) return false;
+      const isDm = typeof m.dmToMobileId === 'number' || typeof m.dmFromMobileId === 'number';
+      if (!isDm) return false;
+      if (m.isMine) return m.dmToMobileId === dmTarget;
+      const fromMobile = m.dmFromMobileId || m.mobileId;
+      return fromMobile === dmTarget;
+    });
+  }, [baseMessages, dmTarget, isBroadcast]);
   
   // Mark messages as read when viewing conversation
   useEffect(() => {
@@ -86,18 +186,20 @@ const ChatScreen = ({ onBack, chatName }) => {
     
     setSending(true);
     try {
-      if (isBroadcast) {
+      if (isLocalBroadcast) {
+        await sendLocalBroadcastMessage(messageText.trim());
+      } else if (isBroadcast) {
         await sendBroadcastMessage(messageText.trim());
       } else {
-        if (dmTarget !== 'all') {
-          await sendDirectMessage(deviceId, dmTarget, messageText.trim());
-        } else {
-          if (isSelfHubChat) {
-            Alert.alert('Choose Recipient', 'Select a recipient mobile (M1–M4) to message another phone connected to this hub.');
-            return;
-          }
-          await sendMessage(deviceId, messageText.trim());
+        if (!dmTarget) {
+          Alert.alert('Choose Recipient', 'Choose a recipient phone (set a nickname on the other phone to make this easier).');
+          return;
         }
+        if (isSelfHubChat && typeof myMobileId === 'number' && myMobileId >= 1 && myMobileId <= 4 && dmTarget === myMobileId) {
+          Alert.alert("Can't Message Yourself", 'Choose a different phone on this hub.');
+          return;
+        }
+        await sendDirectMessage(deviceId, dmTarget, messageText.trim());
       }
       setMessageText('');
     } catch (error) {
@@ -203,7 +305,11 @@ const ChatScreen = ({ onBack, chatName }) => {
       if (isBroadcast) {
         await sendBroadcastMessage(msg.text);
       } else {
-        await sendMessage(deviceId, msg.text);
+        if (typeof msg.dmToMobileId === 'number') {
+          await sendDirectMessage(deviceId, msg.dmToMobileId, msg.text);
+        } else {
+          Alert.alert('Cannot Retry', 'This message was not a mobile-targeted DM.');
+        }
       }
     } catch (error) {
       console.error('Retry error:', error);
@@ -359,9 +465,11 @@ const ChatScreen = ({ onBack, chatName }) => {
                 {isBroadcast ? 'Group Chat' : `Chat with ${chatInfo.name}`}
               </Text>
               <Text style={[localStyles.emptyText, { color: ui.onSurfaceVariant }]}>
-                {isBroadcast 
-                  ? 'Messages sent here will be broadcast to all devices in LoRa range.'
-                  : 'Start a conversation. Messages are sent via LoRa radio.'}
+                {isLocalBroadcast
+                  ? 'Messages sent here go only to phones connected to this hub.'
+                  : isBroadcast
+                    ? 'Messages sent here will be broadcast to all devices in LoRa range.'
+                    : 'Start a conversation. Messages are sent via LoRa radio.'}
               </Text>
               <View style={[localStyles.infoBox, { backgroundColor: ui.surfaceContainer, borderColor: ui.outlineVariant }]}> 
                 <AlertCircle size={16} color={ui.onSurfaceVariant} />
@@ -406,7 +514,7 @@ const ChatScreen = ({ onBack, chatName }) => {
                         <Radio size={12} color={colors.primary} />
                       </View>
                       <Text style={[localStyles.incomingMeta, { color: colors.gray }]}>
-                        {getMemberNickname(msg.from)}{msg.mobileId > 0 ? ` (Mobile ${msg.mobileId})` : ''}
+                        {getIncomingSenderLabel(msg)}
                       </Text>
                     </View>
                   )}
@@ -484,7 +592,7 @@ const ChatScreen = ({ onBack, chatName }) => {
         {/* Input Area */}
         <View style={[localStyles.composeWrap, { paddingBottom: insets.bottom + (Platform.OS === 'ios' ? 12 : 8) }]}>
           {/* DM Recipient Picker (direct chats only) */}
-          {!isBroadcast && deviceId !== null && deviceId !== 0 && (
+          {!isBroadcast && deviceId !== null && deviceId !== 0 && shouldShowDmPicker && (
             <View
               style={[
                 localStyles.dmPicker,
@@ -495,19 +603,21 @@ const ChatScreen = ({ onBack, chatName }) => {
               {dmTargets.map((t) => {
                 const key = String(t);
                 const selected = dmTarget === t;
-                const disabled = isSelfHubChat && t === 'all';
-                const label = t === 'all' ? 'ALL' : `M${t}`;
+
+                const nick = isSelfHubChat
+                  ? (localMobileNicknames && localMobileNicknames[t] ? String(localMobileNicknames[t]) : '')
+                  : (remoteMobileNicknames && remoteMobileNicknames[`${deviceId}-m${t}`] ? String(remoteMobileNicknames[`${deviceId}-m${t}`]) : '');
+
+                const label = nick || 'Unnamed Phone';
                 return (
                   <TouchableOpacity
                     key={key}
-                    disabled={disabled}
                     onPress={() => setDmTarget(t)}
                     style={[
                       localStyles.dmPill,
                       {
                         borderColor: selected ? ui.primary : ui.outlineVariant,
                         backgroundColor: selected ? ui.primaryContainer : 'transparent',
-                        opacity: disabled ? 0.5 : 1,
                       },
                     ]}
                   >
@@ -525,9 +635,7 @@ const ChatScreen = ({ onBack, chatName }) => {
                 );
               })}
 
-              {myMobileId ? (
-                <Text style={[localStyles.dmPickerHint, { color: ui.onSurfaceVariant }]}>{`YOU: M${myMobileId}`}</Text>
-              ) : null}
+              {myMobileId ? null : null}
             </View>
           )}
 

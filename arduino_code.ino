@@ -142,6 +142,34 @@ uint8_t allocateMobileId() {
   return 0;
 }
 
+void pruneStaleMobiles() {
+  if (connectedMobileCount == 0) return;
+  const unsigned long now = millis();
+  const unsigned long UNCLAIMED_TIMEOUT_MS = 15000;
+  const unsigned long CLAIMED_TIMEOUT_MS = 60000;
+
+  for (uint8_t i = 0; i < connectedMobileCount; ) {
+    const bool claimed = connectedMobiles[i].token.length() > 0;
+    const unsigned long last = connectedMobiles[i].lastSeen;
+    const unsigned long age = (now >= last) ? (now - last) : 0;
+
+    const bool shouldDrop = (!claimed && age > UNCLAIMED_TIMEOUT_MS) || (claimed && age > CLAIMED_TIMEOUT_MS);
+    if (!shouldDrop) {
+      i++;
+      continue;
+    }
+
+    Serial.printf("[BLE] Pruning stale mobile slot M%d (claimed=%d, ageMs=%lu)\n",
+                  connectedMobiles[i].mobileID, claimed ? 1 : 0, (unsigned long)age);
+
+    for (uint8_t j = i; j + 1 < connectedMobileCount; j++) {
+      connectedMobiles[j] = connectedMobiles[j + 1];
+    }
+    connectedMobileCount--;
+    clearMobileSlot(connectedMobileCount);
+  }
+}
+
 String morseInput = "";
 unsigned long pressStart  = 0;
 unsigned long lastTapTime = 0;
@@ -170,6 +198,14 @@ const unsigned long sosInterval = 10000;
 
 unsigned long lastECBroadcastTime = 0;
 const unsigned long ecBroadcastInterval = 45000;  
+
+// Defer heavy LoRa transmissions after lobby changes.
+// On some power setups, transmitting immediately on lobby set can brownout/reset the ESP32,
+// which appears on the phone as an immediate BLE disconnect ("Connection closed").
+bool pendingLobbyAnnounce = false;
+bool pendingLobbyECBroadcast = false;
+unsigned long pendingLobbyAnnounceAt = 0;
+unsigned long pendingLobbyECBroadcastAt = 0;
 
 uint32_t currentLobbyCode = 0;
 bool lobbyHostActive = false;                 
@@ -353,7 +389,7 @@ class MyServerCallbacks : public BLEServerCallbacks {
     clearMobileSlot(idx);
     connectedMobiles[idx].connId = connId;
     connectedMobiles[idx].mobileID = id;
-    connectedMobiles[idx].nickname = "Mobile " + String(id);
+    connectedMobiles[idx].nickname = "";
     connectedMobiles[idx].lastSeen = millis();
     connectedMobileCount++;
     Serial.printf("[BLE] Mobile Assigned: M%d\n", id);
@@ -384,7 +420,21 @@ class MyServerCallbacks : public BLEServerCallbacks {
   void onDisconnect(BLEServer* pServer, esp_ble_gatts_cb_param_t *param) override {
     uint16_t disconnectedConnId = param ? param->disconnect.conn_id : 0xFFFF;
     Serial.printf("[BLE] Phone Disconnected! Conn_ID: %d\n", disconnectedConnId);
-    if (disconnectedConnId != 0xFFFF) removeMobileByConnId(disconnectedConnId);
+    if (disconnectedConnId != 0xFFFF) {
+      removeMobileByConnId(disconnectedConnId);
+    } else {
+      // Fallback: some disconnect callbacks don't provide a valid conn_id.
+      // Best-effort: decrement one slot so UI doesn't get stuck.
+      if (connectedMobileCount > 0) {
+        connectedMobileCount--;
+        clearMobileSlot(connectedMobileCount);
+      }
+    }
+
+    // Ensure device remains discoverable after any disconnect.
+    if (pServer) {
+      pServer->startAdvertising();
+    }
   }
 };
 
@@ -506,6 +556,34 @@ void setup() {
 // MAIN LOOP
 // ============================================================
 void loop() {
+  // Reconcile BLE connection count. In some cases (app crash/hot reload),
+  // the ESP32 stack may drop the link without triggering our onDisconnect callback.
+  // If the BLE stack reports 0 connected devices, clear any stale mobile slots.
+  static unsigned long lastBleReconcileMs = 0;
+  if (millis() - lastBleReconcileMs >= 2000) {
+    lastBleReconcileMs = millis();
+    if (pServer) {
+      // BLEServer::getConnectedCount() is provided by the Arduino-ESP32 BLE stack.
+      uint32_t actual = pServer->getConnectedCount();
+      if (actual == 0 && connectedMobileCount > 0) {
+        Serial.printf("[BLE] Reconcile: stack reports 0 connected; clearing %d stale mobile(s)\n", connectedMobileCount);
+        for (uint8_t i = 0; i < MAX_MOBILE_PHONES; i++) {
+          clearMobileSlot(i);
+        }
+        connectedMobileCount = 0;
+        pServer->startAdvertising();
+      } else if (actual > 0 && actual < connectedMobileCount) {
+        // If our internal slot count is higher than the stack's, trim extra slots.
+        Serial.printf("[BLE] Reconcile: stack=%lu connected, tracked=%u; trimming\n", (unsigned long)actual, connectedMobileCount);
+        for (uint8_t i = (uint8_t)actual; i < connectedMobileCount && i < MAX_MOBILE_PHONES; i++) {
+          clearMobileSlot(i);
+        }
+        connectedMobileCount = (uint8_t)actual;
+        pServer->startAdvertising();
+      }
+    }
+  }
+
   if (connectedMobileCount != oldConnectedMobileCount) {
     if (connectedMobileCount > oldConnectedMobileCount) {
       digitalWrite(GREEN_LED, HIGH); delay(200); digitalWrite(GREEN_LED, LOW);
@@ -549,6 +627,19 @@ void loop() {
       lastECBroadcastTime = millis();
       sendLoRaEmergencyContact();
     }
+  }
+
+  // Deferred lobby actions (spaced out to reduce brownout resets on TX).
+  if (pendingLobbyAnnounce && currentLobbyCode > 0 && millis() >= pendingLobbyAnnounceAt) {
+    pendingLobbyAnnounce = false;
+    // Let other LoRa devices discover us after lobby change (no GPS required).
+    // Uses the existing app-side JOIN_TS parsing (it doesn't require a real timestamp).
+    sendLoRaTextMessage(0, "__JOINED_TS__:", 0);
+  }
+  if (pendingLobbyECBroadcast && currentLobbyCode > 0 && millis() >= pendingLobbyECBroadcastAt) {
+    pendingLobbyECBroadcast = false;
+    sendLoRaEmergencyContact();
+    lastECBroadcastTime = millis();
   }
 
   // --- Buttons ---
@@ -829,6 +920,40 @@ void processBLECommand(const String& cmd) {
     preferences.putString("nickname", nick);
     sendLoRaNickname();
   }
+  } else if (cmd.startsWith("MNICK:")) {
+  // Per-phone nickname (many-to-one) for local hub chats.
+  // Format: MNICK:<token>,<nickname>
+  String payload = cmd.substring(6);
+  int comma = payload.indexOf(',');
+  if (comma > 0) {
+    String token = payload.substring(0, comma);
+    String nick = payload.substring(comma + 1);
+    nick.trim();
+
+    if (token.length() > 0 && nick.length() > 0) {
+      for (int i = 0; i < connectedMobileCount; i++) {
+        if (connectedMobiles[i].token == token) {
+          connectedMobiles[i].nickname = nick;
+          // Broadcast to all connected phones so each app can label M1–M4.
+          sendToPhone("MNICK:" + String(connectedMobiles[i].mobileID) + "," + nick);
+
+          // Also broadcast a lightweight nickname announcement over LoRa so other hubs
+          // (and their connected phones) can display mobile nicknames for DM targeting.
+          if (currentLobbyCode != 0 && connectedMobiles[i].mobileID > 0) {
+            String safeNick = nick;
+            safeNick.replace("\r", " ");
+            safeNick.replace("\n", " ");
+            safeNick.trim();
+            if (safeNick.length() > 16) safeNick = safeNick.substring(0, 16);
+
+            String announce = "__MNICK__:" + String(connectedMobiles[i].mobileID) + ":" + safeNick;
+            sendLoRaTextMessage(0, announce, (uint8_t)connectedMobiles[i].mobileID);
+          }
+          break;
+        }
+      }
+    }
+  }
   } else if (cmd.startsWith("EC:")) {
   String payload = cmd.substring(3);
   int comma = payload.indexOf(',');
@@ -838,6 +963,19 @@ void processBLECommand(const String& cmd) {
     preferences.putString("ec_name", myECName);
     preferences.putString("ec_phone", myECPhone);
     sendLoRaEmergencyContact();
+  }
+  } else if (cmd.startsWith("LMSG:")) {
+  // Local-only broadcast (same hub / BLE only). Does NOT transmit via LoRa.
+  // Format: LMSG:<text>
+  String text = cmd.substring(5);
+
+  if (currentLobbyCode == 0) {
+    // Keep behavior consistent with normal chat: require lobby join.
+    sendToPhone("STATUS:JOIN_LOBBY_FIRST");
+  } else {
+    // Use ECHO_MSG with a sentinel prefix so the app can route to a separate local-only thread.
+    // Numeric field is 0 to match broadcast style.
+    sendToPhone("ECHO_MSG:0,__LOCAL__:" + text);
   }
   } else if (cmd.startsWith("MSG:")) {
   int comma = cmd.indexOf(',', 4);
@@ -896,11 +1034,52 @@ void processBLECommand(const String& cmd) {
   }
   } else if (cmd.startsWith("CLAIM:")) {
   String token = cmd.substring(6);
+  const unsigned long now = millis();
+  bool handled = false;
+
+  // 1) If this token already exists, refresh it.
   for (int i = 0; i < connectedMobileCount; i++) {
-    if (connectedMobiles[i].token == "" || connectedMobiles[i].token == token) {
-      connectedMobiles[i].token = token;
+    if (connectedMobiles[i].token == token) {
+      connectedMobiles[i].lastSeen = now;
       sendToPhone("CLAIMED:" + token + "," + String(connectedMobiles[i].mobileID));
+      handled = true;
       break;
+    }
+  }
+
+  // 2) Prefer reclaiming the stalest slot if it's clearly stale.
+  if (!handled && connectedMobileCount > 0) {
+    int stalestIdx = -1;
+    unsigned long stalestAge = 0;
+    for (int i = 0; i < connectedMobileCount; i++) {
+      const unsigned long last = connectedMobiles[i].lastSeen;
+      const unsigned long age = (now >= last) ? (now - last) : 0;
+      if (age > stalestAge) {
+        stalestAge = age;
+        stalestIdx = i;
+      }
+    }
+
+    // If a slot hasn't been seen in a while, treat it as dead and let a new token take it.
+    if (stalestIdx >= 0 && stalestAge > 20000) {
+      connectedMobiles[stalestIdx].token = token;
+      connectedMobiles[stalestIdx].nickname = "";
+      connectedMobiles[stalestIdx].lastSeen = now;
+      sendToPhone("CLAIMED:" + token + "," + String(connectedMobiles[stalestIdx].mobileID));
+      handled = true;
+    }
+  }
+
+  // 3) Otherwise, take the first empty slot.
+  if (!handled) {
+    for (int i = 0; i < connectedMobileCount; i++) {
+      if (connectedMobiles[i].token == "") {
+        connectedMobiles[i].token = token;
+        connectedMobiles[i].lastSeen = now;
+        sendToPhone("CLAIMED:" + token + "," + String(connectedMobiles[i].mobileID));
+        handled = true;
+        break;
+      }
     }
   }
   } else if (cmd.startsWith("PLOC:")) {
@@ -926,6 +1105,8 @@ void processBLECommand(const String& cmd) {
 
 void sendStatusUpdate() {
   static unsigned long lastLobbyStatusSent = 0;
+  static unsigned long lastMobileNickBroadcast = 0;
+  static unsigned long lastMobileNickLoRaBroadcast = 0;
   String packet = "SELF:";
   if (gps.location.isValid())
     packet += String(gps.location.lat(), 6) + "," + String(gps.location.lng(), 6) + ",";
@@ -949,6 +1130,36 @@ void sendStatusUpdate() {
   if (millis() - lastLobbyStatusSent >= 5000) {
     lastLobbyStatusSent = millis();
     sendToPhone("STATUS:LOBBY," + String(currentLobbyCode));
+  }
+
+  // Periodically broadcast per-phone nicknames so late-joining phones learn them.
+  if (millis() - lastMobileNickBroadcast >= 8000) {
+    lastMobileNickBroadcast = millis();
+    for (uint8_t i = 0; i < connectedMobileCount; i++) {
+      if (connectedMobiles[i].mobileID == 0) continue;
+      if (connectedMobiles[i].nickname.length() == 0) continue;
+      sendToPhone("MNICK:" + String(connectedMobiles[i].mobileID) + "," + connectedMobiles[i].nickname);
+    }
+  }
+
+  // Periodically broadcast mobile nicknames over LoRa too (cross-hub). This is lightweight metadata.
+  // Keep it infrequent to avoid congesting LoRa.
+  if (currentLobbyCode != 0 && millis() - lastMobileNickLoRaBroadcast >= 30000) {
+    lastMobileNickLoRaBroadcast = millis();
+    for (uint8_t i = 0; i < connectedMobileCount; i++) {
+      if (connectedMobiles[i].mobileID == 0) continue;
+      if (connectedMobiles[i].nickname.length() == 0) continue;
+
+      String safeNick = connectedMobiles[i].nickname;
+      safeNick.replace("\r", " ");
+      safeNick.replace("\n", " ");
+      safeNick.trim();
+      if (safeNick.length() == 0) continue;
+      if (safeNick.length() > 16) safeNick = safeNick.substring(0, 16);
+
+      String announce = "__MNICK__:" + String(connectedMobiles[i].mobileID) + ":" + safeNick;
+      sendLoRaTextMessage(0, announce, (uint8_t)connectedMobiles[i].mobileID);
+    }
   }
 
   for (uint8_t i = 0; i < connectedMobileCount; i++) {
@@ -1146,7 +1357,15 @@ void receiveLoRaMessage() {
 
     String text = String(txtMsg.text);
     
-    sendToPhone("MSG:" + String(txtMsg.deviceID) + ",M" + String(txtMsg.mobileID) + "," + text + ",RSSI:" + String(currentRssi));
+    // Include targetID so the app can separate broadcast (T0) from direct messages (T<deviceId>).
+    // Format: MSG:<fromDevice>,T<target>,M<mobileId>,<text>,RSSI:<rssi>
+    sendToPhone(
+      "MSG:" + String(txtMsg.deviceID) +
+      ",T" + String(txtMsg.targetID) +
+      ",M" + String(txtMsg.mobileID) +
+      "," + text +
+      ",RSSI:" + String(currentRssi)
+    );
     digitalWrite(GREEN_LED, HIGH); delay(200); digitalWrite(GREEN_LED, LOW);
 
   } else if (packetSize == sizeof(LoRaNickMessage)) {
@@ -1386,16 +1605,13 @@ void setLobbyCode(uint32_t lobbyCode, bool isHost) {
   preferences.putBool("lobby_host", isHost);
   logLobbyEvent("Lobby code set: " + String(lobbyCode) + ", Host: " + String(isHost));
   sendToPhone("STATUS:LOBBY_SET," + String(lobbyCode));
-  // Let other LoRa devices discover us immediately on lobby change (no GPS required).
-  // Uses the existing app-side JOIN_TS parsing (it doesn't require a real timestamp).
+  // Defer lobby announcements / EC broadcast slightly to avoid doing multiple radio TX
+  // immediately during BLE command processing (helps prevent brownout resets).
   if (lobbyCode > 0 && lobbyCode != prevLobbyCode) {
-    sendLoRaTextMessage(0, "__JOINED_TS__:", 0);
-  }
-
-  if (lobbyCode > 0) {
-    delay(200);
-    sendLoRaEmergencyContact();
-    lastECBroadcastTime = millis();
+    pendingLobbyAnnounce = true;
+    pendingLobbyECBroadcast = true;
+    pendingLobbyAnnounceAt = millis() + 900;
+    pendingLobbyECBroadcastAt = millis() + 1800;
   }
 }
 

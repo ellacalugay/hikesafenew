@@ -63,7 +63,7 @@ const ConnectedPhonesScreen = ({ onBack }) => {
       deviceId: connectedDevice ? connectedDevice.id : null,
       role: 'Primary',
       isConnected,
-      location: myLocation?.valid
+      location: (myLocation?.valid && Number.isFinite(myLocation?.lat) && Number.isFinite(myLocation?.lng))
         ? `${myLocation.lat.toFixed(5)}, ${myLocation.lng.toFixed(5)}`
         : 'Awaiting GPS',
       lastUpdate: lastDataReceived,
@@ -76,7 +76,7 @@ const ConnectedPhonesScreen = ({ onBack }) => {
       deviceId: member.deviceId,
       role: 'Member',
       isConnected: !member.isOffline,
-      location: member.lat && member.lng
+      location: (Number.isFinite(member.lat) && Number.isFinite(member.lng))
         ? `${member.lat.toFixed(5)}, ${member.lng.toFixed(5)}`
         : 'No GPS',
       lastUpdate: member.lastUpdate || Date.now(),
