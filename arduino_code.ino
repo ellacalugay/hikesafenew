@@ -26,6 +26,11 @@ byte aesKey[16] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0
 // --- CONFIGURATION ---
 #define DEVICE_ID 2
 
+// Broadcast phone (mobile) GPS over LoRa so other hubs can see connected phones.
+// Keep this modest to avoid congesting the channel.
+static unsigned long lastMobileLocLoRaMs = 0;
+const unsigned long mobileLocLoRaIntervalMs = 7000;
+
 // --- SEPARATION ALERT CONFIGURATION ---
 #define SEPARATION_ALERT_METERS  100  // alert fires at 100m
 #define SEPARATION_CLEAR_METERS  50   // clears when back within 50m
@@ -1162,6 +1167,27 @@ void sendStatusUpdate() {
     }
   }
 
+  // Broadcast connected phone (mobile) locations over LoRa so other hubs can forward them to their phones.
+  // This is what enables cross-hub phone dots on the app's radar/map.
+  const unsigned long now = millis();
+  if (!sosActive && !morseActive && currentLobbyCode != 0 && (now - lastMobileLocLoRaMs >= mobileLocLoRaIntervalMs)) {
+    lastMobileLocLoRaMs = now;
+    for (uint8_t i = 0; i < connectedMobileCount; i++) {
+      if (connectedMobiles[i].mobileID == 0) continue;
+      if (!connectedMobiles[i].isInLobby) continue;
+      if (connectedMobiles[i].latitude == 0.0 && connectedMobiles[i].longitude == 0.0) continue;
+
+      // Use MSG_BEAT as the packet type; receiver treats mobileID>0 as MOBILELOC telemetry.
+      sendLoRaLocationMessage(
+        MSG_BEAT,
+        connectedMobiles[i].mobileID,
+        connectedMobiles[i].latitude,
+        connectedMobiles[i].longitude,
+        0
+      );
+    }
+  }
+
   for (uint8_t i = 0; i < connectedMobileCount; i++) {
     if (connectedMobiles[i].mobileID == 0) continue;
     if (connectedMobiles[i].latitude == 0.0 && connectedMobiles[i].longitude == 0.0) continue;
@@ -1282,6 +1308,13 @@ void receiveLoRaMessage() {
         String(msg.latitude, 6) + "," + String(msg.longitude, 6) + "," +
         String(currentRssi) + "," + String(rssiToDistance(currentRssi))
       );
+
+      // Mobile-location packets are telemetry only; do not generate ALERT/LOC messages.
+      if (isOffline) {
+        isOffline = false;
+        sendToPhone("ALERT:ONLINE," + String(remoteDevice));
+      }
+      return;
     }
 
     if (isOffline) {

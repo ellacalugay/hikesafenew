@@ -54,8 +54,27 @@ const MessageTab = ({ onOpenChat }) => {
       byDevice.set(deviceId, Array.from(dedup.values()).sort((a, b) => a.mobileId - b.mobileId));
     });
 
+    // Also include mobiles we've actually *seen* (via MOBILELOC telemetry), even if no nickname exists.
+    // This lets users DM phones without ever showing a hub-level row.
+    (memberLocations || []).forEach((m) => {
+      if (!m || typeof m.deviceId !== 'number' || Number.isNaN(m.deviceId)) return;
+      const mobiles = Array.isArray(m.mobiles) ? m.mobiles : [];
+      const ids = mobiles
+        .map(x => (x ? parseInt(x.mobileId, 10) : NaN))
+        .filter(id => !Number.isNaN(id) && id >= 1 && id <= 4);
+      if (ids.length === 0) return;
+
+      const existing = byDevice.get(m.deviceId) || [];
+      const next = [...existing];
+      ids.forEach((mobileId) => {
+        if (next.some(e => e.mobileId === mobileId)) return;
+        next.push({ deviceId: m.deviceId, mobileId, nickname: '' });
+      });
+      byDevice.set(m.deviceId, next.sort((a, b) => a.mobileId - b.mobileId));
+    });
+
     return byDevice;
-  }, [remoteMobileNicknames]);
+  }, [memberLocations, remoteMobileNicknames]);
 
   // Local phones (M1–M4) connected to this same hub.
   // Prefer what we've actually seen (via MOBILELOC mobiles list) and MNICK broadcasts.
@@ -102,8 +121,10 @@ const MessageTab = ({ onOpenChat }) => {
     .filter(m => m && !m.isSelf && typeof m.deviceId === 'number' && !Number.isNaN(m.deviceId))
     .map(m => {
       const loc = (memberLocations || []).find(x => x && x.deviceId === m.deviceId) || null;
-      const base = getMemberNickname(m.deviceId) || `Device ${m.deviceId}`;
-      const name = `${base} (#${m.deviceId})`;
+      const rawBase = getMemberNickname(m.deviceId) || '';
+      const base = String(rawBase || '').trim();
+      const defaultLabel = `Hiker #${m.deviceId}`;
+      const name = base && !/^device\s*#?\s*\d+$/i.test(base) ? base : defaultLabel;
       const online = loc
         ? (!loc.isOffline && (Date.now() - (loc.lastUpdate || 0) < 60000))
         : false;
@@ -155,6 +176,21 @@ const MessageTab = ({ onOpenChat }) => {
     let unread = 0;
     for (const m of list) {
       if (!m) continue;
+      if (!last || (m.timestamp || 0) > (last.timestamp || 0)) last = m;
+      if (!m.isMine && !m.read) unread++;
+    }
+    return { lastText: (last && last.text) ? String(last.text) : '', lastTimestamp: (last && last.timestamp) ? last.timestamp : 0, unreadCount: unread };
+  }, [getMessagesForDevice, messages]);
+
+  const getLastDeviceChatMeta = useCallback((deviceId) => {
+    if (typeof getMessagesForDevice !== 'function') return { lastText: '', lastTimestamp: 0, unreadCount: 0 };
+    const list = getMessagesForDevice(deviceId) || [];
+    let last = null;
+    let unread = 0;
+    for (const m of list) {
+      if (!m) continue;
+      const isDm = typeof m.dmToMobileId === 'number' || typeof m.dmFromMobileId === 'number';
+      if (isDm) continue;
       if (!last || (m.timestamp || 0) > (last.timestamp || 0)) last = m;
       if (!m.isMine && !m.read) unread++;
     }
@@ -338,7 +374,8 @@ const MessageTab = ({ onOpenChat }) => {
               // If we know at least one remote mobile nickname on that hub, show per-mobile entries.
               if (remoteMobiles.length > 0) {
                 return remoteMobiles.map((m) => {
-                    const title = `${m.nickname} (Device #${device.deviceId})`;
+                  const nick = (m.nickname || '').toString().trim();
+                  const title = nick ? `${nick} (HikeSafe #${device.deviceId})` : `Hiker #${device.deviceId} - M${m.mobileId}`;
                   const conv = dmConversationMeta.byKey.get(`${device.deviceId}-m${m.mobileId}`) || null;
                   const preview = (conv && conv.lastMessage) ? String(conv.lastMessage) : 'Tap to message';
                   const unread = (conv && conv.unreadCount) ? conv.unreadCount : 0;
@@ -375,52 +412,8 @@ const MessageTab = ({ onOpenChat }) => {
                 });
               }
 
-              // Otherwise, fall back to the hub-level entry (ChatScreen will require TO).
-              return [
-                <TouchableOpacity
-                  key={device.deviceId}
-                  style={[styles.chatItem, { borderWidth: 1, borderColor: colors.glassBorder }]}
-                  onPress={() => {
-                    const conv = dmConversationMeta.byDevice.get(device.deviceId) || null;
-                    const mobileId = (conv && typeof conv.mobileId === 'number') ? conv.mobileId : undefined;
-                    onOpenChat({ type: 'dm', name: device.name, deviceId: device.deviceId, mobileId });
-                  }}
-                >
-                  <BlurView
-                    intensity={colors.glassIntensity}
-                    tint={colors.glassTint}
-                    style={StyleSheet.absoluteFillObject}
-                  />
-                  <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
-
-                  <View style={[localStyles.avatarCircle, { backgroundColor: colors.inputBg }]}>
-                    <Radio size={16} color={colors.textDark} />
-                  </View>
-                  <View style={localStyles.chatInfo}>
-                    <Text style={[styles.chatName, { color: colors.textDark }]}>{device.name}</Text>
-                    {(() => {
-                      const conv = dmConversationMeta.byDevice.get(device.deviceId) || null;
-                      const preview = (conv && conv.lastMessage) ? String(conv.lastMessage) : 'Tap to start conversation';
-                      return (
-                        <Text style={[localStyles.chatPreview, { color: colors.gray }]} numberOfLines={1}>{preview}</Text>
-                      );
-                    })()}
-                  </View>
-                  <View style={localStyles.rightStatusRow}>
-                    {(() => {
-                      const conv = dmConversationMeta.byDevice.get(device.deviceId) || null;
-                      const unread = (conv && conv.unreadCount) ? conv.unreadCount : 0;
-                      if (unread <= 0) return null;
-                      return (
-                        <View style={[localStyles.unreadBadge, { backgroundColor: colors.primary }]}>
-                          <Text style={localStyles.unreadText}>{unread}</Text>
-                        </View>
-                      );
-                    })()}
-                    {device.online && <View style={styles.onlineDot} />}
-                  </View>
-                </TouchableOpacity>,
-              ];
+              // Hub-level row hidden by request.
+              return [];
             })}
           </>
         )}

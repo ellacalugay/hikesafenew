@@ -31,6 +31,7 @@ const ChatScreen = ({ onBack, chatName }) => {
     myLocation,
     myMobileId,
     getMessagesForDevice, 
+    sendMessage,
     sendDirectMessage,
     sendBroadcastMessage,
     sendLocalBroadcastMessage,
@@ -68,7 +69,9 @@ const ChatScreen = ({ onBack, chatName }) => {
 
       // Non-DM: show device nickname (never "Device 0" unless truly unknown)
       if (typeof fromDeviceId === 'number' && fromDeviceId > 0) {
-        return getMemberNickname(fromDeviceId) || `Device ${fromDeviceId}`;
+        const nick = (getMemberNickname(fromDeviceId) || '').toString().trim();
+        if (nick && !/^device\s*#?\s*\d+$/i.test(nick)) return nick;
+        return `Hiker #${fromDeviceId}`;
       }
       return 'This Hub';
     };
@@ -104,6 +107,7 @@ const ChatScreen = ({ onBack, chatName }) => {
   const hasLockedDmTarget = !!(initialMobileId && initialMobileId >= 1 && initialMobileId <= 4);
 
   const isSelfHubChat = !isBroadcast && typeof myDeviceId === 'number' && myDeviceId !== null && deviceId === myDeviceId;
+  const canUseDeviceLevelChat = !isBroadcast && !isLocalBroadcast && !isSelfHubChat && !hasLockedDmTarget;
   const dmTargets = useMemo(() => {
     if (isBroadcast || deviceId === null || deviceId === 0) return [];
 
@@ -128,20 +132,27 @@ const ChatScreen = ({ onBack, chatName }) => {
       .filter(n => !Number.isNaN(n) && n >= 1 && n <= 4);
     const unique = Array.from(new Set(ids)).sort((a, b) => a - b);
 
-    // If we don't know any remote mobiles yet, assume a single primary phone without showing M1–M4.
-    return unique.length > 0 ? unique : [1];
+    // For remote hubs, only offer mobile targets we actually know.
+    // If we know none yet, fall back to device-level chat (hub-to-hub) instead of forcing DM.
+    return unique;
   }, [deviceId, isBroadcast, isSelfHubChat, localMobileNicknames, myMobileId, remoteMobileNicknames]);
 
   const shouldShowDmPicker = useMemo(() => {
     if (isBroadcast || deviceId === null || deviceId === 0) return false;
+    if (canUseDeviceLevelChat) return false;
     if (hasLockedDmTarget) return false;
     // Only show picker when we have multiple *named* choices.
     return Array.isArray(dmTargets) && dmTargets.length > 1;
-  }, [deviceId, dmTargets, hasLockedDmTarget, isBroadcast]);
+  }, [canUseDeviceLevelChat, deviceId, dmTargets, hasLockedDmTarget, isBroadcast]);
 
   // When opening a DM thread (device + mobile), preselect that mobile.
   useEffect(() => {
     if (isBroadcast) {
+      setDmTarget(null);
+      return;
+    }
+    if (canUseDeviceLevelChat) {
+      // Default to device-level chat; DM can be enabled by opening a per-mobile thread.
       setDmTarget(null);
       return;
     }
@@ -162,6 +173,15 @@ const ChatScreen = ({ onBack, chatName }) => {
   const baseMessages = deviceId !== null ? getMessagesForDevice(deviceId) : [];
   const messages = useMemo(() => {
     if (isBroadcast) return baseMessages;
+    if (canUseDeviceLevelChat) {
+      // Device-level chat (hub-to-hub): show non-DM direct messages.
+      return baseMessages.filter((m) => {
+        if (!m) return false;
+        const isDm = typeof m.dmToMobileId === 'number' || typeof m.dmFromMobileId === 'number';
+        return !isDm;
+      });
+    }
+
     if (!dmTarget) return [];
     // Personal chat = DM to a specific mobile on a hub.
     return baseMessages.filter((m) => {
@@ -172,7 +192,7 @@ const ChatScreen = ({ onBack, chatName }) => {
       const fromMobile = m.dmFromMobileId || m.mobileId;
       return fromMobile === dmTarget;
     });
-  }, [baseMessages, dmTarget, isBroadcast]);
+  }, [baseMessages, canUseDeviceLevelChat, dmTarget, isBroadcast]);
   
   // Mark messages as read when viewing conversation
   useEffect(() => {
@@ -191,15 +211,20 @@ const ChatScreen = ({ onBack, chatName }) => {
       } else if (isBroadcast) {
         await sendBroadcastMessage(messageText.trim());
       } else {
-        if (!dmTarget) {
-          Alert.alert('Choose Recipient', 'Choose a recipient phone (set a nickname on the other phone to make this easier).');
-          return;
+        if (canUseDeviceLevelChat) {
+          // Hub-to-hub chat: send to the remote device.
+          await sendMessage(deviceId, messageText.trim());
+        } else {
+          if (!dmTarget) {
+            Alert.alert('Choose Recipient', 'Choose a recipient phone (set a nickname on the other phone to make this easier).');
+            return;
+          }
+          if (isSelfHubChat && typeof myMobileId === 'number' && myMobileId >= 1 && myMobileId <= 4 && dmTarget === myMobileId) {
+            Alert.alert("Can't Message Yourself", 'Choose a different phone on this hub.');
+            return;
+          }
+          await sendDirectMessage(deviceId, dmTarget, messageText.trim());
         }
-        if (isSelfHubChat && typeof myMobileId === 'number' && myMobileId >= 1 && myMobileId <= 4 && dmTarget === myMobileId) {
-          Alert.alert("Can't Message Yourself", 'Choose a different phone on this hub.');
-          return;
-        }
-        await sendDirectMessage(deviceId, dmTarget, messageText.trim());
       }
       setMessageText('');
     } catch (error) {
@@ -305,11 +330,15 @@ const ChatScreen = ({ onBack, chatName }) => {
       if (isBroadcast) {
         await sendBroadcastMessage(msg.text);
       } else {
+        if (canUseDeviceLevelChat) {
+          await sendMessage(deviceId, msg.text);
+          return;
+        }
         if (typeof msg.dmToMobileId === 'number') {
           await sendDirectMessage(deviceId, msg.dmToMobileId, msg.text);
-        } else {
-          Alert.alert('Cannot Retry', 'This message was not a mobile-targeted DM.');
+          return;
         }
+        Alert.alert('Cannot Retry', 'This message was not a mobile-targeted DM.');
       }
     } catch (error) {
       console.error('Retry error:', error);
