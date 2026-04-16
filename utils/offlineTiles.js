@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system';
 
 const OFFLINE_TILES_DIR = `${FileSystem.documentDirectory}offline-tiles`;
 

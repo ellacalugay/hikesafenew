@@ -113,7 +113,7 @@ const ConnectedPhonesScreen = ({ onBack }) => {
             </Text>
             <Text style={[localStyles.phoneRole, { color: colors.gray }]}>
               {item.role}
-              {item.isConnected &&  ' • Online'}
+              {item.isConnected ? <Text style={{ color: colors.primary }}> • Online</Text> : null}
             </Text>
           </View>
         </View>

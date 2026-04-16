@@ -442,6 +442,8 @@ export const BluetoothProvider = ({ children }) => {
   const emergencyAlarmActiveRef = useRef(false);
   const emergencySoundRef = useRef(null);
   const emergencyThrottleRef = useRef(new Map());
+  const silencedEmergencyRef = useRef(new Map());
+  const EMERGENCY_SILENCE_WINDOW_MS = 10 * 60 * 1000;
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const audioModeConfiguredRef = useRef(false);
 
@@ -592,7 +594,8 @@ export const BluetoothProvider = ({ children }) => {
   useEffect(() => {
     Notifications.setNotificationHandler({
       handleNotification: async () => ({
-        shouldShowAlert: true,
+        shouldShowBanner: true,
+        shouldShowList: true,
         shouldPlaySound: true,
         shouldSetBadge: false,
       }),
@@ -1529,7 +1532,11 @@ export const BluetoothProvider = ({ children }) => {
         const parts = trimmed.substring(6).split(',');
         const type = parts[0]; // SOS, MORSE, OK, OFFLINE, ONLINE
         const deviceId = parseInt(parts[1], 10);
-        
+
+        if (Number.isNaN(deviceId) || deviceId <= 0) {
+          return;
+        }
+
         console.log(`Received ALERT: ${type} from Device ${deviceId}`);
         
         // Handle OFFLINE/ONLINE alerts (only have deviceId, no coordinates)
@@ -1601,6 +1608,65 @@ export const BluetoothProvider = ({ children }) => {
 
           return;
         }
+
+        // Acknowledgement alerts (no coordinates)
+        // Firmware format: ALERT:ON_MY_WAY,<deviceId>
+        if (type === 'ON_MY_WAY') {
+          const helperName = (typeof getMemberNickname === 'function') ? getMemberNickname(deviceId) : `Device ${deviceId}`;
+          addActivity('on_my_way', `${helperName} is on the way`);
+
+          let shouldNotifySender = false;
+          const now = Date.now();
+
+          // One acknowledgement silences ringing/prompts for everyone.
+          setActiveAlert(prev => {
+            if (!prev || (prev.type !== 'SOS' && prev.type !== 'MORSE')) {
+              return prev;
+            }
+
+            shouldNotifySender = !!prev.localEmergency;
+
+            const key =
+              (typeof prev.deviceId === 'number' && prev.deviceId > 0)
+                ? `${prev.type}-${prev.deviceId}`
+                : null;
+
+            if (key) {
+              silencedEmergencyRef.current.set(key, { ts: now, byDeviceId: deviceId });
+            }
+
+            return {
+              ...prev,
+              silenced: true,
+              silencedAt: now,
+              silencedByDeviceId: deviceId,
+              helperName,
+            };
+          });
+
+          stopEmergencySignals();
+          showTemporaryStatus(`${helperName} is on the way`, 3000);
+
+          // Only the SOS sender needs the popup/notification.
+          if (shouldNotifySender) {
+            pushEmergencyNotification(
+              'Help Coming',
+              `${helperName} is on the way to help you.`,
+              `on_my_way-${deviceId}`
+            );
+
+            if (!shouldThrottleEmergency(`popup-onmyway-${deviceId}`, 12000)) {
+              Alert.alert(
+                '✅ Help on the Way',
+                `${helperName} is coming to help!`,
+                [{ text: 'Dismiss' }],
+                { cancelable: true }
+              );
+            }
+          }
+
+          return;
+        }
         
                 // Standard alerts with coordinates (SOS, MORSE, OK)
         if (parts.length >= 4) {
@@ -1652,32 +1718,67 @@ export const BluetoothProvider = ({ children }) => {
           
           // Handle different alert types
           if (type === 'SOS' || type === 'MORSE') {
-            setActiveAlert({ type, deviceId, lat, lng, timestamp: Date.now() });
-            addActivity('sos', deviceId, `Device ${deviceId} triggered ${type} alert!`);
-            
-            // Vibrate with SOS pattern
-            triggerVibration('SOS');
-            startEmergencySignals();
-
             const emergencyKey = `${type}-${deviceId}`;
-            const displayName = getMemberNickname ? getMemberNickname(deviceId) : `Device ${deviceId}`;
-            pushEmergencyNotification(
-              'Emergency Alert',
-              `${displayName} triggered ${type}. Check immediately.`,
-              emergencyKey
-            );
+            const displayName = (typeof getMemberNickname === 'function') ? getMemberNickname(deviceId) : `Device ${deviceId}`;
 
-            if (!shouldThrottleEmergency(`popup-${emergencyKey}`, 12000)) {
-              Alert.alert(
-                '🚨 EMERGENCY ALERT',
-                `${displayName} has triggered a ${type} alert!\n\nLocation: ${lat.toFixed(5)}, ${lng.toFixed(5)}\n\nCheck on this member immediately!`,
-                [{ text: 'View Location', style: 'default' }],
-                { cancelable: true }
+            const now = Date.now();
+            const silencedEntry = silencedEmergencyRef.current.get(emergencyKey);
+            const isSilenced = !!(silencedEntry && (now - (silencedEntry.ts || 0)) < EMERGENCY_SILENCE_WINDOW_MS);
+
+            let isLocalEmergency = false;
+            let isRepeatEmergency = false;
+
+            // Preserve localEmergency (sender) and existing helperName (when silenced) across repeated SOS packets.
+            setActiveAlert(prev => {
+              const isSameEmergency = !!prev && prev.type === type && prev.deviceId === deviceId;
+
+              isLocalEmergency = !!(isSameEmergency && prev.localEmergency);
+              isRepeatEmergency = !!(isSameEmergency && !prev.silenced && !isSilenced);
+
+              return {
+                ...(isSameEmergency ? prev : {}),
+                type,
+                deviceId,
+                lat,
+                lng,
+                timestamp: now,
+                displayName,
+                localEmergency: isLocalEmergency,
+                silenced: isSilenced,
+                silencedAt: isSilenced ? (silencedEntry.ts || null) : null,
+                silencedByDeviceId: isSilenced ? (silencedEntry.byDeviceId ?? null) : null,
+                helperName: isSilenced ? (isSameEmergency ? (prev.helperName ?? null) : null) : null,
+              };
+            });
+
+            if (!isRepeatEmergency) {
+              addActivity('sos', `${displayName} triggered ${type} alert!`);
+            }
+
+            // Don't self-notify (sender), and don't re-trigger vibration/audio on every repeated SOS packet.
+            if (!isSilenced && !isLocalEmergency && !isRepeatEmergency) {
+              // Vibrate with SOS pattern
+              triggerVibration('SOS');
+              startEmergencySignals();
+
+              pushEmergencyNotification(
+                'Emergency Alert',
+                `${displayName} triggered ${type}. Check immediately.`,
+                emergencyKey
               );
+
+              if (!shouldThrottleEmergency(`popup-${emergencyKey}`, 12000)) {
+                Alert.alert(
+                  '🚨 EMERGENCY ALERT',
+                  `${displayName} has triggered a ${type} alert!\n\nLocation: ${lat.toFixed(5)}, ${lng.toFixed(5)}\n\nCheck on this member immediately!`,
+                  [{ text: 'View Location', style: 'default' }],
+                  { cancelable: true }
+                );
+              }
             }
 
             // SOS-only: request their full trail snapshot so late joiners can catch up.
-            if (type === 'SOS') {
+            if (type === 'SOS' && !isRepeatEmergency) {
               // Clear any prior stored trail so the snapshot is clean/full.
               setRemoteBreadcrumbs(prev => {
                 if (!prev) return prev;
@@ -1690,6 +1791,12 @@ export const BluetoothProvider = ({ children }) => {
               requestSosTrailSnapshot(deviceId);
             }
           } else if (type === 'OK') {
+            const displayName = (typeof getMemberNickname === 'function') ? getMemberNickname(deviceId) : `Device ${deviceId}`;
+
+            // Clear any active emergency state for this device.
+            silencedEmergencyRef.current.delete(`SOS-${deviceId}`);
+            silencedEmergencyRef.current.delete(`MORSE-${deviceId}`);
+
             // OK received - clear any active alert from that device
             setActiveAlert(prev => {
               if (prev && prev.deviceId === deviceId) {
@@ -1720,43 +1827,70 @@ export const BluetoothProvider = ({ children }) => {
               return next;
             });
 
-            addActivity('ok', deviceId, `Device ${deviceId} cancelled alert`);
-            // Show status message
-            showTemporaryStatus(`Device ${deviceId} is OK`, 3000);
-            
+            addActivity('ok', `${displayName} cancelled alert`);
+            showTemporaryStatus(`${displayName} is OK`, 3000);
+
             // Vibrate with OK pattern
             triggerVibration('OK');
-            
-            // Show notification that alert was cancelled
+
             Alert.alert(
               '✅ Alert Cancelled',
-              `Device ${deviceId} has signaled they are OK.`,
+              `${displayName} has signaled they are OK.`,
               [{ text: 'Dismiss' }],
               { cancelable: true }
             );
           } else if (type === 'ON_MY_WAY') {
-            // Device is coming to help - keep SOS active but notify sender
-            addActivity('on_my_way', deviceId, `Device ${deviceId} is on the way to help`);
-            
-            // Show status message
-            showTemporaryStatus(`Device ${deviceId} is on the way`, 3000);
-            
-            // Vibrate with different pattern
-            triggerVibration('OK');
-            
-            // Show notification
-            pushEmergencyNotification(
-              'Help Coming',
-              `Device ${deviceId} is on the way to help you.`,
-              `on_my_way-${deviceId}`
-            );
-            
-            Alert.alert(
-              '✅ Help on the Way',
-              `Device ${deviceId} is coming to help!`,
-              [{ text: 'Dismiss' }],
-              { cancelable: true }
-            );
+            const helperName = (typeof getMemberNickname === 'function') ? getMemberNickname(deviceId) : `Device ${deviceId}`;
+            addActivity('on_my_way', `${helperName} is on the way`);
+
+            let shouldNotifySender = false;
+            const now = Date.now();
+
+            // One acknowledgement silences ringing/prompts for everyone.
+            setActiveAlert(prev => {
+              if (!prev || (prev.type !== 'SOS' && prev.type !== 'MORSE')) {
+                return prev;
+              }
+
+              shouldNotifySender = !!prev.localEmergency;
+
+              const key =
+                (typeof prev.deviceId === 'number' && prev.deviceId > 0)
+                  ? `${prev.type}-${prev.deviceId}`
+                  : null;
+
+              if (key) {
+                silencedEmergencyRef.current.set(key, { ts: now, byDeviceId: deviceId });
+              }
+
+              return {
+                ...prev,
+                silenced: true,
+                silencedAt: now,
+                silencedByDeviceId: deviceId,
+                helperName,
+              };
+            });
+
+            stopEmergencySignals();
+            showTemporaryStatus(`${helperName} is on the way`, 3000);
+
+            if (shouldNotifySender) {
+              pushEmergencyNotification(
+                'Help Coming',
+                `${helperName} is on the way to help you.`,
+                `on_my_way-${deviceId}`
+              );
+
+              if (!shouldThrottleEmergency(`popup-onmyway-${deviceId}`, 12000)) {
+                Alert.alert(
+                  '✅ Help on the Way',
+                  `${helperName} is coming to help!`,
+                  [{ text: 'Dismiss' }],
+                  { cancelable: true }
+                );
+              }
+            }
           }
         }
       }
@@ -1970,38 +2104,47 @@ export const BluetoothProvider = ({ children }) => {
           deviceLobbyCodeRef.current = 0;
           showTemporaryStatus('Device lobby memory cleared', 3000);
         } else if (status === 'SENDING_SOS' || status === 'SENDING_MORSE_SOS') {
-          const localDeviceId = parseDeviceId(connectedDevice || deviceRef.current);
           const emergencyType = status === 'SENDING_SOS' ? 'SOS' : 'MORSE';
-          const deviceLabel = localDeviceId !== null ? `Device ${localDeviceId}` : 'connected device';
+          const localDeviceId = (typeof myDeviceId === 'number' && !Number.isNaN(myDeviceId))
+            ? myDeviceId
+            : parseDeviceId(connectedDevice || deviceRef.current);
+
+          const displayName =
+            (typeof getMemberNickname === 'function' && typeof localDeviceId === 'number')
+              ? getMemberNickname(localDeviceId)
+              : ((myNickname || '').trim() ? myNickname : 'Your phone');
+
+          const emergencyKey = `${emergencyType}-${typeof localDeviceId === 'number' ? localDeviceId : 'local'}`;
 
           setActiveAlert({
             type: emergencyType,
-            deviceId: localDeviceId !== null ? localDeviceId : 0,
+            deviceId: (typeof localDeviceId === 'number' ? localDeviceId : null),
             timestamp: Date.now(),
             localEmergency: true,
+            displayName,
+            silenced: false,
           });
 
-          addActivity('sos', localDeviceId !== null ? localDeviceId : 0, `${deviceLabel} triggered ${emergencyType}`);
+          addActivity('sos', `${displayName} triggered ${emergencyType}`);
           triggerVibration('SOS');
           startEmergencySignals();
 
-          const emergencyKey = `${emergencyType}-${localDeviceId !== null ? localDeviceId : 0}`;
           pushEmergencyNotification(
             'Emergency Triggered',
-            `${deviceLabel} triggered ${emergencyType}.`,
+            `${displayName} triggered ${emergencyType}.`,
             emergencyKey
           );
 
           if (!shouldThrottleEmergency(`popup-${emergencyKey}`, 12000)) {
             Alert.alert(
               '🚨 EMERGENCY ALERT',
-              `${deviceLabel} triggered ${emergencyType}.`,
+              `${displayName} triggered ${emergencyType}.`,
               [{ text: 'Dismiss' }],
               { cancelable: true }
             );
           }
 
-          setStatusMessage(`${emergencyType} active on ${deviceLabel}`);
+          setStatusMessage(`${emergencyType} active for ${displayName}`);
 
           // Only enable trail sharing for true SOS (not MORSE), per spec.
           if (status === 'SENDING_SOS') {
@@ -2043,6 +2186,22 @@ export const BluetoothProvider = ({ children }) => {
           if (!Number.isNaN(deviceId) && nickname.length > 0 && setMemberNickname) {
             setMemberNickname(deviceId, nickname);
             showTemporaryStatus(`Name synced: ${nickname}`, 2000);
+
+            // Treat nickname packets as presence so late-joining devices appear in Members/Message tabs.
+            if (isInLobbyRef.current && typeof registerMemberSync === 'function') {
+              if (!knownMembersRef.current.has(deviceId)) {
+                knownMembersRef.current.add(deviceId);
+              }
+              registerMemberSync(deviceId, Date.now(), { source: 'nickname' });
+            }
+
+            // If we're currently showing an alert for this device, update its display name.
+            setActiveAlert(prev => {
+              if (!prev) return prev;
+              if (prev.deviceId !== deviceId) return prev;
+              return { ...prev, displayName: nickname };
+            });
+
             // Update any existing "joined" system messages for this device to use the new nickname
             setMessages(prev => prev.map(m => {
               if (m && m.system && m.from === deviceId && typeof m.text === 'string' && m.text.toLowerCase().includes('joined')) {
@@ -2263,11 +2422,57 @@ export const BluetoothProvider = ({ children }) => {
             const sep = payload.indexOf(':');
 
             const parsedMobile = sep > 0 ? parseInt(payload.substring(0, sep).trim(), 10) : mobileId;
-            const nickname = (sep > 0 ? payload.substring(sep + 1) : payload).trim();
+            const nicknameRaw = (sep > 0 ? payload.substring(sep + 1) : payload).trim();
+            const nickname = /^mobile\s*\d+$/i.test(nicknameRaw) ? '' : nicknameRaw;
 
             if (!Number.isNaN(parsedMobile) && parsedMobile >= 1 && parsedMobile <= 4 && nickname.length > 0) {
               const key = `${fromId}-m${parsedMobile}`;
               setRemoteMobileNicknames(prev => ({ ...(prev || {}), [key]: nickname }));
+
+              // Treat remote phone nickname as presence and attach it to memberLocations so Map/Radar details can show it.
+              if (isInLobbyRef.current && typeof registerMemberSync === 'function') {
+                if (!knownMembersRef.current.has(fromId)) {
+                  knownMembersRef.current.add(fromId);
+                }
+                registerMemberSync(fromId, Date.now(), { source: 'mnick' });
+              }
+
+              setMemberLocations(prev => {
+                const existingIdx = (prev || []).findIndex(m => m && m.deviceId === fromId);
+                const now = Date.now();
+
+                const upsert = (entry) => {
+                  const prevMobiles = Array.isArray(entry.mobiles) ? entry.mobiles : [];
+                  const idx = prevMobiles.findIndex(m => m && m.mobileId === parsedMobile);
+                  const nextMobile = { mobileId: parsedMobile, nickname, lastUpdate: now };
+
+                  const nextMobiles = idx >= 0
+                    ? prevMobiles.map((m, i) => (i === idx ? { ...m, ...nextMobile } : m))
+                    : [...prevMobiles, nextMobile];
+
+                  return {
+                    ...entry,
+                    mobiles: nextMobiles.slice().sort((a, b) => a.mobileId - b.mobileId),
+                  };
+                };
+
+                if (existingIdx >= 0) {
+                  const updated = [...prev];
+                  updated[existingIdx] = upsert(updated[existingIdx]);
+                  return updated;
+                }
+
+                return [...(prev || []), upsert({
+                  deviceId: fromId,
+                  lat: null,
+                  lng: null,
+                  satellites: 0,
+                  lastUpdate: now,
+                  alertType: null,
+                  isOffline: false,
+                  mobiles: [],
+                })];
+              });
             }
             return;
           }
@@ -2626,6 +2831,14 @@ export const BluetoothProvider = ({ children }) => {
           const estimatedDistance = parts.length >= 6 ? parseInt(parts[5], 10) : -1;
 
           if (!Number.isNaN(deviceId) && !Number.isNaN(mobileId) && !Number.isNaN(lat) && !Number.isNaN(lng)) {
+            // Treat mobile telemetry as presence so late joiners show up in Members/Message tabs.
+            if (isInLobbyRef.current && typeof registerMemberSync === 'function') {
+              if (!knownMembersRef.current.has(deviceId)) {
+                knownMembersRef.current.add(deviceId);
+              }
+              registerMemberSync(deviceId, Date.now(), { source: 'mobileloc' });
+            }
+
             setMemberLocations(prev => {
               const existing = prev.findIndex(m => m.deviceId === deviceId);
 
@@ -3165,9 +3378,40 @@ export const BluetoothProvider = ({ children }) => {
     if (!pendingDeviceLobbySyncCode) return;
     if (!syncLobbyToDevice) return;
 
-    // Fire-and-forget; LobbyContext handles persistence + failures.
-    syncLobbyToDevice((cmd) => sendCommand(cmd, { silent: true }), pendingDeviceLobbySyncCode);
-  }, [isConnected, pendingDeviceLobbySyncCode, syncLobbyToDevice, sendCommand]);
+    // Wait briefly for the hub to report its current lobby (STATUS:LOBBY).
+    // Only auto-apply a pending lobby code when the hub is in lobby 0; never overwrite a non-zero lobby on connect.
+    let cancelled = false;
+    const id = setTimeout(() => {
+      if (cancelled) return;
+
+      const pending = pendingDeviceLobbySyncCode;
+      const supportsLobby = hubReportsLobbyRef.current === true;
+      const hubLobby = deviceLobbyCodeRef.current;
+
+      if (supportsLobby && typeof hubLobby === 'number' && hubLobby >= 1000 && hubLobby <= 9999) {
+        // Hub already has a real lobby selected; do not auto-switch it.
+        if (hubLobby !== pending) {
+          void clearPendingDeviceLobbySync();
+          showTemporaryStatus(`Hub already in lobby ${hubLobby}. Pending lobby sync (${pending}) skipped.`, 4500);
+        } else {
+          void clearPendingDeviceLobbySync();
+        }
+        return;
+      }
+
+      if (supportsLobby && hubLobby === 0) {
+        // Fire-and-forget; LobbyContext handles persistence + failures.
+        syncLobbyToDevice((cmd) => sendCommand(cmd, { silent: true }), pending);
+      }
+      // If the hub hasn't reported lobby support yet, do nothing here.
+      // The user can always re-sync explicitly from the Lobby screen.
+    }, 2500);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+    };
+  }, [isConnected, pendingDeviceLobbySyncCode, syncLobbyToDevice, sendCommand, clearPendingDeviceLobbySync, showTemporaryStatus]);
 
   // Clear remote trails when leaving/resetting lobby.
   useEffect(() => {
@@ -3912,6 +4156,33 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
     });
   }, [messages]);
   
+  const silenceActiveAlert = useCallback((byDeviceId = null) => {
+    const now = Date.now();
+
+    setActiveAlert(prev => {
+      if (!prev) return prev;
+      if (prev.type !== 'SOS' && prev.type !== 'MORSE') return prev;
+
+      const key =
+        (typeof prev.deviceId === 'number' && prev.deviceId > 0)
+          ? `${prev.type}-${prev.deviceId}`
+          : null;
+
+      if (key) {
+        silencedEmergencyRef.current.set(key, { ts: now, byDeviceId });
+      }
+
+      return {
+        ...prev,
+        silenced: true,
+        silencedAt: now,
+        silencedByDeviceId: byDeviceId ?? prev.silencedByDeviceId ?? null,
+      };
+    });
+
+    stopEmergencySignals();
+  }, [stopEmergencySignals]);
+
   // Clear active alert
   const dismissAlert = useCallback(() => {
     setActiveAlert(null);
@@ -3991,6 +4262,7 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
     sendCommand,
     sendSOS,
     sendOK,
+    silenceActiveAlert,
     dismissAlert,
     sendLocalBroadcastMessage,
     clearMorseInput,

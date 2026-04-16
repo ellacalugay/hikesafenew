@@ -375,7 +375,8 @@ const MessageTab = ({ onOpenChat }) => {
               if (remoteMobiles.length > 0) {
                 return remoteMobiles.map((m) => {
                   const nick = (m.nickname || '').toString().trim();
-                  const title = nick ? `${nick} (HikeSafe #${device.deviceId})` : `Hiker #${device.deviceId} - M${m.mobileId}`;
+                  const hubLabel = (device.name || '').toString().trim() || `Hiker #${device.deviceId}`;
+                  const title = nick ? `${nick} (${hubLabel})` : `${hubLabel} - M${m.mobileId}`;
                   const conv = dmConversationMeta.byKey.get(`${device.deviceId}-m${m.mobileId}`) || null;
                   const preview = (conv && conv.lastMessage) ? String(conv.lastMessage) : 'Tap to message';
                   const unread = (conv && conv.unreadCount) ? conv.unreadCount : 0;

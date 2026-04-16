@@ -173,7 +173,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
                 {activeAlert.type === 'MORSE' ? 'MORSE EMERGENCY ACTIVE' : 'SOS EMERGENCY ACTIVE'}
               </Text>
               <Text style={localStyles.emergencySubtitle}>
-                {activeAlert.deviceId ? `Device ${activeAlert.deviceId}` : 'Connected device'} needs attention. Tap to view location.
+                {(activeAlert.displayName || (typeof activeAlert.deviceId === 'number' ? `Device ${activeAlert.deviceId}` : 'A member'))} needs attention. Tap to view location.
               </Text>
             </View>
           </TouchableOpacity>

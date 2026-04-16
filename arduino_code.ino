@@ -83,6 +83,9 @@ bool okayActive    = false;
 bool receivedSOS   = false;
 bool receivedMorse = false;
 
+// When true, keep SOS/MORSE visible but silence the buzzer (e.g. after ON_MY_WAY).
+bool emergencySilenced = false;
+
 // --- SEPARATION ALERT STATE ---
 bool  separationAlert      = false;
 float lastKnownDistance    = -1.0;
@@ -653,12 +656,14 @@ void loop() {
   if (digitalRead(BUTTON_OKAY) == LOW) {
     if (receivedSOS || receivedMorse) {
       receivedSOS = receivedMorse = false;
+      emergencySilenced = false;
       digitalWrite(SOS_LED, LOW);
       digitalWrite(BUZZER,  LOW);
       digitalWrite(GREEN_LED, HIGH); delay(500); digitalWrite(GREEN_LED, LOW);
       updateDisplay();
       delay(500);
     } else if (sosActive || morseActive) {
+      emergencySilenced = false;
       triggerOkay();
     } else if (separationAlert) {
       separationAlert = false;
@@ -721,6 +726,7 @@ void loop() {
     digitalWrite(BUZZER,    LOW);
     digitalWrite(GREEN_LED, LOW);
     alarmStep = 0;
+    emergencySilenced = false;
   }
 
   if (millis() - lastGPSCheck >= 2000) {
@@ -835,6 +841,7 @@ void processBLECommand(const String& cmd) {
     triggerSOS();
   } else if (cmd == "OK") {
     logLobbyEvent("OK command received");
+    emergencySilenced = false;
     if (receivedSOS || receivedMorse) {
       receivedSOS = receivedMorse = false;
       digitalWrite(SOS_LED, LOW);
@@ -845,6 +852,8 @@ void processBLECommand(const String& cmd) {
     }
   } else if (cmd == "ON_MY_WAY") {
     logLobbyEvent("ON_MY_WAY command received");
+    emergencySilenced = true;
+    digitalWrite(BUZZER, LOW);
     sendLoRaMessage(MSG_ON_MY_WAY, 0);
     sendToPhone("STATUS:ON_MY_WAY_SENT");
   } else if (cmd.startsWith("LOBBY:")) {
@@ -1112,6 +1121,7 @@ void sendStatusUpdate() {
   static unsigned long lastLobbyStatusSent = 0;
   static unsigned long lastMobileNickBroadcast = 0;
   static unsigned long lastMobileNickLoRaBroadcast = 0;
+  static unsigned long lastNickLoRaBroadcast = 0;
   String packet = "SELF:";
   if (gps.location.isValid())
     packet += String(gps.location.lat(), 6) + "," + String(gps.location.lng(), 6) + ",";
@@ -1135,6 +1145,12 @@ void sendStatusUpdate() {
   if (millis() - lastLobbyStatusSent >= 5000) {
     lastLobbyStatusSent = millis();
     sendToPhone("STATUS:LOBBY," + String(currentLobbyCode));
+  }
+
+  // Periodically broadcast this hub's nickname over LoRa so late joiners learn it.
+  if (currentLobbyCode != 0 && millis() - lastNickLoRaBroadcast >= 60000) {
+    lastNickLoRaBroadcast = millis();
+    sendLoRaNickname();
   }
 
   // Periodically broadcast per-phone nicknames so late-joining phones learn them.
@@ -1333,16 +1349,25 @@ void receiveLoRaMessage() {
     String alert = "ALERT:";
     if (msg.msgType == MSG_SOS) {
       alert += "SOS,";
+      if (!receivedSOS && !receivedMorse && !sosActive && !morseActive) {
+        emergencySilenced = false;
+      }
       receivedSOS = true;
     } else if (msg.msgType == MSG_MORSE) {
       alert += "MORSE,";
+      if (!receivedSOS && !receivedMorse && !sosActive && !morseActive) {
+        emergencySilenced = false;
+      }
       receivedMorse = true;
     } else if (msg.msgType == MSG_OKAY) {
       alert += "OK,";
       receivedSOS = receivedMorse = false;
+      emergencySilenced = false;
       digitalWrite(GREEN_LED, HIGH); delay(500); digitalWrite(GREEN_LED, LOW);
     } else if (msg.msgType == MSG_ON_MY_WAY) {
       alert += "ON_MY_WAY,";
+      emergencySilenced = true;
+      digitalWrite(BUZZER, LOW);
     } else if (msg.msgType == MSG_BEAT) {
       if (msg.mobileID == 0) {
         String loc = "LOC:";
@@ -1605,7 +1630,7 @@ void blinkNormalSOSNonBlocking() {
     alarmStartTime = now;
     alarmLedState  = !alarmLedState;
     digitalWrite(SOS_LED, alarmLedState ? HIGH : LOW);
-    digitalWrite(BUZZER,  alarmLedState ? HIGH : LOW);
+    digitalWrite(BUZZER,  (!emergencySilenced && alarmLedState) ? HIGH : LOW);
   }
 }
 
@@ -1615,7 +1640,7 @@ void blinkMorseSOSNonBlocking() {
     alarmStartTime = now;
     alarmLedState  = !alarmLedState;
     digitalWrite(SOS_LED, alarmLedState ? HIGH : LOW);
-    digitalWrite(BUZZER,  alarmLedState ? HIGH : LOW);
+    digitalWrite(BUZZER,  (!emergencySilenced && alarmLedState) ? HIGH : LOW);
   }
 }
 

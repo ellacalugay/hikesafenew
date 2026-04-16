@@ -32,9 +32,9 @@ const RADAR_SIZE = SCREEN_WIDTH - 64;
 const LOCATION_SERVICES_PREF_KEY = '@hikesafe_location_services_enabled';
 const OFFLINE_TILES_META_KEY = '@hikesafe_offline_tiles_meta';
 
-const OFFLINE_DEFAULT_RADIUS_KM = 8;
+const OFFLINE_DEFAULT_RADIUS_KM = 10;
 const OFFLINE_DEFAULT_ZOOM_MIN = 10;
-const OFFLINE_DEFAULT_ZOOM_MAX = 14;
+const OFFLINE_DEFAULT_ZOOM_MAX = 16;
 const OFFLINE_MAX_TILES = 5000;
 
 const TILE_URL_TEMPLATE = process.env.EXPO_PUBLIC_TILE_URL_TEMPLATE || null;
@@ -195,7 +195,8 @@ const RadarView = ({ myLocation, members, colors, onMemberPress, locationService
       if (!myLocation?.valid) return [];
       return mobiles
         .map(mobile => {
-          if (!mobile?.lat || !mobile?.lng) return 0;
+          if (!Number.isFinite(mobile?.lat) || !Number.isFinite(mobile?.lng)) return 0;
+          if (mobile.lat === 0 && mobile.lng === 0) return 0;
           return calculateDistance(myLocation.lat, myLocation.lng, mobile.lat, mobile.lng) || 0;
         })
         .filter(d => d > 0);
@@ -337,7 +338,9 @@ const RadarView = ({ myLocation, members, colors, onMemberPress, locationService
         
         {/* Device and Mobile dots */}
         {members.map((member) => {
-          if (!myLocation.valid || !member.lat || !member.lng) return null;
+          if (!myLocation.valid) return null;
+          if (!Number.isFinite(member?.lat) || !Number.isFinite(member?.lng)) return null;
+          if (member.lat === 0 && member.lng === 0) return null;
           
           const distance = member.distance || 0;
           const bearing = calculateBearing(myLocation.lat, myLocation.lng, member.lat, member.lng);
@@ -379,7 +382,9 @@ const RadarView = ({ myLocation, members, colors, onMemberPress, locationService
         {members.flatMap(member => {
           if (!member.mobiles || member.mobiles.length === 0) return [];
           return member.mobiles.map(mobile => {
-            if (!myLocation.valid || !mobile.lat || !mobile.lng) return null;
+            if (!myLocation.valid) return null;
+            if (!Number.isFinite(mobile?.lat) || !Number.isFinite(mobile?.lng)) return null;
+            if (mobile.lat === 0 && mobile.lng === 0) return null;
             
             const distance = calculateDistance(myLocation.lat, myLocation.lng, mobile.lat, mobile.lng);
             const bearing = calculateBearing(myLocation.lat, myLocation.lng, mobile.lat, mobile.lng);
@@ -401,8 +406,24 @@ const RadarView = ({ myLocation, members, colors, onMemberPress, locationService
               return '#F44336';
             };
             
+            const hubName = (member?.name || `Device ${member.deviceId}`).toString().trim();
+            const rawPhoneNick = (mobile?.nickname || '').toString().trim();
+            const phoneNick = /^mobile\s*\d+$/i.test(rawPhoneNick) ? '' : rawPhoneNick;
+            const title = phoneNick ? `${phoneNick} (${hubName})` : `${hubName} - M${mobile.mobileId}`;
+
+            const synthesized = {
+              deviceId: member.deviceId,
+              mobileId: mobile.mobileId,
+              name: title,
+              lat: mobile.lat,
+              lng: mobile.lng,
+              distance: Number.isFinite(distance) ? distance : null,
+              alertType: member.alertType,
+              isOffline: member.isOffline,
+            };
+
             return (
-              <View
+              <TouchableOpacity
                 key={`mobile-${member.deviceId}-${mobile.mobileId}`}
                 style={[
                   localStyles.mobileDot,
@@ -412,9 +433,11 @@ const RadarView = ({ myLocation, members, colors, onMemberPress, locationService
                     top: RADAR_SIZE / 2 + y - 10,
                   }
                 ]}
+                activeOpacity={0.85}
+                onPress={() => onMemberPress && onMemberPress(synthesized)}
               >
                 <Text style={localStyles.mobileDotText}>M{mobile.mobileId}</Text>
-              </View>
+              </TouchableOpacity>
             );
           });
         })}
@@ -434,6 +457,40 @@ const RadarView = ({ myLocation, members, colors, onMemberPress, locationService
 // Map View Component
 // Offline Grid Map Component - Works without internet
 const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumbs = [], remoteBreadcrumbsByDevice = {} }) => {
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 650,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0,
+          duration: 650,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+
+  const pulseScale = pulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 2.2],
+  });
+
+  const pulseOpacity = pulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.55, 0],
+  });
+
   // Find the bounds to fit all members
   const remotePoints = [];
   try {
@@ -486,13 +543,24 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
       if (!myLocation?.valid) return [];
       return mobiles
         .map(mobile => {
-          if (!mobile?.lat || !mobile?.lng) return 0;
+          if (!Number.isFinite(mobile?.lat) || !Number.isFinite(mobile?.lng)) return 0;
+          if (mobile.lat === 0 && mobile.lng === 0) return 0;
           return calculateDistance(myLocation.lat, myLocation.lng, mobile.lat, mobile.lng) || 0;
         })
         .filter(d => d > 0);
     }),
     200 // Minimum 200m view
   );
+
+  // Offline grid map zoom (range).
+  const MIN_RANGE_M = 25;
+  const MAX_RANGE_M = 10000; // 10km
+  const [manualRangeM, setManualRangeM] = useState(null);
+
+  const effectiveRangeM = useMemo(() => {
+    const base = (typeof manualRangeM === 'number' && Number.isFinite(manualRangeM)) ? manualRangeM : maxDistance;
+    return Math.min(MAX_RANGE_M, Math.max(MIN_RANGE_M, base));
+  }, [manualRangeM, maxDistance]);
   
   // Map size
   const mapSize = RADAR_SIZE;
@@ -500,7 +568,7 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
   const usableSize = mapSize - padding * 2;
   
   // Scale: pixels per meter
-  const scale = usableSize / (maxDistance * 2);
+  const scale = usableSize / (effectiveRangeM * 2);
   
   // Convert GPS to screen position relative to myLocation
   const gpsToScreen = (lat, lng) => {
@@ -536,8 +604,54 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
         <Map size={20} color={colors.primary} />
         <Text style={[localStyles.radarTitle, { color: colors.textDark }]}>Offline Map</Text>
         <Text style={[localStyles.radarRange, { color: colors.gray }]}>
-          Scale: {formatDistance(maxDistance * 2)}
+          Scale: {formatDistance(effectiveRangeM * 2)}
         </Text>
+
+        <View style={{ marginLeft: 'auto', flexDirection: 'row', alignItems: 'center' }}>
+          <TouchableOpacity
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              borderRadius: 10,
+              backgroundColor: colors.inputBg,
+              borderWidth: 1,
+              borderColor: colors.glassBorder,
+              marginRight: 8,
+            }}
+            onPress={() => setManualRangeM(Math.max(MIN_RANGE_M, Math.round(effectiveRangeM / 1.8)))}
+          >
+            <Text style={{ color: colors.textDark, fontWeight: '800' }}>-</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              borderRadius: 10,
+              backgroundColor: colors.inputBg,
+              borderWidth: 1,
+              borderColor: colors.glassBorder,
+              marginRight: 8,
+            }}
+            onPress={() => setManualRangeM(Math.min(MAX_RANGE_M, Math.round(effectiveRangeM * 1.8)))}
+          >
+            <Text style={{ color: colors.textDark, fontWeight: '800' }}>+</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              borderRadius: 10,
+              backgroundColor: colors.primary,
+              borderWidth: 1,
+              borderColor: colors.primary,
+            }}
+            onPress={() => setManualRangeM(null)}
+          >
+            <Text style={{ color: colors.textLight, fontWeight: '800' }}>Auto</Text>
+          </TouchableOpacity>
+        </View>
       </View>
       
       <View style={[localStyles.offlineMapGrid, { width: mapSize, height: mapSize }]}>
@@ -583,7 +697,7 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
           
           {/* Distance markers at corners */}
           <Text style={[localStyles.distMarker, { top: padding - 15, right: padding - 5, color: colors.gray }]}>
-            {formatDistance(maxDistance)}
+            {formatDistance(effectiveRangeM)}
           </Text>
           
           {/* Breadcrumb trail (path you've walked) */}
@@ -605,15 +719,19 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
                 key={`trail-${index}`}
                 style={{
                   position: 'absolute',
-                  left: pos1.x,
-                  top: pos1.y - 1.5,
+                  left: (pos1.x + pos2.x) / 2 - length / 2,
+                  top: (pos1.y + pos2.y) / 2 - 2,
                   width: length,
-                  height: 3,
-                  backgroundColor: '#2ECC71',
-                  opacity: 0.7,
+                  height: 4,
+                  backgroundColor: '#00E676',
+                  opacity: 0.9,
                   transform: [{ rotate: `${angle}deg` }],
-                  transformOrigin: 'left center',
-                  borderRadius: 1.5,
+                  borderRadius: 2,
+                  elevation: 2,
+                  shadowColor: '#000',
+                  shadowOpacity: 0.25,
+                  shadowRadius: 2,
+                  shadowOffset: { width: 0, height: 1 },
                 }}
               />
             );
@@ -640,15 +758,14 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
                   key={`rtrail-${deviceId}-${index}`}
                   style={{
                     position: 'absolute',
-                    left: pos1.x,
-                    top: pos1.y - 1,
+                    left: (pos1.x + pos2.x) / 2 - length / 2,
+                    top: (pos1.y + pos2.y) / 2 - 1.5,
                     width: length,
-                    height: 2,
+                    height: 3,
                     backgroundColor: '#3498DB',
-                    opacity: 0.35,
+                    opacity: 0.55,
                     transform: [{ rotate: `${angle}deg` }],
-                    transformOrigin: 'left center',
-                    borderRadius: 1,
+                    borderRadius: 1.5,
                   }}
                 />
               );
@@ -656,25 +773,44 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
           })}
           
           {/* Breadcrumb dots (every few points) */}
-          {breadcrumbs.filter((_, i) => i % 5 === 0).map((point, index) => {
+          {breadcrumbs.filter((_, i) => i % 2 === 0).map((point, index) => {
             const pos = gpsToScreen(point.lat, point.lng);
             return (
               <View
                 key={`dot-${index}`}
                 style={{
                   position: 'absolute',
-                  left: pos.x - 3,
-                  top: pos.y - 3,
-                  width: 6,
-                  height: 6,
-                  borderRadius: 3,
-                  backgroundColor: '#27AE60',
+                  left: pos.x - 5,
+                  top: pos.y - 5,
+                  width: 10,
+                  height: 10,
+                  borderRadius: 5,
+                  backgroundColor: '#00E676',
+                  borderWidth: 2,
+                  borderColor: colors.textLight,
+                  opacity: 0.95,
+                  elevation: 3,
                 }}
               />
             );
           })}
           
           {/* Your position (center) */}
+          <Animated.View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: mapSize / 2 - 12,
+              top: mapSize / 2 - 12,
+              width: 24,
+              height: 24,
+              borderRadius: 12,
+              borderWidth: 3,
+              borderColor: colors.primary,
+              opacity: pulseOpacity,
+              transform: [{ scale: pulseScale }],
+            }}
+          />
           <View style={[localStyles.myPosMarker, { left: mapSize / 2 - 12, top: mapSize / 2 - 12, borderColor: colors.primary }]}>
             <View style={[localStyles.myPosInner, { backgroundColor: colors.primary }]} />
           </View>
@@ -684,7 +820,8 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
           
           {/* Device markers */}
           {members.map((member) => {
-            if (!member.lat || !member.lng) return null;
+            if (!Number.isFinite(member?.lat) || !Number.isFinite(member?.lng)) return null;
+            if (member.lat === 0 && member.lng === 0) return null;
             
             const pos = gpsToScreen(member.lat, member.lng);
             const isEmergency = member.alertType === 'SOS' || member.alertType === 'MORSE';
@@ -715,29 +852,50 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
           {members.flatMap(member => {
             if (!member.mobiles || member.mobiles.length === 0) return [];
             return member.mobiles.map(mobile => {
-              if (!mobile.lat || !mobile.lng) return null;
+              if (!Number.isFinite(mobile?.lat) || !Number.isFinite(mobile?.lng)) return null;
+              if (mobile.lat === 0 && mobile.lng === 0) return null;
               
               const pos = gpsToScreen(mobile.lat, mobile.lng);
               const mobileColor = getPhoneMarkerColor(colors, member.deviceId, mobile.mobileId);
+
+              const hubName = (member?.name || `Device ${member.deviceId}`).toString().trim();
+              const rawPhoneNick = (mobile?.nickname || '').toString().trim();
+              const phoneNick = /^mobile\s*\d+$/i.test(rawPhoneNick) ? '' : rawPhoneNick;
+              const title = phoneNick ? `${phoneNick} (${hubName})` : `${hubName} - M${mobile.mobileId}`;
               
+              const synthesized = {
+                deviceId: member.deviceId,
+                mobileId: mobile.mobileId,
+                name: title,
+                lat: mobile.lat,
+                lng: mobile.lng,
+                distance: myLocation?.valid
+                  ? (calculateDistance(myLocation.lat, myLocation.lng, mobile.lat, mobile.lng) || null)
+                  : null,
+                alertType: member.alertType,
+                isOffline: member.isOffline,
+              };
+
               return (
-                <View
+                <TouchableOpacity
                   key={`mobile-${member.deviceId}-${mobile.mobileId}`}
                   style={[
                     localStyles.mobileMapMarker,
                     {
-                      left: pos.x - 11,
-                      top: pos.y - 11,
+                      left: pos.x - 13,
+                      top: pos.y - 13,
                       backgroundColor: mobileColor,
                       borderColor: colors.textLight,
                       zIndex: 6,
+                      elevation: 6,
                     }
                   ]}
-                  title={`Mobile ${mobile.mobileId}`}
-                  description={`RSSI: ${mobile.rssi} dBm`}
+                  activeOpacity={0.85}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  onPress={() => onMemberPress && onMemberPress(synthesized)}
                 >
                   <Text style={[localStyles.mobileMapLabel, { color: colors.textLight }]}>M{mobile.mobileId}</Text>
-                </View>
+                </TouchableOpacity>
               );
             });
           })}
@@ -754,10 +912,19 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
   );
 };
 
-const TopoMapView = ({ myLocation, members, colors, onMemberPress, tileUrlTemplate, offlineEnabled }) => {
+const TopoMapView = ({
+  myLocation,
+  members,
+  colors,
+  onMemberPress,
+  tileUrlTemplate,
+  offlineEnabled,
+  breadcrumbs = [],
+  remoteBreadcrumbsByDevice = {},
+}) => {
   if (!MapLibreRN) {
     return (
-      <View style={[localStyles.mapError, { backgroundColor: 'transparent', borderColor: colors.glassBorder }]}> 
+      <View style={[localStyles.mapError, { backgroundColor: 'transparent', borderColor: colors.glassBorder }]}>
         <BlurView
           intensity={colors.glassIntensity}
           tint={colors.glassTint}
@@ -776,10 +943,100 @@ const TopoMapView = ({ myLocation, members, colors, onMemberPress, tileUrlTempla
   const MLMapView = MapLibreRN.MapView;
   const MLCamera = MapLibreRN.Camera;
   const PointAnnotation = MapLibreRN.PointAnnotation;
+  const ShapeSource = MapLibreRN.ShapeSource;
+  const LineLayer = MapLibreRN.LineLayer;
+
+  const isValidCoord = useCallback((lat, lng) => {
+    if (typeof lat !== 'number' || typeof lng !== 'number') return false;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+    if (lat === 0 && lng === 0) return false;
+    return true;
+  }, []);
+
+  const ownTrailShape = useMemo(() => {
+    const coords = (breadcrumbs || [])
+      .map(p => (p ? [p.lng, p.lat] : null))
+      .filter(c => Array.isArray(c) && isValidCoord(c[1], c[0]));
+
+    if (coords.length < 2) return null;
+
+    return {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {},
+          geometry: { type: 'LineString', coordinates: coords.slice(-2000) },
+        },
+      ],
+    };
+  }, [breadcrumbs, isValidCoord]);
+
+  const remoteTrailShapes = useMemo(() => {
+    const entries = Object.entries(remoteBreadcrumbsByDevice || {});
+    const shapes = [];
+
+    entries.forEach(([deviceId, pts]) => {
+      const coords = (Array.isArray(pts) ? pts : [])
+        .map(p => (p ? [p.lng, p.lat] : null))
+        .filter(c => Array.isArray(c) && isValidCoord(c[1], c[0]));
+
+      if (coords.length < 2) return;
+
+      shapes.push({
+        deviceId: String(deviceId),
+        shape: {
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: { deviceId: String(deviceId) },
+              geometry: { type: 'LineString', coordinates: coords.slice(-2000) },
+            },
+          ],
+        },
+      });
+    });
+
+    return shapes;
+  }, [remoteBreadcrumbsByDevice, isValidCoord]);
 
   const center = myLocation.valid
     ? [myLocation.lng, myLocation.lat]
     : [120.9842, 14.5995];
+
+  const desiredZoom = useMemo(() => {
+    if (!myLocation?.valid) return 10;
+
+    const myLat = myLocation.lat;
+    const myLng = myLocation.lng;
+    if (!Number.isFinite(myLat) || !Number.isFinite(myLng)) return 10;
+
+    let maxDist = 0;
+
+    (members || []).forEach((m) => {
+      if (!Number.isFinite(m?.lat) || !Number.isFinite(m?.lng)) return;
+      if (m.lat === 0 && m.lng === 0) return;
+      maxDist = Math.max(maxDist, calculateDistance(myLat, myLng, m.lat, m.lng) || 0);
+
+      const mobiles = Array.isArray(m?.mobiles) ? m.mobiles : [];
+      mobiles.forEach((mobile) => {
+        if (!Number.isFinite(mobile?.lat) || !Number.isFinite(mobile?.lng)) return;
+        if (mobile.lat === 0 && mobile.lng === 0) return;
+        maxDist = Math.max(maxDist, calculateDistance(myLat, myLng, mobile.lat, mobile.lng) || 0);
+      });
+    });
+
+    if (!Number.isFinite(maxDist) || maxDist <= 0) return 16;
+    if (maxDist <= 50) return 18;
+    if (maxDist <= 150) return 17;
+    if (maxDist <= 350) return 16;
+    if (maxDist <= 800) return 15;
+    if (maxDist <= 2000) return 14;
+    if (maxDist <= 6000) return 13;
+    if (maxDist <= 12000) return 12;
+    return 11;
+  }, [members, myLocation?.lat, myLocation?.lng, myLocation?.valid]);
 
   const tileTemplates = useMemo(() => {
     // Offline-only: the topo view must render from local tiles.
@@ -838,28 +1095,66 @@ const TopoMapView = ({ myLocation, members, colors, onMemberPress, tileUrlTempla
         attributionEnabled
       >
         <MLCamera
+          key={myLocation.valid ? 'cam-valid' : 'cam-invalid'}
           centerCoordinate={center}
-          zoomLevel={myLocation.valid ? 13 : 10}
+          defaultSettings={{ centerCoordinate: center, zoomLevel: desiredZoom }}
+          minZoomLevel={10}
+          maxZoomLevel={20}
           animationMode="flyTo"
           animationDuration={500}
         />
 
+        {ownTrailShape && (
+          <ShapeSource id="trail-own" shape={ownTrailShape}>
+            <LineLayer
+              id="trail-own-line"
+              style={{
+                lineColor: colors.primary,
+                lineWidth: 3,
+                lineOpacity: 0.7,
+                lineCap: 'round',
+                lineJoin: 'round',
+              }}
+            />
+          </ShapeSource>
+        )}
+
+        {(remoteTrailShapes || []).map(({ deviceId, shape }) => (
+          <ShapeSource key={`trail-${deviceId}`} id={`trail-${deviceId}`} shape={shape}>
+            <LineLayer
+              id={`trail-${deviceId}-line`}
+              style={{
+                lineColor: colors.accent || colors.danger || colors.primary,
+                lineWidth: 3,
+                lineOpacity: 0.55,
+                lineCap: 'round',
+                lineJoin: 'round',
+              }}
+            />
+          </ShapeSource>
+        ))}
+
         {myLocation.valid && (
           <PointAnnotation id="me" coordinate={[myLocation.lng, myLocation.lat]}>
-            <View style={[localStyles.mapDot, { backgroundColor: colors.primary, borderColor: colors.glassBorder }]} />
+            <View style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
+              <View style={[localStyles.mapDot, { backgroundColor: colors.primary, borderColor: colors.glassBorder }]} />
+            </View>
           </PointAnnotation>
         )}
 
         {(members || []).map((member) => {
-          if (!member?.lat || !member?.lng) return null;
+          if (!Number.isFinite(member?.lat) || !Number.isFinite(member?.lng)) return null;
+          if (member.lat === 0 && member.lng === 0) return null;
           return (
             <PointAnnotation
               key={`member-${member.deviceId}`}
               id={`member-${member.deviceId}`}
               coordinate={[member.lng, member.lat]}
-              onSelected={() => onMemberPress(member)}
+              onSelected={() => onMemberPress && onMemberPress(member)}
             >
-              <View style={[localStyles.mapDot, { backgroundColor: colors.gray, borderColor: colors.glassBorder }]} />
+              <View style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
+                <View style={[localStyles.mapDot, { backgroundColor: colors.gray, borderColor: colors.glassBorder }]} />
+              </View>
             </PointAnnotation>
           );
         })}
@@ -869,22 +1164,45 @@ const TopoMapView = ({ myLocation, members, colors, onMemberPress, tileUrlTempla
           if (mobiles.length === 0) return [];
 
           return mobiles.map((mobile) => {
-            if (!mobile?.lat || !mobile?.lng) return null;
+            if (!Number.isFinite(mobile?.lat) || !Number.isFinite(mobile?.lng)) return null;
+            if (mobile.lat === 0 && mobile.lng === 0) return null;
 
             const mobileColor = getPhoneMarkerColor(colors, member.deviceId, mobile.mobileId);
+
+            const hubName = (member?.name || `Device ${member.deviceId}`).toString().trim();
+            const rawPhoneNick = (mobile?.nickname || '').toString().trim();
+            const phoneNick = /^mobile\s*\d+$/i.test(rawPhoneNick) ? '' : rawPhoneNick;
+            const title = phoneNick ? `${phoneNick} (${hubName})` : `${hubName} - M${mobile.mobileId}`;
+
+            const synthesized = {
+              deviceId: member.deviceId,
+              mobileId: mobile.mobileId,
+              name: title,
+              lat: mobile.lat,
+              lng: mobile.lng,
+              distance: myLocation.valid
+                ? (calculateDistance(myLocation.lat, myLocation.lng, mobile.lat, mobile.lng) || null)
+                : null,
+              alertType: member.alertType,
+              isOffline: member.isOffline,
+            };
+
             return (
               <PointAnnotation
                 key={`mobile-${member.deviceId}-${mobile.mobileId}`}
                 id={`mobile-${member.deviceId}-${mobile.mobileId}`}
                 coordinate={[mobile.lng, mobile.lat]}
+                onSelected={() => onMemberPress && onMemberPress(synthesized)}
               >
-                <View
-                  style={[
-                    localStyles.mapMobileDot,
-                    { backgroundColor: mobileColor, borderColor: colors.glassBorder },
-                  ]}
-                >
-                  <Text style={[localStyles.mapMobileDotText, { color: colors.textLight }]}>M{mobile.mobileId}</Text>
+                <View style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
+                  <View
+                    style={[
+                      localStyles.mapMobileDot,
+                      { backgroundColor: mobileColor, borderColor: colors.textLight },
+                    ]}
+                  >
+                    <Text style={[localStyles.mapMobileDotText, { color: colors.textLight }]}>M{mobile.mobileId}</Text>
+                  </View>
                 </View>
               </PointAnnotation>
             );
@@ -990,9 +1308,13 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
     return (memberLocations || []).map(member => ({
       ...member,
       name: getMemberNickname ? getMemberNickname(member.deviceId) : `Device ${member.deviceId}`,
-      distance: effectiveMyLocation.valid && member.lat && member.lng
-        ? calculateDistance(effectiveMyLocation.lat, effectiveMyLocation.lng, member.lat, member.lng)
-        : null,
+      distance:
+        effectiveMyLocation.valid &&
+        Number.isFinite(member?.lat) &&
+        Number.isFinite(member?.lng) &&
+        !(member.lat === 0 && member.lng === 0)
+          ? calculateDistance(effectiveMyLocation.lat, effectiveMyLocation.lng, member.lat, member.lng)
+          : null,
     }));
   }, [effectiveMyLocation.lat, effectiveMyLocation.lng, effectiveMyLocation.valid, getMemberNickname, memberLocations]);
 
@@ -1250,6 +1572,8 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
               onMemberPress={handleMemberPress}
               tileUrlTemplate={TILE_URL_TEMPLATE}
               offlineEnabled={offlineTilesAvailable}
+              breadcrumbs={breadcrumbs}
+              remoteBreadcrumbsByDevice={sosRemoteBreadcrumbs}
             />
           ) : (
             <OfflineGridMap
@@ -1551,17 +1875,22 @@ const localStyles = StyleSheet.create({
     borderWidth: 2,
   },
   mapMobileDot: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 2 },
   },
   mapMobileDotText: {
     color: '#fff',
-    fontSize: 9,
-    fontWeight: '800',
+    fontSize: 10,
+    fontWeight: '900',
   },
   mapOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -1808,19 +2137,19 @@ const localStyles = StyleSheet.create({
   },
   mobileMapMarker: {
     position: 'absolute',
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.5,
+    borderWidth: 2,
     borderColor: '#fff',
     zIndex: 4,
   },
   mobileMapLabel: {
     color: '#fff',
-    fontSize: 9,
-    fontWeight: '700',
+    fontSize: 10,
+    fontWeight: '800',
   },
   coordsDisplay: {
     marginTop: 12,

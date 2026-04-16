@@ -48,7 +48,7 @@ const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
 const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const { colors, isDarkMode } = useTheme();
   const navigation = useNavigation();
-  const { activeAlert, dismissAlert, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
+  const { activeAlert, dismissAlert, silenceActiveAlert, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
   const { lobbyCode, lobbyName, leaveLobby, isInLobby, getEmergencyContactForDevice, getMemberNickname } = useLobby();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState('home');
@@ -266,16 +266,27 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
 
   // Handle incoming SOS/MORSE/OFFLINE alerts
   useEffect(() => {
-    if (activeAlert && (activeAlert.type === 'SOS' || activeAlert.type === 'MORSE' || activeAlert.type === 'OFFLINE')) {
-      setShowSOSAlertModal(true);
-      // Vibrate to alert user (different pattern for offline)
-      if (activeAlert.type === 'OFFLINE') {
-        Vibration.vibrate([0, 300, 200, 300]);
-      } else {
-        Vibration.vibrate([0, 500, 200, 500, 200, 500]);
-      }
+    const isAlert = activeAlert && (activeAlert.type === 'SOS' || activeAlert.type === 'MORSE' || activeAlert.type === 'OFFLINE');
+    if (!isAlert) {
+      return;
     }
-  }, [activeAlert]);
+
+    // If someone already acknowledged "On my way", don't keep re-prompting.
+    if (activeAlert.silenced) {
+      if (showSOSAlertModal) {
+        setShowSOSAlertModal(false);
+      }
+      return;
+    }
+
+    setShowSOSAlertModal(true);
+    // Vibrate to alert user (different pattern for offline)
+    if (activeAlert.type === 'OFFLINE') {
+      Vibration.vibrate([0, 300, 200, 300]);
+    } else {
+      Vibration.vibrate([0, 500, 200, 500, 200, 500]);
+    }
+  }, [activeAlert, showSOSAlertModal]);
 
   // Broadcast join timestamp once per connected-lobby session.
   // Lobby code sync is already handled in BluetoothContext.
@@ -313,8 +324,8 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
 
   const handleOnMyWay = async () => {
     await sendCommand('ON_MY_WAY');
+    silenceActiveAlert();
     setShowSOSAlertModal(false);
-    dismissAlert();
   };
 
   const handleOpenChat = (name) => {
@@ -780,12 +791,12 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
             
             <Text style={[styles.modalText, { color: colors.textDark, textAlign: 'center', fontSize: 16, marginVertical: 8 }]}>
               {activeAlert?.type === 'OFFLINE' 
-                ? `${getMemberNickname(activeAlert?.deviceId)} has gone offline!`
-                : `${getMemberNickname(activeAlert?.deviceId)} needs help!`
+                ? `${activeAlert?.displayName || (typeof activeAlert?.deviceId === 'number' ? getMemberNickname(activeAlert.deviceId) : 'A member')} has gone offline!`
+                : `${activeAlert?.displayName || (typeof activeAlert?.deviceId === 'number' ? getMemberNickname(activeAlert.deviceId) : 'A member')} needs help!`
               }
             </Text>
 
-            {activeAlert?.type !== 'OFFLINE' && activeAlert?.deviceId ? (() => {
+            {activeAlert?.type !== 'OFFLINE' && typeof activeAlert?.deviceId === 'number' ? (() => {
               const deviceId = activeAlert.deviceId;
               const contact = getEmergencyContactForDevice ? getEmergencyContactForDevice(deviceId) : null;
               const displayName = getMemberNickname ? getMemberNickname(deviceId) : `Device ${deviceId}`;
@@ -803,14 +814,16 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
               );
             })() : null}
             
-            {activeAlert?.lat && activeAlert?.lng && (
-              <View style={{ backgroundColor: colors.inputBg, padding: 14, borderRadius: 12, marginTop: 8 }}>
-                <Text style={{ color: colors.gray, fontSize: 11, fontWeight: '600', letterSpacing: 1, marginBottom: 4 }}>LOCATION</Text>
-                <Text style={{ color: colors.textDark, fontFamily: 'monospace', fontSize: 14, fontWeight: '600' }}>
-                  {activeAlert.lat.toFixed(6)}, {activeAlert.lng.toFixed(6)}
-                </Text>
-              </View>
-            )}
+            {Number.isFinite(activeAlert?.lat) &&
+              Number.isFinite(activeAlert?.lng) &&
+              !(activeAlert.lat === 0 && activeAlert.lng === 0) && (
+                <View style={{ backgroundColor: colors.inputBg, padding: 14, borderRadius: 12, marginTop: 8 }}>
+                  <Text style={{ color: colors.gray, fontSize: 11, fontWeight: '600', letterSpacing: 1, marginBottom: 4 }}>LOCATION</Text>
+                  <Text style={{ color: colors.textDark, fontFamily: 'monospace', fontSize: 14, fontWeight: '600' }}>
+                    {activeAlert.lat.toFixed(6)}, {activeAlert.lng.toFixed(6)}
+                  </Text>
+                </View>
+              )}
             
             {activeAlert?.localEmergency ? (
               // SENDER: Show only "I am OK" button
