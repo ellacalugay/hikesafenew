@@ -1,6 +1,6 @@
-import * as FileSystem from 'expo-file-system';
+import { File, Directory, Paths } from 'expo-file-system';
 
-const OFFLINE_TILES_DIR = `${FileSystem.documentDirectory}offline-tiles`;
+const OFFLINE_TILES_DIR = new Directory(Paths.document, 'offline-tiles');
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
@@ -19,21 +19,25 @@ const latToTileY = (lat, zoom) => {
   return Math.floor(y * n);
 };
 
-const ensureDirAsync = async (dirUri) => {
+const ensureDirAsync = async (dir) => {
   try {
-    await FileSystem.makeDirectoryAsync(dirUri, { intermediates: true });
-  } catch (e) {
-    // ignore EEXIST / already created
+    dir.create({ intermediates: true, idempotent: true });
+  } catch {
+    // ignore (already exists / best-effort)
   }
 };
 
-export const getOfflineTileTemplateUri = () => `${OFFLINE_TILES_DIR}/{z}/{x}/{y}.png`;
+// IMPORTANT: MapLibre expects literal "{z}/{x}/{y}" placeholders in the tile template.
+// Using `new File(..., '{z}', ...)` can URL-encode braces to %7Bz%7D, which breaks tile loading (black map).
+export const getOfflineTileTemplateUri = () => {
+  const base = String(OFFLINE_TILES_DIR?.uri || '').replace(/\/+$/, '');
+  return `${base}/{z}/{x}/{y}.png`;
+};
 
 export const clearOfflineTilesAsync = async () => {
   try {
-    const info = await FileSystem.getInfoAsync(OFFLINE_TILES_DIR);
-    if (info.exists) {
-      await FileSystem.deleteAsync(OFFLINE_TILES_DIR, { idempotent: true });
+    if (OFFLINE_TILES_DIR.exists) {
+      OFFLINE_TILES_DIR.delete();
     }
     return true;
   } catch {
@@ -41,7 +45,8 @@ export const clearOfflineTilesAsync = async () => {
   }
 };
 
-const tileUri = (z, x, y) => `${OFFLINE_TILES_DIR}/${z}/${x}/${y}.png`;
+const tileFile = (z, x, y) => new File(OFFLINE_TILES_DIR, String(z), String(x), `${y}.png`);
+const tileDir = (z, x) => new Directory(OFFLINE_TILES_DIR, String(z), String(x));
 
 const buildUrlFromTemplate = (template, z, x, y) =>
   template
@@ -103,14 +108,13 @@ export const downloadOfflineRegionTilesAsync = async ({
 
   await ensureDirAsync(OFFLINE_TILES_DIR);
 
-  const dirPromises = new Map();
-  const ensureDirCachedAsync = async (dirUri) => {
-    if (!dirUri) return;
-    const existing = dirPromises.get(dirUri);
-    if (existing) return existing;
-    const promise = ensureDirAsync(dirUri);
-    dirPromises.set(dirUri, promise);
-    return promise;
+  const createdDirs = new Set();
+  const ensureDirCachedAsync = async (dir) => {
+    if (!dir) return;
+    const key = dir.uri;
+    if (createdDirs.has(key)) return;
+    createdDirs.add(key);
+    await ensureDirAsync(dir);
   };
 
   const bbox = computeBBoxAround(centerLat, centerLng, radiusKm);
@@ -162,21 +166,18 @@ export const downloadOfflineRegionTilesAsync = async ({
 
         attempted += 1;
 
-        const outUri = tileUri(z, x, y);
-        const outDir = outUri.substring(0, outUri.lastIndexOf('/'));
-        await ensureDirCachedAsync(outDir);
+        const outFile = tileFile(z, x, y);
+        await ensureDirCachedAsync(tileDir(z, x));
 
         try {
-          const existing = await FileSystem.getInfoAsync(outUri);
-          if (existing.exists && existing.size > 0) {
+          if (outFile.exists && outFile.size > 0) {
             completed += 1;
           } else {
             const url = buildUrlFromTemplate(template, z, x, y);
-            await FileSystem.downloadAsync(url, outUri);
+            await File.downloadFileAsync(url, outFile, { idempotent: true });
             completed += 1;
           }
         } catch (e) {
-          // ignore per-tile failures; continue
           failed += 1;
           if (!firstErrorMessage) {
             firstErrorMessage = e?.message ? String(e.message) : String(e);

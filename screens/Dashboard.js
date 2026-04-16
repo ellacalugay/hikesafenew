@@ -22,9 +22,6 @@ import HelpScreen from './tabs/HelpScreen';
 import ReportProblemScreen from './tabs/ReportProblemScreen';
 import MembersTab from './tabs/MembersTab';
 
-const LOCATION_SERVICES_PREF_KEY = '@hikesafe_location_services_enabled';
-const LOCATION_SERVICES_PROMPTED_KEY = '@hikesafe_location_services_prompted';
-
 const TAB_ORDER = ['home', 'location', 'message', 'members', 'profile'];
 const SUB_SCREENS = ['editProfile', 'chat', 'settings', 'help', 'reportProblem'];
 
@@ -69,7 +66,6 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const [skipLogoutConfirm, setSkipLogoutConfirm] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [showLocationModal, setShowLocationModal] = useState(false);
-  const [showLocationServicesPrompt, setShowLocationServicesPrompt] = useState(false);
   const [showLobbyModal, setShowLobbyModal] = useState(false);
   const [showSOSAlertModal, setShowSOSAlertModal] = useState(false);
   const joinAnnounceKeyRef = useRef(null);
@@ -93,79 +89,30 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
     });
   }, []);
 
-  const showLocationServicesBlocked = useCallback(() => {
-    Alert.alert(
-      'Location Services Off',
-      'Enable Location Services in Settings to access the Location tab.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Go to Settings', onPress: () => changeTab('settings') },
-      ]
-    );
-  }, [changeTab]);
+  // Ask for location permission early (no in-app blocking popups).
+  useEffect(() => {
+    let alive = true;
 
-  const goToLocationTab = useCallback(() => {
+    (async () => {
+      try {
+        const perm = await Location.getForegroundPermissionsAsync();
+        if (!alive) return;
+        if (perm?.status !== 'granted' && perm?.canAskAgain) {
+          await Location.requestForegroundPermissionsAsync();
+        }
+      } catch {
+        // best-effort only
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const handleLocationTabPress = useCallback(() => {
     changeTab('location');
   }, [changeTab]);
-
-  const handleLocationTabPress = useCallback(async () => {
-    try {
-      const prompted = await AsyncStorage.getItem(LOCATION_SERVICES_PROMPTED_KEY);
-      if (!prompted) {
-        setShowLocationServicesPrompt(true);
-        return;
-      }
-    } catch (e) {
-      // If storage fails, fall through to location.
-    }
-
-    try {
-      const enabled = await AsyncStorage.getItem(LOCATION_SERVICES_PREF_KEY);
-      if (enabled === 'false') {
-        showLocationServicesBlocked();
-        return;
-      }
-    } catch (e) {
-      // If storage fails, fall through.
-    }
-
-    goToLocationTab();
-  }, [goToLocationTab, showLocationServicesBlocked]);
-
-  const handleLocationServicesDecision = useCallback(async (enable) => {
-    setShowLocationServicesPrompt(false);
-
-    try {
-      await AsyncStorage.setItem(LOCATION_SERVICES_PROMPTED_KEY, 'true');
-    } catch (e) {
-      // ignore
-    }
-
-    if (enable) {
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        const granted = status === 'granted';
-        try {
-          await AsyncStorage.setItem(LOCATION_SERVICES_PREF_KEY, granted ? 'true' : 'false');
-        } catch (e) {}
-        if (!granted) {
-          Alert.alert('Permission Required', 'Location permission is needed to use the compass in the Location tab.');
-          showLocationServicesBlocked();
-          return;
-        }
-      } catch (e) {
-        try { await AsyncStorage.setItem(LOCATION_SERVICES_PREF_KEY, 'false'); } catch (e2) {}
-        showLocationServicesBlocked();
-        return;
-      }
-    } else {
-      try { await AsyncStorage.setItem(LOCATION_SERVICES_PREF_KEY, 'false'); } catch (e) {}
-      showLocationServicesBlocked();
-      return;
-    }
-
-    goToLocationTab();
-  }, [goToLocationTab, showLocationServicesBlocked]);
 
   const getTransitionMode = useCallback((fromTab, toTab) => {
     const fromIsSub = SUB_SCREENS.includes(fromTab);
@@ -513,39 +460,6 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
           <TabIcon icon={User} label="Prof" active={activeTab === 'profile'} onPress={() => changeTab('profile')} colors={colors} />
         </View>
       )}
-
-      {/* One-time Location Services prompt */}
-      <Modal
-        visible={showLocationServicesPrompt}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowLocationServicesPrompt(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.modalBg }]}>
-            <Text style={[styles.modalTitle, { color: colors.textDark, textAlign: 'center' }]}>Enable Location Services</Text>
-            <Text style={[styles.modalText, { color: colors.textDark, textAlign: 'center', marginBottom: 16 }]}
-            >
-              Location permission is needed to access the Location tab.
-            </Text>
-
-            <View style={{ flexDirection: 'row' }}>
-              <TouchableOpacity
-                style={[styles.modalButton, { backgroundColor: colors.inputBg, marginRight: 10, flex: 1 }]}
-                onPress={() => handleLocationServicesDecision(false)}
-              >
-                <Text style={{ color: colors.textDark, fontWeight: '600' }}>Not now</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, { backgroundColor: colors.primary, flex: 1 }]}
-                onPress={() => handleLocationServicesDecision(true)}
-              >
-                <Text style={{ color: 'white', fontWeight: '600' }}>Enable</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       {/* Logout Confirmation Modal */}
       <Modal

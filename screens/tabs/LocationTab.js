@@ -510,31 +510,7 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
     ...breadcrumbs.filter(b => b.lat && b.lng),
     ...remotePoints,
   ];
-  
-  if (allPoints.length === 0 || !myLocation.valid) {
-    return (
-      <View style={[localStyles.offlineMapContainer, { backgroundColor: 'transparent', borderColor: colors.glassBorder }]}>
-        <BlurView
-          intensity={colors.glassIntensity}
-          tint={colors.glassTint}
-          style={StyleSheet.absoluteFillObject}
-        />
-        <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
 
-        <View style={localStyles.offlineMapHeader}>
-          <Map size={20} color={colors.primary} />
-          <Text style={[localStyles.radarTitle, { color: colors.textDark }]}>Offline Map</Text>
-          <Text style={[localStyles.radarRange, { color: colors.gray }]}>GPS Required</Text>
-        </View>
-        <View style={[localStyles.offlineMapGrid, { height: RADAR_SIZE }]}>
-          <Text style={{ color: colors.gray, textAlign: 'center' }}>
-            Waiting for GPS signal...{'\n'}Make sure you're outdoors.
-          </Text>
-        </View>
-      </View>
-    );
-  }
-  
   // Calculate bounds
   const maxDistance = Math.max(
     ...members.map(m => m.distance || 0).filter(d => d > 0),
@@ -561,7 +537,31 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
     const base = (typeof manualRangeM === 'number' && Number.isFinite(manualRangeM)) ? manualRangeM : maxDistance;
     return Math.min(MAX_RANGE_M, Math.max(MIN_RANGE_M, base));
   }, [manualRangeM, maxDistance]);
-  
+
+  if (allPoints.length === 0 || !myLocation.valid) {
+    return (
+      <View style={[localStyles.offlineMapContainer, { backgroundColor: 'transparent', borderColor: colors.glassBorder }]}>
+        <BlurView
+          intensity={colors.glassIntensity}
+          tint={colors.glassTint}
+          style={StyleSheet.absoluteFillObject}
+        />
+        <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
+
+        <View style={localStyles.offlineMapHeader}>
+          <Map size={20} color={colors.primary} />
+          <Text style={[localStyles.radarTitle, { color: colors.textDark }]}>Offline Map</Text>
+          <Text style={[localStyles.radarRange, { color: colors.gray }]}>GPS Required</Text>
+        </View>
+        <View style={[localStyles.offlineMapGrid, { height: RADAR_SIZE }]}>
+          <Text style={{ color: colors.gray, textAlign: 'center' }}>
+            Waiting for GPS signal...{'\n'}Make sure you're outdoors.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   // Map size
   const mapSize = RADAR_SIZE;
   const padding = 40;
@@ -919,6 +919,7 @@ const TopoMapView = ({
   onMemberPress,
   tileUrlTemplate,
   offlineEnabled,
+  offlineMeta,
   breadcrumbs = [],
   remoteBreadcrumbsByDevice = {},
 }) => {
@@ -1038,6 +1039,12 @@ const TopoMapView = ({
     return 11;
   }, [members, myLocation?.lat, myLocation?.lng, myLocation?.valid]);
 
+  // Offline raster tiles only exist within the downloaded zoom range.
+  // If the camera zooms beyond `offlineMeta.zoomMax`, the map will render black.
+  const offlineZoomMin = (offlineMeta && Number.isFinite(offlineMeta.zoomMin)) ? offlineMeta.zoomMin : 10;
+  const offlineZoomMax = (offlineMeta && Number.isFinite(offlineMeta.zoomMax)) ? offlineMeta.zoomMax : 16;
+  const clampedZoom = Math.max(offlineZoomMin, Math.min(offlineZoomMax, desiredZoom));
+
   const tileTemplates = useMemo(() => {
     // Offline-only: the topo view must render from local tiles.
     // The online template (EXPO_PUBLIC_TILE_URL_TEMPLATE) is used only to download tiles.
@@ -1097,9 +1104,10 @@ const TopoMapView = ({
         <MLCamera
           key={myLocation.valid ? 'cam-valid' : 'cam-invalid'}
           centerCoordinate={center}
-          defaultSettings={{ centerCoordinate: center, zoomLevel: desiredZoom }}
-          minZoomLevel={10}
-          maxZoomLevel={20}
+          zoomLevel={clampedZoom}
+          defaultSettings={{ centerCoordinate: center, zoomLevel: clampedZoom }}
+          minZoomLevel={offlineZoomMin}
+          maxZoomLevel={offlineZoomMax}
           animationMode="flyTo"
           animationDuration={500}
         />
@@ -1572,6 +1580,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
               onMemberPress={handleMemberPress}
               tileUrlTemplate={TILE_URL_TEMPLATE}
               offlineEnabled={offlineTilesAvailable}
+              offlineMeta={offlineMeta}
               breadcrumbs={breadcrumbs}
               remoteBreadcrumbsByDevice={sosRemoteBreadcrumbs}
             />

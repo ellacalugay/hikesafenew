@@ -444,6 +444,12 @@ export const BluetoothProvider = ({ children }) => {
   const emergencyThrottleRef = useRef(new Map());
   const silencedEmergencyRef = useRef(new Map());
   const EMERGENCY_SILENCE_WINDOW_MS = 10 * 60 * 1000;
+
+  // Multi-phone-to-one-hub: the hub can broadcast STATUS:SENDING_SOS to all phones.
+  // Track whether *this* phone initiated SOS recently so only the sender gets localEmergency UI.
+  const lastLocalEmergencyRequestRef = useRef({ type: null, ts: 0 });
+  const LOCAL_EMERGENCY_INTENT_WINDOW_MS = 15000;
+
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const audioModeConfiguredRef = useRef(false);
 
@@ -2105,6 +2111,27 @@ export const BluetoothProvider = ({ children }) => {
           showTemporaryStatus('Device lobby memory cleared', 3000);
         } else if (status === 'SENDING_SOS' || status === 'SENDING_MORSE_SOS') {
           const emergencyType = status === 'SENDING_SOS' ? 'SOS' : 'MORSE';
+          const now = Date.now();
+
+          const lastReq = lastLocalEmergencyRequestRef.current || { type: null, ts: 0 };
+          const hasRecentLocalIntent =
+            lastReq.type === emergencyType &&
+            (now - (lastReq.ts || 0)) < LOCAL_EMERGENCY_INTENT_WINDOW_MS;
+
+          // STATUS:SENDING_* is emitted by the hub. In multi-phone mode it can be broadcast to all phones,
+          // so only treat it as local if this phone very recently requested it.
+          // If there is only one phone connected, it's safe to treat the hub's SOS as local (e.g., hardware SOS button).
+          const treatAsLocal = hasRecentLocalIntent || connectedDevicesCount === 1;
+
+          if (!treatAsLocal) {
+            // Let ALRT packets (with correct sender/deviceId + coordinates) drive receiver UI.
+            return;
+          }
+
+          if (hasRecentLocalIntent) {
+            lastLocalEmergencyRequestRef.current = { type: null, ts: 0 };
+          }
+
           const localDeviceId = (typeof myDeviceId === 'number' && !Number.isNaN(myDeviceId))
             ? myDeviceId
             : parseDeviceId(connectedDevice || deviceRef.current);
@@ -2119,7 +2146,7 @@ export const BluetoothProvider = ({ children }) => {
           setActiveAlert({
             type: emergencyType,
             deviceId: (typeof localDeviceId === 'number' ? localDeviceId : null),
-            timestamp: Date.now(),
+            timestamp: now,
             localEmergency: true,
             displayName,
             silenced: false,
@@ -3601,7 +3628,10 @@ export const BluetoothProvider = ({ children }) => {
   }, [connectedDevicesCount, isConnected, phoneToken, myMobileId, sendCommand]);
 
   // Convenience methods
-  const sendSOS = useCallback(() => sendCommand('SOS'), [sendCommand]);
+  const sendSOS = useCallback(() => {
+    lastLocalEmergencyRequestRef.current = { type: 'SOS', ts: Date.now() };
+    return sendCommand('SOS');
+  }, [sendCommand]);
   const sendOK = useCallback(() => sendCommand('OK'), [sendCommand]);
   
   // Remove a member from the local tracking (host kick from lobby)
