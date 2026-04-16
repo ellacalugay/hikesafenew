@@ -44,7 +44,8 @@
       "expo-asset",
       "expo-audio",
       "expo-font",
-      "@maplibre/maplibre-react-native"
+      "@maplibre/maplibre-react-native",
+      "./plugins/withRNBackgroundActionsAndroid14Fix"
     ],
     "owner": "hikesafe",
     "extra": {
