@@ -64,7 +64,10 @@ const ChatScreen = ({ onBack, chatName }) => {
 
         const nick = /^mobile\s*\d+$/i.test(String(rawNick).trim()) ? '' : String(rawNick).trim();
         if (nick) return nick;
-        return 'Unnamed Phone';
+        if (mobileId) {
+          return isSelfHub ? `M${mobileId}` : `Hiker #${fromDeviceId} - M${mobileId}`;
+        }
+        return typeof fromDeviceId === 'number' && fromDeviceId > 0 ? `Hiker #${fromDeviceId}` : 'Unknown';
       }
 
       // Non-DM: show device nickname (never "Device 0" unless truly unknown)
@@ -145,6 +148,18 @@ const ChatScreen = ({ onBack, chatName }) => {
     return Array.isArray(dmTargets) && dmTargets.length > 1;
   }, [canUseDeviceLevelChat, deviceId, dmTargets, hasLockedDmTarget, isBroadcast]);
 
+  const maxMessageLength = useMemo(() => {
+    const baseLimit = 50;
+    if (isBroadcast || isLocalBroadcast || canUseDeviceLevelChat) return baseLimit;
+
+    const targetMobile = typeof dmTarget === 'number' ? dmTarget : null;
+    const fromMobile = (typeof myMobileId === 'number' && myMobileId >= 1 && myMobileId <= 4) ? myMobileId : 0;
+    if (!targetMobile) return baseLimit;
+
+    const prefix = `__DM__:${targetMobile}:${fromMobile}:`;
+    return Math.max(1, baseLimit - prefix.length);
+  }, [canUseDeviceLevelChat, dmTarget, isBroadcast, isLocalBroadcast, myMobileId]);
+
   // When opening a DM thread (device + mobile), preselect that mobile.
   useEffect(() => {
     if (isBroadcast) {
@@ -202,18 +217,24 @@ const ChatScreen = ({ onBack, chatName }) => {
   }, [deviceId, messages.length]);
 
   const handleSend = async () => {
-    if (!messageText.trim() || !isConnected) return;
+    const text = messageText.trim();
+    if (!text || !isConnected) return;
+
+    if (text.length > maxMessageLength) {
+      Alert.alert('Message Too Long', `Max ${maxMessageLength} characters for this chat.`);
+      return;
+    }
     
     setSending(true);
     try {
       if (isLocalBroadcast) {
-        await sendLocalBroadcastMessage(messageText.trim());
+        await sendLocalBroadcastMessage(text);
       } else if (isBroadcast) {
-        await sendBroadcastMessage(messageText.trim());
+        await sendBroadcastMessage(text);
       } else {
         if (canUseDeviceLevelChat) {
           // Hub-to-hub chat: send to the remote device.
-          await sendMessage(deviceId, messageText.trim());
+          await sendMessage(deviceId, text);
         } else {
           if (!dmTarget) {
             Alert.alert('Choose Recipient', 'Choose a recipient phone (set a nickname on the other phone to make this easier).');
@@ -223,7 +244,7 @@ const ChatScreen = ({ onBack, chatName }) => {
             Alert.alert("Can't Message Yourself", 'Choose a different phone on this hub.');
             return;
           }
-          await sendDirectMessage(deviceId, dmTarget, messageText.trim());
+          await sendDirectMessage(deviceId, dmTarget, text);
         }
       }
       setMessageText('');
@@ -697,7 +718,7 @@ const ChatScreen = ({ onBack, chatName }) => {
                 onChangeText={setMessageText}
                 multiline
                 editable={!isOffline}
-                maxLength={200}
+                maxLength={maxMessageLength}
               />
             </View>
 
@@ -720,10 +741,10 @@ const ChatScreen = ({ onBack, chatName }) => {
           </View>
 
           {/* Character Counter */}
-          {messageText.length > 150 && (
+          {messageText.length > Math.max(0, maxMessageLength - 20) && (
             <View style={[localStyles.charCounter, { backgroundColor: ui.surfaceContainerHigh, borderColor: ui.outlineVariant }]}>
-              <Text style={{ color: messageText.length > 200 ? errorColor : ui.onSurfaceVariant, fontSize: 11, fontWeight: '700', fontFamily: 'PublicSans_700Bold' }}>
-                {messageText.length}/200
+              <Text style={{ color: messageText.length > maxMessageLength ? errorColor : ui.onSurfaceVariant, fontSize: 11, fontWeight: '700', fontFamily: 'PublicSans_700Bold' }}>
+                {messageText.length}/{maxMessageLength}
               </Text>
             </View>
           )}

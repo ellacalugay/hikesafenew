@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, BackHandler, useWindowDimensions, StyleSheet, ImageBackground } from 'react-native';
 import Animated, { Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -70,6 +70,45 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const [showSOSAlertModal, setShowSOSAlertModal] = useState(false);
   const joinAnnounceKeyRef = useRef(null);
   const wasConnectedRef = useRef(isConnected);
+
+  const resolvedAlertLocation = useMemo(() => {
+    if (!activeAlert || activeAlert.type === 'OFFLINE') return null;
+
+    const alertLat = Number(activeAlert.lat);
+    const alertLng = Number(activeAlert.lng);
+    const hasAlertCoords =
+      Number.isFinite(alertLat) &&
+      Number.isFinite(alertLng) &&
+      !(alertLat === 0 && alertLng === 0);
+
+    if (hasAlertCoords) {
+      return { lat: alertLat, lng: alertLng, source: 'alert' };
+    }
+
+    const deviceId = typeof activeAlert.deviceId === 'number' ? activeAlert.deviceId : null;
+    if (!deviceId || !Array.isArray(memberLocations)) {
+      return null;
+    }
+
+    const member = memberLocations.find((m) =>
+      m &&
+      m.deviceId === deviceId &&
+      Number.isFinite(Number(m.latitude)) &&
+      Number.isFinite(Number(m.longitude))
+    );
+
+    if (!member) {
+      return null;
+    }
+
+    const memberLat = Number(member.latitude);
+    const memberLng = Number(member.longitude);
+    if (memberLat === 0 && memberLng === 0) {
+      return null;
+    }
+
+    return { lat: memberLat, lng: memberLng, source: 'member' };
+  }, [activeAlert, memberLocations]);
 
   const changeTab = useCallback((nextTab) => {
     setActiveTab((currentTab) => {
@@ -218,6 +257,14 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
       return;
     }
 
+    // Sender phone should not self-prompt with the emergency modal.
+    if (activeAlert.localEmergency) {
+      if (showSOSAlertModal) {
+        setShowSOSAlertModal(false);
+      }
+      return;
+    }
+
     // If someone already acknowledged "On my way", don't keep re-prompting.
     if (activeAlert.silenced) {
       if (showSOSAlertModal) {
@@ -270,6 +317,10 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   };
 
   const handleOnMyWay = async () => {
+    if (!activeAlert || activeAlert.localEmergency) {
+      setShowSOSAlertModal(false);
+      return;
+    }
     await sendCommand('ON_MY_WAY');
     silenceActiveAlert();
     setShowSOSAlertModal(false);
@@ -728,14 +779,17 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
               );
             })() : null}
             
-            {Number.isFinite(activeAlert?.lat) &&
-              Number.isFinite(activeAlert?.lng) &&
-              !(activeAlert.lat === 0 && activeAlert.lng === 0) && (
+            {resolvedAlertLocation && (
                 <View style={{ backgroundColor: colors.inputBg, padding: 14, borderRadius: 12, marginTop: 8 }}>
                   <Text style={{ color: colors.gray, fontSize: 11, fontWeight: '600', letterSpacing: 1, marginBottom: 4 }}>LOCATION</Text>
                   <Text style={{ color: colors.textDark, fontFamily: 'monospace', fontSize: 14, fontWeight: '600' }}>
-                    {activeAlert.lat.toFixed(6)}, {activeAlert.lng.toFixed(6)}
+                    {resolvedAlertLocation.lat.toFixed(6)}, {resolvedAlertLocation.lng.toFixed(6)}
                   </Text>
+                  {resolvedAlertLocation.source === 'member' && (
+                    <Text style={{ color: colors.gray, fontSize: 11, marginTop: 4 }}>
+                      Last known location
+                    </Text>
+                  )}
                 </View>
               )}
             

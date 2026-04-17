@@ -1106,7 +1106,7 @@ void pruneStaleMobiles() {
   if (connectedMobileCount == 0) return;
   const unsigned long now = millis();
   const unsigned long UNCLAIMED_TIMEOUT_MS = 15000;
-  const unsigned long CLAIMED_TIMEOUT_MS = 60000;
+  const unsigned long CLAIMED_TIMEOUT_MS = 30000;
 
   for (uint8_t i = 0; i < connectedMobileCount; ) {
     const bool claimed = connectedMobiles[i].token.length() > 0;
@@ -1525,6 +1525,13 @@ void setup() {
 // MAIN LOOP
 // ============================================================
 void loop() {
+  // Remove stale mobile slots when disconnect callbacks are missed.
+  static unsigned long lastStalePruneMs = 0;
+  if (millis() - lastStalePruneMs >= 3000) {
+    lastStalePruneMs = millis();
+    pruneStaleMobiles();
+  }
+
   // Reconcile BLE connection count. In some cases (app crash/hot reload),
   // the ESP32 stack may drop the link without triggering our onDisconnect callback.
   // If the BLE stack reports 0 connected devices, clear any stale mobile slots.
@@ -1729,9 +1736,16 @@ void triggerSOS() {
   sosActive   = true;
   morseActive = false;
   receivedSOS = receivedMorse = false;
+  // Local sender should not buzz itself while transmitting emergency.
+  emergencySilenced = true;
   preferences.putBool("sos_state",   true);
   preferences.putBool("morse_state", false);
   sendToPhone("STATUS:SENDING_SOS");
+
+  // Rearm receivers before emitting SOS so acknowledged devices can alert again.
+  if (currentLobbyCode > 0) {
+    sendLoRaTextMessage(0, "__SOS_REARM__", 0);
+  }
 
   display.clearDisplay();
   display.setTextSize(2);
@@ -2375,6 +2389,15 @@ void receiveLoRaMessage() {
     txtMsg.text[MAX_TEXT_LEN - 1] = '\0';
 
     String text = String(txtMsg.text);
+
+    if (text == "__SOS_REARM__" || text == "__MORSE_REARM__") {
+      // Explicit rearm marker from sender: allow this device to alert again.
+      emergencySilenced = false;
+      receivedSOS = false;
+      receivedMorse = false;
+      digitalWrite(BUZZER, LOW);
+      updateDisplay();
+    }
     
     // Include targetID so the app can separate broadcast (T0) from direct messages (T<deviceId>).
     // Format: MSG:<fromDevice>,T<target>,M<mobileId>,<text>,RSSI:<rssi>
@@ -2461,7 +2484,11 @@ void updateDisplay() {
   if (sosActive || morseActive) {
     display.setTextSize(2);
     display.setCursor(15, 24);
-    display.print("TX SOS!");
+    if (sosActive) {
+      display.print("TX SOS!");
+    } else {
+      display.print("TX MC!");
+    }
     display.setTextSize(1);
   } else if (separationAlert) {
     display.setTextSize(2);
@@ -2545,9 +2572,16 @@ void checkMorseInput() {
   if (morseInput == "...---...") {
     morseActive = true;
     sosActive   = false;
+    // Local sender should not buzz itself while transmitting emergency.
+    emergencySilenced = true;
     preferences.putBool("morse_state", true);
     preferences.putBool("sos_state",   false);
     sendToPhone("STATUS:SENDING_MORSE_SOS");
+
+    // Rearm receivers before emitting MC alert so acknowledged devices can alert again.
+    if (currentLobbyCode > 0) {
+      sendLoRaTextMessage(0, "__MORSE_REARM__", 0);
+    }
     
     for (uint8_t i = 0; i < connectedMobileCount; i++) {
       sendLoRaMessage(MSG_MORSE, connectedMobiles[i].mobileID);
@@ -2565,7 +2599,7 @@ void checkMorseInput() {
     display.setTextSize(2);
     display.setTextColor(SSD1306_WHITE);
     display.setCursor(20, 25);
-    display.print("SOS ON!");
+    display.print("MC ON!");
     display.display();
 
     digitalWrite(SOS_LED, HIGH); delay(1000); digitalWrite(SOS_LED, LOW);

@@ -20,6 +20,7 @@ const PHONE_MOBILE_ID_KEY = '@hikesafe_phone_mobile_id';
 
 // Keep runtime memory bounded (storage already caps at 200).
 const MAX_MESSAGES_IN_MEMORY = 300;
+const LORA_MAX_TEXT_LEN = 50;
 
 // Vibration patterns (milliseconds)
 const VIBRATION_PATTERNS = {
@@ -335,8 +336,9 @@ export const BluetoothProvider = ({ children }) => {
   const lastBreadcrumbRef = useRef(null);
   const [breadcrumbSessionDay, setBreadcrumbSessionDay] = useState(null); // e.g. "2026-04-09"
   const breadcrumbSessionDayRef = useRef(null);
-  const [remoteBreadcrumbs, setRemoteBreadcrumbs] = useState({}); // { [deviceId]: Array<{lat,lng,timestamp}> }
+  const [remoteBreadcrumbs, setRemoteBreadcrumbs] = useState({}); // { ["<deviceId>-m<mobileId>"]: Array<{lat,lng,timestamp,deviceId,mobileId}> }
   const lastBreadcrumbBroadcastRef = useRef({ ts: 0, lat: null, lng: null });
+  const remoteTrailLobbyScopeRef = useRef('__init__');
 
   useEffect(() => {
     memberLocationsRef.current = memberLocations;
@@ -375,6 +377,26 @@ export const BluetoothProvider = ({ children }) => {
     if (!Array.isArray(list) || list.length === 0) return false;
     const entry = list.find(m => m && m.deviceId === deviceId);
     return !!(entry && entry.alertType === 'SOS');
+  }, []);
+
+  const clearRemoteTrailsForDevice = useCallback((deviceId) => {
+    if (deviceId === null || deviceId === undefined || Number.isNaN(deviceId)) return;
+    const devicePrefix = `${deviceId}-m`;
+
+    setRemoteBreadcrumbs(prev => {
+      if (!prev || typeof prev !== 'object') return prev;
+
+      let changed = false;
+      const next = { ...(prev || {}) };
+      Object.keys(next).forEach((key) => {
+        if (key === String(deviceId) || key.startsWith(devicePrefix)) {
+          delete next[key];
+          changed = true;
+        }
+      });
+
+      return changed ? next : prev;
+    });
   }, []);
 
   const requestSosTrailSnapshot = useCallback((deviceId) => {
@@ -444,6 +466,27 @@ export const BluetoothProvider = ({ children }) => {
   const emergencyThrottleRef = useRef(new Map());
   const silencedEmergencyRef = useRef(new Map());
   const EMERGENCY_SILENCE_WINDOW_MS = 10 * 60 * 1000;
+
+  const unsilenceEmergencyForDevice = useCallback((type, deviceId, options = {}) => {
+    if (!type) return;
+    if (typeof deviceId !== 'number' || Number.isNaN(deviceId) || deviceId <= 0) return;
+
+    const key = `${type}-${deviceId}`;
+    silencedEmergencyRef.current.delete(key);
+
+    setActiveAlert(prev => {
+      if (!prev) return prev;
+      if (prev.type !== type || prev.deviceId !== deviceId) return prev;
+      return {
+        ...prev,
+        silenced: false,
+        silencedAt: null,
+        silencedByDeviceId: null,
+        helperName: null,
+        rearmPending: options?.markRearm === true,
+      };
+    });
+  }, []);
 
   // Multi-phone-to-one-hub: the hub can broadcast STATUS:SENDING_SOS to all phones.
   // Track whether *this* phone initiated SOS recently so only the sender gets localEmergency UI.
@@ -1017,13 +1060,13 @@ export const BluetoothProvider = ({ children }) => {
     return total; // meters
   }, [breadcrumbs]);
   
-  // Auto-record breadcrumbs when myLocation changes
+  // Auto-record breadcrumbs when phone GPS changes.
   useEffect(() => {
     if (!isTrackingBreadcrumbs) return;
-    if (!myLocation.valid || myLocation.lat === 0) return;
+    if (!phoneLocation.valid || phoneLocation.lat === 0 || phoneLocation.lng === 0) return;
     
-    addBreadcrumb(myLocation.lat, myLocation.lng);
-  }, [myLocation, isTrackingBreadcrumbs, addBreadcrumb]);
+    addBreadcrumb(phoneLocation.lat, phoneLocation.lng);
+  }, [phoneLocation, isTrackingBreadcrumbs, addBreadcrumb]);
   
   const bleManagerRef = useRef(null);
   const bleStateSubscriptionRef = useRef(null);
@@ -1034,6 +1077,8 @@ export const BluetoothProvider = ({ children }) => {
   const mockIntervalRef = useRef(null);
   const disconnectSubscriptionRef = useRef(null);
   const commandQueueRef = useRef(Promise.resolve());
+  const scanStopTimeoutRef = useRef(null);
+  const permissionCacheRef = useRef({ granted: false, ts: 0 });
 
   const delay = useCallback((ms) => new Promise((resolve) => setTimeout(resolve, ms)), []);
 
@@ -1047,38 +1092,28 @@ export const BluetoothProvider = ({ children }) => {
   }, []);
 
   const cleanupBleManager = useCallback(() => {
-    if (bleStateSubscriptionRef.current) {
-      try {
-        bleManagerRef.current = new BleManager();
-        
-        // Listen for BLE state changes
-        const subscription = bleManagerRef.current.onStateChange((state) => {
-          console.log('BLE state changed:', state);
-          if (state === 'PoweredOn') {
-            setIsEnabled(true);
-            return;
-          }
-
-          // Only show "disabled" when we're sure Bluetooth is off/blocked.
-          // Many Android devices emit transient states (e.g. Resetting/Unknown) during prompts.
-          if (state === 'PoweredOff' || state === 'Unauthorized' || state === 'Unsupported') {
-            setIsEnabled(false);
-          }
-        }, true);
-        
-        return () => {
-          subscription.remove();
-          if (bleManagerRef.current) {
-            bleManagerRef.current.destroy();
-            bleManagerRef.current = null;
-          }
-        };
-      } catch (e) {
-        console.log('BLE Manager initialization failed - running in mock mode:', e.message);
-        // BLE not available (e.g., Expo Go), mock mode will be used
-        setIsEnabled(true); // Pretend BT is on for mock mode
+    try {
+      if (scanStopTimeoutRef.current) {
+        clearTimeout(scanStopTimeoutRef.current);
+        scanStopTimeoutRef.current = null;
       }
-      bleManagerRef.current = null;
+
+      if (bleStateSubscriptionRef.current) {
+        bleStateSubscriptionRef.current.remove();
+        bleStateSubscriptionRef.current = null;
+      }
+
+      if (bleManagerRef.current) {
+        try {
+          bleManagerRef.current.stopDeviceScan();
+        } catch {
+          // ignore
+        }
+        bleManagerRef.current.destroy();
+        bleManagerRef.current = null;
+      }
+    } catch (e) {
+      console.log('BLE manager cleanup failed:', e?.message || e);
     }
   }, []);
 
@@ -1185,6 +1220,12 @@ export const BluetoothProvider = ({ children }) => {
 
   // Request permissions (Android 12+)
   const requestPermissions = useCallback(async () => {
+    const now = Date.now();
+    const cache = permissionCacheRef.current || { granted: false, ts: 0 };
+    if (cache.granted && now - (cache.ts || 0) < 15000) {
+      return true;
+    }
+
     if (Platform.OS === 'android') {
       try {
         const apiLevel = Platform.Version;
@@ -1203,20 +1244,26 @@ export const BluetoothProvider = ({ children }) => {
           const connectGranted = granted?.[PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT] === PermissionsAndroid.RESULTS.GRANTED;
 
           console.log('BLE permission results (API>=31):', granted);
-          return scanGranted && connectGranted;
+          const ok = scanGranted && connectGranted;
+          permissionCacheRef.current = { granted: ok, ts: Date.now() };
+          return ok;
         } else {
           // Android 11 and below
           const granted = await PermissionsAndroid.request(
             PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
           );
           console.log('BLE permission result (API<31):', granted);
-          return granted === PermissionsAndroid.RESULTS.GRANTED;
+          const ok = granted === PermissionsAndroid.RESULTS.GRANTED;
+          permissionCacheRef.current = { granted: ok, ts: Date.now() };
+          return ok;
         }
       } catch (error) {
         console.error('Permission error:', error);
+        permissionCacheRef.current = { granted: false, ts: Date.now() };
         return false;
       }
     }
+    permissionCacheRef.current = { granted: true, ts: Date.now() };
     return true; // iOS handles permissions automatically
   }, []);
 
@@ -1341,6 +1388,28 @@ export const BluetoothProvider = ({ children }) => {
 
     console.log('Starting BLE scan. state=', state, 'apiLevel=', Platform.Version);
 
+    if (scanStopTimeoutRef.current) {
+      clearTimeout(scanStopTimeoutRef.current);
+      scanStopTimeoutRef.current = null;
+    }
+
+    const scheduleStopScan = (delayMs) => {
+      if (scanStopTimeoutRef.current) {
+        clearTimeout(scanStopTimeoutRef.current);
+      }
+      scanStopTimeoutRef.current = setTimeout(() => {
+        try {
+          if (bleManagerRef.current) {
+            bleManagerRef.current.stopDeviceScan();
+          }
+        } catch {
+          // ignore
+        }
+        setIsScanning(false);
+        scanStopTimeoutRef.current = null;
+      }, Math.max(0, delayMs || 0));
+    };
+
     setIsScanning(true);
     setAvailableDevices([]);
     
@@ -1373,6 +1442,12 @@ export const BluetoothProvider = ({ children }) => {
     };
 
     try {
+      try {
+        bleManagerRef.current.stopDeviceScan();
+      } catch {
+        // ignore stale scans
+      }
+
       // Scan for all BLE devices, filter by name
       bleManagerRef.current.startDeviceScan(
         null, // null = scan for all services
@@ -1383,37 +1458,36 @@ export const BluetoothProvider = ({ children }) => {
             const errMsg = error?.message || `${error}`;
             console.error('Scan error:', errCode, errMsg);
             Alert.alert('Scan Error', `${errMsg}${errCode ? `\n(code: ${errCode})` : ''}`);
-            setIsScanning(false);
+            scheduleStopScan(0);
             return;
           }
 
-          const deviceName = device?.name || device?.localName;
-          // Filter for HikeSafe devices by name (also accept legacy SOS-Device names)
-          if (device && deviceName && (deviceName.startsWith('HikeSafe-D') || deviceName.startsWith('SOS-Device'))) {
+          if (device && isLikelyHikeSafeDevice(device)) {
             if (!foundDevices.has(device.id)) {
               const displayName = device.name || device.localName || 'HikeSafe Device';
               foundDevices.set(device.id, {
                 id: device.id,
-                name: deviceName,
+                name: displayName,
                 address: device.id,
                 rssi: device.rssi,
               });
               setAvailableDevices(Array.from(foundDevices.values()));
+
+              // Fast path: once a candidate appears, stop scanning soon for quicker connect UX.
+              if (foundDevices.size === 1) {
+                scheduleStopScan(3500);
+              }
             }
           }
         }
       );
 
       // Stop scanning after 10 seconds
-      setTimeout(() => {
-        if (bleManagerRef.current) {
-          bleManagerRef.current.stopDeviceScan();
-        }
-        setIsScanning(false);
-      }, 10000);
+      scheduleStopScan(10000);
 
     } catch (error) {
       console.error('Scan error:', error);
+      scheduleStopScan(0);
       setIsScanning(false);
     }
   }, [getBlePowerStateSafe, requestPermissions, warnIfLocationServicesOffForBle]);
@@ -1632,6 +1706,12 @@ export const BluetoothProvider = ({ children }) => {
 
             shouldNotifySender = !!prev.localEmergency;
 
+            // Ignore accidental self-ack loops.
+            if (typeof prev.deviceId === 'number' && prev.deviceId === deviceId) {
+              shouldNotifySender = false;
+              return prev;
+            }
+
             const key =
               (typeof prev.deviceId === 'number' && prev.deviceId > 0)
                 ? `${prev.type}-${prev.deviceId}`
@@ -1716,7 +1796,7 @@ export const BluetoothProvider = ({ children }) => {
             
             if (existing >= 0) {
               const updated = [...prev];
-              updated[existing] = newLoc;
+              updated[existing] = { ...updated[existing], ...newLoc };
               return updated;
             }
             return [...prev, newLoc];
@@ -1739,7 +1819,12 @@ export const BluetoothProvider = ({ children }) => {
               const isSameEmergency = !!prev && prev.type === type && prev.deviceId === deviceId;
 
               isLocalEmergency = !!(isSameEmergency && prev.localEmergency);
-              isRepeatEmergency = !!(isSameEmergency && !prev.silenced && !isSilenced);
+              isRepeatEmergency = !!(
+                isSameEmergency &&
+                !prev.silenced &&
+                !isSilenced &&
+                !prev.rearmPending
+              );
 
               return {
                 ...(isSameEmergency ? prev : {}),
@@ -1754,6 +1839,7 @@ export const BluetoothProvider = ({ children }) => {
                 silencedAt: isSilenced ? (silencedEntry.ts || null) : null,
                 silencedByDeviceId: isSilenced ? (silencedEntry.byDeviceId ?? null) : null,
                 helperName: isSilenced ? (isSameEmergency ? (prev.helperName ?? null) : null) : null,
+                rearmPending: false,
               };
             });
 
@@ -1786,14 +1872,7 @@ export const BluetoothProvider = ({ children }) => {
             // SOS-only: request their full trail snapshot so late joiners can catch up.
             if (type === 'SOS' && !isRepeatEmergency) {
               // Clear any prior stored trail so the snapshot is clean/full.
-              setRemoteBreadcrumbs(prev => {
-                if (!prev) return prev;
-                const key = String(deviceId);
-                if (!Object.prototype.hasOwnProperty.call(prev, key)) return prev;
-                const next = { ...prev };
-                delete next[key];
-                return next;
-              });
+              clearRemoteTrailsForDevice(deviceId);
               requestSosTrailSnapshot(deviceId);
             }
           } else if (type === 'OK') {
@@ -1824,14 +1903,7 @@ export const BluetoothProvider = ({ children }) => {
             });
 
             // Drop their remote trail once SOS is cleared.
-            setRemoteBreadcrumbs(prev => {
-              if (!prev) return prev;
-              const key = String(deviceId);
-              if (!Object.prototype.hasOwnProperty.call(prev, key)) return prev;
-              const next = { ...prev };
-              delete next[key];
-              return next;
-            });
+            clearRemoteTrailsForDevice(deviceId);
 
             addActivity('ok', `${displayName} cancelled alert`);
             showTemporaryStatus(`${displayName} is OK`, 3000);
@@ -1859,6 +1931,12 @@ export const BluetoothProvider = ({ children }) => {
               }
 
               shouldNotifySender = !!prev.localEmergency;
+
+              // Ignore accidental self-ack loops.
+              if (typeof prev.deviceId === 'number' && prev.deviceId === deviceId) {
+                shouldNotifySender = false;
+                return prev;
+              }
 
               const key =
                 (typeof prev.deviceId === 'number' && prev.deviceId > 0)
@@ -2118,15 +2196,9 @@ export const BluetoothProvider = ({ children }) => {
             lastReq.type === emergencyType &&
             (now - (lastReq.ts || 0)) < LOCAL_EMERGENCY_INTENT_WINDOW_MS;
 
-          // STATUS:SENDING_* is emitted by the hub. In multi-phone mode it can be broadcast to all phones,
-          // so only treat it as local if this phone very recently requested it.
-          // If there is only one phone connected, it's safe to treat the hub's SOS as local (e.g., hardware SOS button).
-          const treatAsLocal = hasRecentLocalIntent || connectedDevicesCount === 1;
-
-          if (!treatAsLocal) {
-            // Let ALRT packets (with correct sender/deviceId + coordinates) drive receiver UI.
-            return;
-          }
+          // STATUS:SENDING_* is emitted by the hub and broadcast to all connected phones.
+          // Recent local intent marks the sender phone; other phones should treat this as a receiver alert.
+          const treatAsLocal = hasRecentLocalIntent;
 
           if (hasRecentLocalIntent) {
             lastLocalEmergencyRequestRef.current = { type: null, ts: 0 };
@@ -2141,37 +2213,53 @@ export const BluetoothProvider = ({ children }) => {
               ? getMemberNickname(localDeviceId)
               : ((myNickname || '').trim() ? myNickname : 'Your phone');
 
+          const localLat = (myLocation?.valid && Number.isFinite(myLocation?.lat) && Number.isFinite(myLocation?.lng))
+            ? myLocation.lat
+            : null;
+          const localLng = (myLocation?.valid && Number.isFinite(myLocation?.lat) && Number.isFinite(myLocation?.lng))
+            ? myLocation.lng
+            : null;
+
           const emergencyKey = `${emergencyType}-${typeof localDeviceId === 'number' ? localDeviceId : 'local'}`;
 
           setActiveAlert({
             type: emergencyType,
             deviceId: (typeof localDeviceId === 'number' ? localDeviceId : null),
+            lat: localLat,
+            lng: localLng,
             timestamp: now,
-            localEmergency: true,
+            localEmergency: treatAsLocal,
             displayName,
             silenced: false,
+            rearmPending: false,
           });
 
           addActivity('sos', `${displayName} triggered ${emergencyType}`);
-          triggerVibration('SOS');
-          startEmergencySignals();
+          if (!treatAsLocal) {
+            triggerVibration('SOS');
+            startEmergencySignals();
 
-          pushEmergencyNotification(
-            'Emergency Triggered',
-            `${displayName} triggered ${emergencyType}.`,
-            emergencyKey
-          );
-
-          if (!shouldThrottleEmergency(`popup-${emergencyKey}`, 12000)) {
-            Alert.alert(
-              '🚨 EMERGENCY ALERT',
-              `${displayName} triggered ${emergencyType}.`,
-              [{ text: 'Dismiss' }],
-              { cancelable: true }
+            pushEmergencyNotification(
+              'Emergency Alert',
+              `${displayName} triggered ${emergencyType}. Check immediately.`,
+              emergencyKey
             );
+
+            if (!shouldThrottleEmergency(`popup-${emergencyKey}`, 12000)) {
+              const locationLine =
+                (Number.isFinite(localLat) && Number.isFinite(localLng))
+                  ? `\n\nLocation: ${localLat.toFixed(5)}, ${localLng.toFixed(5)}`
+                  : '';
+              Alert.alert(
+                '🚨 EMERGENCY ALERT',
+                `${displayName} triggered ${emergencyType}.${locationLine}`,
+                [{ text: 'Dismiss' }],
+                { cancelable: true }
+              );
+            }
           }
 
-          setStatusMessage(`${emergencyType} active for ${displayName}`);
+          setStatusMessage(`${emergencyType === 'MORSE' ? 'MC' : emergencyType} active for ${displayName}`);
 
           // Only enable trail sharing for true SOS (not MORSE), per spec.
           if (status === 'SENDING_SOS') {
@@ -2253,6 +2341,9 @@ export const BluetoothProvider = ({ children }) => {
           const name = payload.substring(firstComma + 1, lastComma).trim();
           const phone = payload.substring(lastComma + 1).trim();
           if (!Number.isNaN(deviceId) && setEmergencyContactForDevice) {
+            if (typeof myDeviceId === 'number' && deviceId === myDeviceId) {
+              return;
+            }
             setEmergencyContactForDevice(deviceId, { name, phone });
           }
         }
@@ -2392,6 +2483,13 @@ export const BluetoothProvider = ({ children }) => {
             return;
           }
 
+          if (text === '__SOS_REARM__' || text === '__MORSE_REARM__') {
+            if (Number.isNaN(fromId)) return;
+            const rearmType = text === '__SOS_REARM__' ? 'SOS' : 'MORSE';
+            unsilenceEmergencyForDevice(rearmType, fromId, { markRearm: true });
+            return;
+          }
+
           // Trail snapshot request (SOS-only) - do not show in chat.
           if (text.startsWith('__TRAIL_REQ__:')) {
             if (Number.isNaN(fromId)) return;
@@ -2420,14 +2518,15 @@ export const BluetoothProvider = ({ children }) => {
             const lat = latE5 / 1e5;
             const lng = lngE5 / 1e5;
             const timestamp = tsS && !Number.isNaN(tsS) ? tsS * 1000 : Date.now();
+            const senderMobileId = (Number.isInteger(mobileId) && mobileId >= 1 && mobileId <= 4) ? mobileId : 0;
 
             setRemoteBreadcrumbs(prev => {
-              const key = String(fromId);
+              const key = `${fromId}-m${senderMobileId}`;
               const existing = Array.isArray(prev?.[key]) ? prev[key] : [];
               const last = existing.length > 0 ? existing[existing.length - 1] : null;
               if (last && last.lat === lat && last.lng === lng && last.timestamp === timestamp) return prev;
 
-              const nextArr = [...existing, { lat, lng, timestamp }].slice(-5000);
+              const nextArr = [...existing, { lat, lng, timestamp, deviceId: fromId, mobileId: senderMobileId }].slice(-5000);
               return { ...(prev || {}), [key]: nextArr };
             });
             return;
@@ -2444,6 +2543,10 @@ export const BluetoothProvider = ({ children }) => {
           // Format: __MNICK__:<mobileId>:<nickname>
           if (text.startsWith('__MNICK__:')) {
             if (Number.isNaN(fromId)) return;
+
+            if (typeof myDeviceId === 'number' && fromId === myDeviceId) {
+              return;
+            }
 
             const payload = text.substring('__MNICK__:'.length);
             const sep = payload.indexOf(':');
@@ -2624,6 +2727,14 @@ export const BluetoothProvider = ({ children }) => {
             }
           }
 
+          if (text === '__SOS_REARM__' || text === '__MORSE_REARM__') {
+            const rearmType = text === '__SOS_REARM__' ? 'SOS' : 'MORSE';
+            if (typeof localDeviceId === 'number' && localDeviceId > 0) {
+              unsilenceEmergencyForDevice(rearmType, localDeviceId, { markRearm: true });
+            }
+            return;
+          }
+
           // Don't surface internal control traffic as chat.
           if (
             text.startsWith('__JOINED_TS__:') ||
@@ -2701,7 +2812,7 @@ export const BluetoothProvider = ({ children }) => {
             if (typeof dmFromMobileId === 'number' && dmFromMobileId >= 1 && dmFromMobileId <= 4) {
               const rawNick = localMobileNicknamesRef.current?.[dmFromMobileId] || '';
               const cleanNick = /^mobile\s*\d+$/i.test(String(rawNick).trim()) ? '' : String(rawNick).trim();
-              fromName = cleanNick || 'Unnamed Phone';
+              fromName = cleanNick || `M${dmFromMobileId}`;
             } else {
               fromName = 'This Hub';
             }
@@ -2848,6 +2959,23 @@ export const BluetoothProvider = ({ children }) => {
             // MOBILELOC: Mobile location associated with a specific LoRa device
       // Format: MOBILELOC:<deviceId>,<mobileId>,<lat>,<lng>,<rssi>,<estimatedDistance>
       else if (trimmed.startsWith('MOBILELOC:')) {
+        if (!isInLobbyRef.current) {
+          return;
+        }
+
+        // Guard against lobby mismatch between phone state and device state.
+        const desiredLobby = lobbyCodeRef.current;
+        const deviceLobby = deviceLobbyCodeRef.current;
+        if (desiredLobby && deviceLobby !== null && deviceLobby !== undefined && desiredLobby !== deviceLobby) {
+          const now = Date.now();
+          const last = lastLobbyMismatchDropRef.current || { ts: 0 };
+          if (now - (last.ts || 0) > 4000 || last.desired !== desiredLobby || last.device !== deviceLobby) {
+            lastLobbyMismatchDropRef.current = { ts: now, desired: desiredLobby, device: deviceLobby };
+            showTemporaryStatus(`Ignoring mobile location (lobby mismatch: phone ${desiredLobby}, hub ${deviceLobby})`, 2500);
+          }
+          return;
+        }
+
         const parts = trimmed.substring(10).split(',');
         if (parts.length >= 4) {
           const deviceId = parseInt(parts[0], 10);
@@ -2913,6 +3041,20 @@ export const BluetoothProvider = ({ children }) => {
                 mobiles: [],
               })];
             });
+
+            // Mobile breadcrumbs are keyed by device+mobile so trails follow each phone GPS stream.
+            const trailKey = `${deviceId}-m${mobileId}`;
+            const pointTs = Date.now();
+            setRemoteBreadcrumbs(prev => {
+              const existing = Array.isArray(prev?.[trailKey]) ? prev[trailKey] : [];
+              const last = existing.length > 0 ? existing[existing.length - 1] : null;
+              if (last && last.lat === lat && last.lng === lng) {
+                return prev;
+              }
+
+              const nextArr = [...existing, { lat, lng, timestamp: pointTs, deviceId, mobileId }].slice(-5000);
+              return { ...(prev || {}), [trailKey]: nextArr };
+            });
           }
         }
       }
@@ -2951,7 +3093,7 @@ export const BluetoothProvider = ({ children }) => {
         });
       }
     });
-  }, [addActivity, clearPendingDeviceLobbySync, connectedDevice, getMemberNickname, isDeviceSosActive, parseDeviceId, pendingDeviceLobbySyncCode, pushEmergencyNotification, pushMessageNotification, registerMemberSync, requestSosTrailSnapshot, sendSosTrailSnapshot, setEmergencyContactForDevice, setMemberNickname, setMemberOffline, setMyDeviceId, shouldThrottleEmergency, showTemporaryStatus, startEmergencySignals, stopEmergencySignals, triggerVibration]);
+  }, [addActivity, clearPendingDeviceLobbySync, clearRemoteTrailsForDevice, connectedDevice, getMemberNickname, isDeviceSosActive, myDeviceId, myLocation?.lat, myLocation?.lng, myLocation?.valid, parseDeviceId, pendingDeviceLobbySyncCode, pushEmergencyNotification, pushMessageNotification, registerMemberSync, requestSosTrailSnapshot, sendSosTrailSnapshot, setEmergencyContactForDevice, setMemberNickname, setMemberOffline, setMyDeviceId, shouldThrottleEmergency, showTemporaryStatus, startEmergencySignals, stopEmergencySignals, triggerVibration, unsilenceEmergencyForDevice]);
 
   const sendMyNicknameToDevice = useCallback(async () => {
     if (!isConnected) return false;
@@ -3471,9 +3613,12 @@ export const BluetoothProvider = ({ children }) => {
     };
   }, [isConnected, pendingDeviceLobbySyncCode, syncLobbyToDevice, sendCommand, clearPendingDeviceLobbySync, showTemporaryStatus]);
 
-  // Clear remote trails when leaving/resetting lobby.
+  // Keep remote trails strictly scoped to the currently active lobby.
   useEffect(() => {
-    if (isInLobby && lobbyCode) return;
+    const scopedLobby = (isInLobby && lobbyCode) ? String(lobbyCode) : '';
+    if (remoteTrailLobbyScopeRef.current === scopedLobby) return;
+
+    remoteTrailLobbyScopeRef.current = scopedLobby;
     setRemoteBreadcrumbs({});
     lastBreadcrumbBroadcastRef.current = { ts: 0, lat: null, lng: null };
     setIsSosTrailSharingActive(false);
@@ -3487,7 +3632,7 @@ export const BluetoothProvider = ({ children }) => {
     if (!isInLobby || !lobbyCode) return;
     // Only share trail points when SOS is active.
     if (!isSosTrailSharingActive) return;
-    if (!myLocation.valid || myLocation.lat === 0) return;
+    if (!phoneLocation.valid || phoneLocation.lat === 0 || phoneLocation.lng === 0) return;
 
     const now = Date.now();
     const last = lastBreadcrumbBroadcastRef.current || { ts: 0, lat: null, lng: null };
@@ -3495,15 +3640,15 @@ export const BluetoothProvider = ({ children }) => {
 
     const moved = last.lat === null
       ? 999999
-      : (calculateDistance(last.lat, last.lng, myLocation.lat, myLocation.lng) || 0);
+      : (calculateDistance(last.lat, last.lng, phoneLocation.lat, phoneLocation.lng) || 0);
     if (moved < 25) return; // at least 25m from last broadcast
 
-    const latE5 = Math.round(myLocation.lat * 1e5);
-    const lngE5 = Math.round(myLocation.lng * 1e5);
+    const latE5 = Math.round(phoneLocation.lat * 1e5);
+    const lngE5 = Math.round(phoneLocation.lng * 1e5);
     const tsS = Math.floor(now / 1000);
     void sendCommand(`MSG:0,__BREAD__:${latE5},${lngE5},${tsS}`, { silent: true });
-    lastBreadcrumbBroadcastRef.current = { ts: now, lat: myLocation.lat, lng: myLocation.lng };
-  }, [isTrackingBreadcrumbs, isConnected, isInLobby, lobbyCode, isSosTrailSharingActive, myLocation, sendCommand]);
+    lastBreadcrumbBroadcastRef.current = { ts: now, lat: phoneLocation.lat, lng: phoneLocation.lng };
+  }, [isTrackingBreadcrumbs, isConnected, isInLobby, lobbyCode, isSosTrailSharingActive, phoneLocation, sendCommand]);
 
   // Auto-send our nickname after connection and when entering a lobby.
   useEffect(() => {
@@ -3659,10 +3804,22 @@ export const BluetoothProvider = ({ children }) => {
   }, [connectedDevicesCount, isConnected, phoneToken, myMobileId, sendCommand]);
 
   // Convenience methods
-  const sendSOS = useCallback(() => {
+  const sendSOS = useCallback(async () => {
     lastLocalEmergencyRequestRef.current = { type: 'SOS', ts: Date.now() };
-    return sendCommand('SOS');
-  }, [sendCommand]);
+
+    const localDeviceId = (typeof myDeviceId === 'number' && !Number.isNaN(myDeviceId))
+      ? myDeviceId
+      : parseDeviceId(connectedDevice || deviceRef.current);
+
+    if (typeof localDeviceId === 'number' && localDeviceId > 0) {
+      unsilenceEmergencyForDevice('SOS', localDeviceId, { markRearm: true });
+    }
+
+    // Explicit re-arm marker so peers clear ON_MY_WAY silence only for a fresh sender action.
+    await sendCommand('MSG:0,__SOS_REARM__', { silent: true });
+    const ok = await sendCommand('SOS');
+    return ok;
+  }, [connectedDevice, myDeviceId, parseDeviceId, sendCommand, unsilenceEmergencyForDevice]);
   const sendOK = useCallback(() => sendCommand('OK'), [sendCommand]);
   
   // Remove a member from the local tracking (host kick from lobby)
@@ -3688,16 +3845,23 @@ export const BluetoothProvider = ({ children }) => {
       return false;
     }
 
-    // Device MAX_TEXT_LEN = 50
-    const truncatedText = text.substring(0, 50);
-    const command = `MSG:${toDeviceId},${truncatedText}`;
+    const trimmedText = String(text || '').trim();
+    if (!trimmedText) {
+      return false;
+    }
+    if (trimmedText.length > LORA_MAX_TEXT_LEN) {
+      Alert.alert('Message Too Long', `Message limit is ${LORA_MAX_TEXT_LEN} characters.`);
+      return false;
+    }
+
+    const command = `MSG:${toDeviceId},${trimmedText}`;
     
     const newMessage = {
       id: `msg-${Date.now()}-me`,
       from: 'me',
       to: toDeviceId,
       targetDeviceId: toDeviceId,
-      text: truncatedText,
+      text: trimmedText,
       timestamp: Date.now(),
       isMine: true,
       pending: true,
@@ -3895,17 +4059,24 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
     // Device MAX_TEXT_LEN = 50, and firmware tags DM payloads as:
     // __DM__:<toMobileId>:<fromMobileId>:<text>
     const dmPrefix = `__DM__:${targetMobile}:${fromMobileId}:`;
-    const maxBodyLen = Math.max(0, 50 - dmPrefix.length);
-    const truncatedText = String(text || '').substring(0, maxBodyLen);
+    const maxBodyLen = Math.max(0, LORA_MAX_TEXT_LEN - dmPrefix.length);
+    const trimmedText = String(text || '').trim();
+    if (!trimmedText) {
+      return false;
+    }
+    if (trimmedText.length > maxBodyLen) {
+      Alert.alert('Message Too Long', `Direct message limit is ${maxBodyLen} characters.`);
+      return false;
+    }
 
-    const command = `DM:${toDeviceId},${fromMobileId},${targetMobile},${truncatedText}`;
+    const command = `DM:${toDeviceId},${fromMobileId},${targetMobile},${trimmedText}`;
 
     const newMessage = {
       id: `dm-${Date.now()}-me-${toDeviceId}-${targetMobile}`,
       from: 'me',
       to: toDeviceId,
       targetDeviceId: toDeviceId,
-      text: truncatedText,
+      text: trimmedText,
       timestamp: Date.now(),
       isMine: true,
       pending: true,
@@ -4093,16 +4264,19 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
     const trimmedText = text.trim();
     if (!trimmedText) return false;
 
-    // Reuse the same limit as LoRa to keep UX consistent.
-    const truncatedText = trimmedText.substring(0, 200);
-    const command = `LMSG:${truncatedText}`;
+    if (trimmedText.length > LORA_MAX_TEXT_LEN) {
+      Alert.alert('Message Too Long', `Message limit is ${LORA_MAX_TEXT_LEN} characters.`);
+      return false;
+    }
+
+    const command = `LMSG:${trimmedText}`;
 
     const newMessage = {
       id: `msg-${Date.now()}-local-0`,
       from: 'me',
       to: 0,
       targetDeviceId: 0,
-      text: truncatedText,
+      text: trimmedText,
       timestamp: Date.now(),
       isMine: true,
       pending: true,
@@ -4185,8 +4359,8 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
           deviceId,
           mobileId,
           name: isSelfHub
-            ? (nick || 'Unnamed Phone')
-            : (nick ? `${deviceName} (${nick})` : `${deviceName} (Unnamed Phone)`),
+            ? (nick || `M${mobileId}`)
+            : (nick ? `${deviceName} (${nick})` : `${deviceName} (M${mobileId})`),
           lastMessage: msg.text || '',
           lastTimestamp,
           unreadCount: unreadInc,

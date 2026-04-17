@@ -74,6 +74,27 @@ const getPhoneMarkerColor = (colors, deviceId, mobileId) => {
   return palette[idx] || colors.primary;
 };
 
+const parseTrailOwnerFromKey = (trailKey) => {
+  const key = String(trailKey || '').trim();
+  if (!key) return { deviceId: 0, mobileId: 0 };
+
+  const sep = key.indexOf('-m');
+  if (sep > 0) {
+    const parsedDevice = parseInt(key.substring(0, sep), 10);
+    const parsedMobile = parseInt(key.substring(sep + 2), 10);
+    return {
+      deviceId: Number.isFinite(parsedDevice) ? parsedDevice : 0,
+      mobileId: Number.isFinite(parsedMobile) ? parsedMobile : 0,
+    };
+  }
+
+  const parsedDevice = parseInt(key, 10);
+  return {
+    deviceId: Number.isFinite(parsedDevice) ? parsedDevice : 0,
+    mobileId: 0,
+  };
+};
+
 // Radar View Component - Works completely offline
 const RadarView = ({ myLocation, members, colors, onMemberPress, locationServicesEnabled }) => {
   const radarPulseAnim = useRef(new Animated.Value(0)).current;
@@ -741,8 +762,11 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
           })}
 
           {/* Remote breadcrumb trails (other members) */}
-          {Object.entries(remoteBreadcrumbsByDevice || {}).map(([deviceId, points]) => {
+          {Object.entries(remoteBreadcrumbsByDevice || {}).map(([trailKey, points]) => {
             if (!Array.isArray(points) || points.length < 2) return null;
+
+            const { deviceId, mobileId } = parseTrailOwnerFromKey(trailKey);
+            const trailColor = getPhoneMarkerColor(colors, deviceId, mobileId);
 
             return points.map((point, index) => {
               if (index === 0) return null;
@@ -758,14 +782,14 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
 
               return (
                 <View
-                  key={`rtrail-${deviceId}-${index}`}
+                  key={`rtrail-${trailKey}-${index}`}
                   style={{
                     position: 'absolute',
                     left: (pos1.x + pos2.x) / 2 - length / 2,
                     top: (pos1.y + pos2.y) / 2 - 1.5,
                     width: length,
                     height: 3,
-                    backgroundColor: '#3498DB',
+                    backgroundColor: trailColor,
                     opacity: 0.55,
                     transform: [{ rotate: `${angle}deg` }],
                     borderRadius: 1.5,
@@ -980,21 +1004,29 @@ const TopoMapView = ({
     const entries = Object.entries(remoteBreadcrumbsByDevice || {});
     const shapes = [];
 
-    entries.forEach(([deviceId, pts]) => {
+    entries.forEach(([trailKey, pts]) => {
       const coords = (Array.isArray(pts) ? pts : [])
         .map(p => (p ? [p.lng, p.lat] : null))
         .filter(c => Array.isArray(c) && isValidCoord(c[1], c[0]));
 
       if (coords.length < 2) return;
 
+      const { deviceId, mobileId } = parseTrailOwnerFromKey(trailKey);
+      const trailColor = getPhoneMarkerColor(colors, deviceId, mobileId);
+
       shapes.push({
-        deviceId: String(deviceId),
+        trailKey: String(trailKey),
+        trailColor,
         shape: {
           type: 'FeatureCollection',
           features: [
             {
               type: 'Feature',
-              properties: { deviceId: String(deviceId) },
+              properties: {
+                trailKey: String(trailKey),
+                deviceId: String(deviceId),
+                mobileId: mobileId ? String(mobileId) : '',
+              },
               geometry: { type: 'LineString', coordinates: coords.slice(-2000) },
             },
           ],
@@ -1003,7 +1035,7 @@ const TopoMapView = ({
     });
 
     return shapes;
-  }, [remoteBreadcrumbsByDevice, isValidCoord]);
+  }, [colors, remoteBreadcrumbsByDevice, isValidCoord]);
 
   const center = myLocation.valid
     ? [myLocation.lng, myLocation.lat]
@@ -1130,12 +1162,12 @@ const TopoMapView = ({
           </ShapeSource>
         )}
 
-        {(remoteTrailShapes || []).map(({ deviceId, shape }) => (
-          <ShapeSource key={`trail-${deviceId}`} id={`trail-${deviceId}`} shape={shape}>
+        {(remoteTrailShapes || []).map(({ trailKey, trailColor, shape }) => (
+          <ShapeSource key={`trail-${trailKey}`} id={`trail-${trailKey}`} shape={shape}>
             <LineLayer
-              id={`trail-${deviceId}-line`}
+              id={`trail-${trailKey}-line`}
               style={{
-                lineColor: colors.accent || colors.danger || colors.primary,
+                lineColor: trailColor,
                 lineWidth: 3,
                 lineOpacity: 0.55,
                 lineCap: 'round',
@@ -1329,19 +1361,25 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
     }));
   }, [effectiveMyLocation.lat, effectiveMyLocation.lng, effectiveMyLocation.valid, getMemberNickname, memberLocations]);
 
-  // Only show other members' trails when that member has sent an SOS.
-  const sosRemoteBreadcrumbs = useMemo(() => {
-    const sosSet = new Set(
+  // Show remote trails for all currently known lobby members (all hubs/mobiles in this lobby).
+  const lobbyRemoteBreadcrumbs = useMemo(() => {
+    const memberSet = new Set(
       (membersWithDistance || [])
-        .filter(m => m && m.alertType === 'SOS')
+        .filter(m => m && m.deviceId !== null && m.deviceId !== undefined)
         .map(m => String(m.deviceId))
     );
 
-    const entries = Object.entries(remoteBreadcrumbs || {}).filter(([deviceId]) => sosSet.has(String(deviceId)));
+    const getTrailDeviceId = (trailKey) => {
+      const key = String(trailKey || '');
+      const sep = key.indexOf('-m');
+      return sep > 0 ? key.substring(0, sep) : key;
+    };
+
+    const entries = Object.entries(remoteBreadcrumbs || {}).filter(([trailKey]) => memberSet.has(getTrailDeviceId(trailKey)));
     return Object.fromEntries(entries);
   }, [membersWithDistance, remoteBreadcrumbs]);
 
-  const handleMemberPress = (member) => {
+  const handleMemberPress = useCallback((member) => {
     onLocationPress && onLocationPress({
       id: member.deviceId,
       name: member.name,
@@ -1351,7 +1389,82 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
       alertType: member.alertType,
       isOffline: member.isOffline,
     });
-  };
+  }, [onLocationPress]);
+
+  const trailLegendItems = useMemo(() => {
+    return Object.entries(lobbyRemoteBreadcrumbs || {})
+      .map(([trailKey, points]) => {
+        const { deviceId, mobileId } = parseTrailOwnerFromKey(trailKey);
+        if (!Number.isFinite(deviceId) || deviceId <= 0) return null;
+
+        const member = (membersWithDistance || []).find((m) => m && m.deviceId === deviceId) || null;
+        const mobiles = Array.isArray(member?.mobiles) ? member.mobiles : [];
+        const mobile = mobileId > 0
+          ? (mobiles.find((m) => m && m.mobileId === mobileId) || null)
+          : null;
+
+        const hubName = (member?.name || `Device ${deviceId}`).toString().trim();
+        const rawPhoneNick = (mobile?.nickname || '').toString().trim();
+        const phoneNick = /^mobile\s*\d+$/i.test(rawPhoneNick) ? '' : rawPhoneNick;
+        const shortId = mobileId > 0 ? `D${deviceId}-M${mobileId}` : `D${deviceId}`;
+        const trailColor = getPhoneMarkerColor(colors, deviceId, mobileId);
+
+        const latestPoint = Array.isArray(points) && points.length > 0 ? points[points.length - 1] : null;
+        const lat = Number.isFinite(latestPoint?.lat)
+          ? latestPoint.lat
+          : (Number.isFinite(mobile?.lat) ? mobile.lat : (Number.isFinite(member?.lat) ? member.lat : null));
+        const lng = Number.isFinite(latestPoint?.lng)
+          ? latestPoint.lng
+          : (Number.isFinite(mobile?.lng) ? mobile.lng : (Number.isFinite(member?.lng) ? member.lng : null));
+
+        return {
+          trailKey,
+          deviceId,
+          mobileId,
+          shortId,
+          phoneNick,
+          hubName,
+          trailColor,
+          lat,
+          lng,
+          alertType: member?.alertType || null,
+          isOffline: !!member?.isOffline,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => {
+        if (a.deviceId !== b.deviceId) return a.deviceId - b.deviceId;
+        return a.mobileId - b.mobileId;
+      });
+  }, [colors, lobbyRemoteBreadcrumbs, membersWithDistance]);
+
+  const openTrailLegendIdentity = useCallback((item) => {
+    if (!item) return;
+
+    const hasCoords =
+      Number.isFinite(item.lat) &&
+      Number.isFinite(item.lng) &&
+      !(item.lat === 0 && item.lng === 0);
+
+    const distance =
+      effectiveMyLocation.valid && hasCoords
+        ? calculateDistance(effectiveMyLocation.lat, effectiveMyLocation.lng, item.lat, item.lng)
+        : null;
+
+    const name = item.phoneNick
+      ? `${item.phoneNick} (${item.hubName})`
+      : (item.mobileId > 0 ? `${item.hubName} · M${item.mobileId}` : item.hubName);
+
+    handleMemberPress({
+      deviceId: item.deviceId,
+      name,
+      lat: hasCoords ? item.lat : null,
+      lng: hasCoords ? item.lng : null,
+      distance,
+      alertType: item.alertType,
+      isOffline: item.isOffline,
+    });
+  }, [effectiveMyLocation.lat, effectiveMyLocation.lng, effectiveMyLocation.valid, handleMemberPress]);
 
   const offlineTilesAvailable = !!offlineMeta?.tileCount && offlineMeta.tileCount > 0;
 
@@ -1573,6 +1686,43 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
           </View>
         </View>
 
+        {viewMode === 'map' && trailLegendItems.length > 0 && (
+          <View style={[localStyles.trailLegendWrap, { borderColor: colors.glassBorder, backgroundColor: 'transparent' }]}>
+            <View style={localStyles.trailLegendHeader}>
+              <Text style={[localStyles.trailLegendTitle, { color: colors.textDark }]}>Trail Legend</Text>
+              <Text style={[localStyles.trailLegendHint, { color: colors.gray }]}>Tap dot or chip</Text>
+            </View>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={localStyles.trailLegendRow}
+            >
+              {trailLegendItems.map((item) => (
+                <TouchableOpacity
+                  key={`trail-legend-${item.trailKey}`}
+                  style={[
+                    localStyles.trailLegendChip,
+                    { borderColor: colors.glassBorder, backgroundColor: colors.inputBg },
+                  ]}
+                  activeOpacity={0.8}
+                  onPress={() => openTrailLegendIdentity(item)}
+                >
+                  <View style={[localStyles.trailLegendDot, { backgroundColor: item.trailColor }]} />
+                  <View style={localStyles.trailLegendTextWrap}>
+                    <Text style={[localStyles.trailLegendChipTitle, { color: colors.textDark }]} numberOfLines={1}>
+                      {item.shortId}
+                    </Text>
+                    <Text style={[localStyles.trailLegendChipSub, { color: colors.gray }]} numberOfLines={1}>
+                      {item.phoneNick || item.hubName}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
         {/* Topo Map View (MapLibre, offline-capable with cached tiles) */}
         {viewMode === 'map' && (
           (MapLibreRN && offlineTilesAvailable) ? (
@@ -1585,7 +1735,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
               offlineEnabled={offlineTilesAvailable}
               offlineMeta={offlineMeta}
               breadcrumbs={breadcrumbs}
-              remoteBreadcrumbsByDevice={sosRemoteBreadcrumbs}
+              remoteBreadcrumbsByDevice={lobbyRemoteBreadcrumbs}
             />
           ) : (
             <OfflineGridMap
@@ -1594,7 +1744,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
               colors={colors}
               onMemberPress={handleMemberPress}
               breadcrumbs={breadcrumbs}
-              remoteBreadcrumbsByDevice={sosRemoteBreadcrumbs}
+              remoteBreadcrumbsByDevice={lobbyRemoteBreadcrumbs}
             />
           )
         )}
@@ -1637,7 +1787,9 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
                       : null;
 
                     const mobileColor = getPhoneMarkerColor(colors, member.deviceId, mobile.mobileId);
-                    const title = `${member.name} · M${mobile.mobileId}`;
+                    const rawPhoneNick = (mobile?.nickname || '').toString().trim();
+                    const phoneNick = /^mobile\s*\d+$/i.test(rawPhoneNick) ? '' : rawPhoneNick;
+                    const title = phoneNick ? `${phoneNick} (${member.name})` : `${member.name} · M${mobile.mobileId}`;
 
                     return (
                       <TouchableOpacity
@@ -2228,6 +2380,60 @@ const localStyles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',
+  },
+  trailLegendWrap: {
+    marginBottom: 12,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  trailLegendHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  trailLegendTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  trailLegendHint: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  trailLegendRow: {
+    paddingRight: 4,
+  },
+  trailLegendChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    marginRight: 8,
+    minWidth: 112,
+    maxWidth: 200,
+  },
+  trailLegendDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#fff',
+    marginRight: 7,
+  },
+  trailLegendTextWrap: {
+    flexShrink: 1,
+  },
+  trailLegendChipTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  trailLegendChipSub: {
+    fontSize: 10,
+    marginTop: 1,
   },
 });
 
