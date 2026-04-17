@@ -3075,14 +3075,38 @@ export const BluetoothProvider = ({ children }) => {
       
       // Listen for disconnection events
       console.log('[BLE] Step: onDisconnected() subscribe', { id: device.id });
-      const disconnectSubscription = connectedDev.onDisconnected((error, disconnectedDevice) => {
+      const disconnectSubscription = connectedDev.onDisconnected((error) => {
         const lastTx = lastBleTxRef.current || {};
         const ageMs = lastTx.ts ? (Date.now() - lastTx.ts) : null;
-        console.log('Device disconnected:', error?.message || 'Connection closed', {
+
+        const rawMsg = (error?.message || '').toString();
+        const msg = rawMsg.toLowerCase();
+        const code = error?.errorCode ?? error?.code ?? null;
+
+        let reason = 'Device disconnected';
+        if (msg.includes('operation was cancelled') || msg.includes('operation was canceled') || msg.includes('cancelled') || msg.includes('canceled')) {
+          reason = 'Disconnected (cancelled)';
+        } else if (msg.includes('bluetooth') && (msg.includes('powered off') || msg.includes('turned off') || msg.includes('off'))) {
+          reason = 'Disconnected (Bluetooth off)';
+        } else if (msg.includes('timeout')) {
+          reason = 'Disconnected (timeout)';
+        } else if (msg.includes('gatt') && msg.includes('133')) {
+          reason = 'Disconnected (Android GATT 133)';
+        } else if (msg.includes('not connected') || msg.includes('device disconnected') || msg.includes('disconnected')) {
+          reason = 'Device disconnected';
+        }
+
+        const status = `${reason}${code !== null && code !== undefined ? ` (code: ${code})` : ''}`;
+        showTemporaryStatus(status, 4500);
+
+        console.log('Device disconnected:', rawMsg || 'Connection closed', {
+          code,
           lastTx: lastTx.cmd,
           lastTxSilent: lastTx.silent,
           lastTxAgeMs: ageMs,
         });
+
+        lastDisconnectAtRef.current = Date.now();
         disconnectFromDevice(device.id, { skipCancel: true });
       });
       
@@ -3203,6 +3227,13 @@ export const BluetoothProvider = ({ children }) => {
       setLastDataReceived(null);
       setLoraSignalStrength(null);
       setConnectionHealth('unknown');
+
+      // Many-to-one: slot IDs and local nicknames are hub-assigned.
+      // Reset on disconnect so we don't mis-label phones after reconnecting to a hub.
+      setMyMobileId(null);
+      lastClaimedAtRef.current = 0;
+      setLocalMobileNicknames({});
+      setRemoteMobileNicknames({});
     }
     
     console.log(`Disconnected from device ${deviceId}`);

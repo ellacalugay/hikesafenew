@@ -54,6 +54,45 @@ const buildUrlFromTemplate = (template, z, x, y) =>
     .replace('{x}', String(x))
     .replace('{y}', String(y));
 
+const looksLikePng = (bytes) => {
+  // PNG signature: 89 50 4E 47 0D 0A 1A 0A
+  return (
+    bytes &&
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  );
+};
+
+const looksLikeJpeg = (bytes) => {
+  // JPEG SOI: FF D8 FF
+  return bytes && bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+};
+
+const validateRasterTileFileAsync = async (file) => {
+  try {
+    if (!file || !file.exists) return false;
+    if (typeof file.size === 'number' && file.size > 0 && file.size < 64) return false;
+
+    // Read the full file (tiles are small); we only do this for a tiny sample.
+    const bytes = await file.bytes();
+    if (!bytes || bytes.length < 8) return false;
+    if (looksLikePng(bytes) || looksLikeJpeg(bytes)) return true;
+
+    // Common failure mode: HTML error page saved as .png.
+    // (e.g. starts with '<' or '{' JSON).
+    return false;
+  } catch {
+    return false;
+  }
+};
+
 const computeBBoxAround = (centerLat, centerLng, radiusKm) => {
   // Approx; good enough for small-ish radii
   const lat = centerLat;
@@ -126,6 +165,8 @@ export const downloadOfflineRegionTilesAsync = async ({
   let attempted = 0;
   let failed = 0;
   let firstErrorMessage = null;
+  let validatedSamples = 0;
+  const MAX_VALIDATED_SAMPLES = 6;
 
   // Build a capped download queue up-front so we can process in concurrent batches.
   const downloadQueue = [];
@@ -175,6 +216,16 @@ export const downloadOfflineRegionTilesAsync = async ({
           } else {
             const url = buildUrlFromTemplate(template, z, x, y);
             await File.downloadFileAsync(url, outFile, { idempotent: true });
+
+            // Validate a small sample of freshly downloaded tiles to catch blocked tile servers.
+            if (validatedSamples < MAX_VALIDATED_SAMPLES) {
+              const ok = await validateRasterTileFileAsync(outFile);
+              validatedSamples += 1;
+              if (!ok) {
+                try { outFile.delete(); } catch {}
+                throw new Error('Invalid tile content (not a PNG/JPEG). Tile server may be blocked or returning HTML.');
+              }
+            }
             completed += 1;
           }
         } catch (e) {

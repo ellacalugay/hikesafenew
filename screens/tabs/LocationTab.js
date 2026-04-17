@@ -32,9 +32,9 @@ const RADAR_SIZE = SCREEN_WIDTH - 64;
 const LOCATION_SERVICES_PREF_KEY = '@hikesafe_location_services_enabled';
 const OFFLINE_TILES_META_KEY = '@hikesafe_offline_tiles_meta';
 
-const OFFLINE_DEFAULT_RADIUS_KM = 10;
+const OFFLINE_DEFAULT_RADIUS_KM = 5;
 const OFFLINE_DEFAULT_ZOOM_MIN = 10;
-const OFFLINE_DEFAULT_ZOOM_MAX = 16;
+const OFFLINE_DEFAULT_ZOOM_MAX = 15;
 const OFFLINE_MAX_TILES = 5000;
 
 const TILE_URL_TEMPLATE = process.env.EXPO_PUBLIC_TILE_URL_TEMPLATE || null;
@@ -87,7 +87,10 @@ const RadarView = ({ myLocation, members, colors, onMemberPress, locationService
   const computeHeading = useCallback((mag) => {
     if (!mag) return null;
     const { x, y } = mag;
-    const raw = Math.atan2(y, x) * (180 / Math.PI);
+
+    // Convert magnetometer XY into a heading where 0° = North, 90° = East.
+    // For a flat device, +Y is "top of phone" and +X is "right side of phone".
+    const raw = Math.atan2(-x, y) * (180 / Math.PI);
     const normalized = raw >= 0 ? raw : raw + 360;
     if (!Number.isFinite(normalized)) return null;
     return normalized;
