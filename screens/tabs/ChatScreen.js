@@ -574,7 +574,7 @@ const ChatScreen = ({ onBack, chatName }) => {
                     <View
                       style={[
                         localStyles.bubble,
-                        msg.pending || msg.failed
+                        msg.pending || msg.awaitingAck || msg.failed
                           ? { backgroundColor: ui.surfaceContainerHighest, borderColor: msg.failed ? errorColor : ui.primary, borderWidth: 1 }
                           : { backgroundColor: ui.primary },
                         localStyles.bubbleMine,
@@ -583,8 +583,8 @@ const ChatScreen = ({ onBack, chatName }) => {
                       <Text
                         style={[
                           localStyles.bubbleText,
-                          msg.pending ? localStyles.pendingText : null,
-                          { color: msg.pending || msg.failed ? ui.onSurface : ui.onPrimary },
+                          (msg.pending || msg.awaitingAck) ? localStyles.pendingText : null,
+                          { color: (msg.pending || msg.awaitingAck || msg.failed) ? ui.onSurface : ui.onPrimary },
                         ]}
                       >
                         {msg.text}
@@ -609,14 +609,14 @@ const ChatScreen = ({ onBack, chatName }) => {
                           style={[
                             localStyles.deliveryText,
                             {
-                              color: msg.failed ? errorColor : msg.pending ? ui.onSurfaceVariant : ui.primary,
+                              color: msg.failed ? errorColor : (msg.pending || msg.awaitingAck) ? ui.onSurfaceVariant : ui.primary,
                             },
                           ]}
                         >
-                          {formatTime(msg.timestamp)} · {msg.pending ? 'PENDING SYNC' : msg.failed ? 'FAILED TO SEND' : 'SENT'}
+                          {formatTime(msg.timestamp)} · {msg.waitingForClaim ? 'CLAIMING SLOT' : msg.pending ? 'PENDING SYNC' : msg.awaitingAck ? 'WAITING FOR RECEIPT' : msg.failed ? (msg.deliveryUnconfirmed ? 'NOT CONFIRMED' : 'FAILED TO SEND') : (msg.delivered ? 'DELIVERED' : 'SENT')}
                         </Text>
-                        {!msg.pending && !msg.failed && <CheckCircle size={14} color={ui.primary} />}
-                        {msg.pending && <Clock size={14} color={ui.onSurfaceVariant} />}
+                        {!msg.pending && !msg.awaitingAck && !msg.failed && <CheckCircle size={14} color={ui.primary} />}
+                        {(msg.pending || msg.awaitingAck) && <Clock size={14} color={ui.onSurfaceVariant} />}
                         {msg.failed && <AlertCircle size={14} color={errorColor} />}
                       </>
                     ) : (

@@ -109,7 +109,13 @@ const slideFromRight = () => ({
 function AppNavigator() {
   const { colors } = useTheme();
   const navigationRef = useNavigationContainerRef();
-  const { disconnect, clearChatHistory, clearBreadcrumbs, isConnected } = useBluetoothDevice();
+  const {
+    disconnect,
+    clearChatHistory,
+    clearBreadcrumbs,
+    clearRuntimeSessionData,
+    isConnected,
+  } = useBluetoothDevice();
   const {
     isLoading: userLoading,
     clearUser,
@@ -199,6 +205,19 @@ function AppNavigator() {
   };
 
   const handleLogout = async (navigation) => {
+    try {
+      await clearAccount();
+      if (typeof clearRuntimeSessionData === 'function') {
+        await clearRuntimeSessionData({ clearPersistedChat: true, clearPersistedBreadcrumbs: true });
+      } else {
+        await Promise.all([
+          clearChatHistory?.(),
+          clearBreadcrumbs?.(),
+        ]);
+      }
+    } catch (e) {
+      console.log('Logout cleanup failed:', e?.message || e);
+    }
     await disconnect();
     setResumeAfterReconnect(false);
     navigation.reset({ index: 0, routes: [{ name: 'DeviceSetup' }] });
@@ -207,11 +226,15 @@ function AppNavigator() {
   const handleDeleteAccount = async (navigation) => {
     try {
       await clearAccount();
-      await Promise.all([
-        clearChatHistory?.(),
-        clearBreadcrumbs?.(),
-        clearUser(),
-      ]);
+      if (typeof clearRuntimeSessionData === 'function') {
+        await clearRuntimeSessionData({ clearPersistedChat: true, clearPersistedBreadcrumbs: true });
+      } else {
+        await Promise.all([
+          clearChatHistory?.(),
+          clearBreadcrumbs?.(),
+        ]);
+      }
+      await clearUser();
     } catch (e) {
       console.log('Delete account cleanup failed:', e?.message || e);
     } finally {

@@ -45,7 +45,7 @@ const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
 const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const { colors, isDarkMode } = useTheme();
   const navigation = useNavigation();
-  const { activeAlert, dismissAlert, silenceActiveAlert, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
+  const { activeAlert, activeEmergencyCount, unsilencedEmergencyCount, dismissAlert, silenceActiveAlert, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
   const { lobbyCode, lobbyName, leaveLobby, isInLobby, getEmergencyContactForDevice, getMemberNickname } = useLobby();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState('home');
@@ -760,6 +760,12 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                 : `${activeAlert?.displayName || (typeof activeAlert?.deviceId === 'number' ? getMemberNickname(activeAlert.deviceId) : 'A member')} needs help!`
               }
             </Text>
+
+            {(activeAlert?.type === 'SOS' || activeAlert?.type === 'MORSE') && ((unsilencedEmergencyCount || activeEmergencyCount || 0) > 1) ? (
+              <Text style={[styles.modalText, { color: colors.gray, textAlign: 'center', fontSize: 13, marginTop: -2 }]}>
+                {`${(unsilencedEmergencyCount || activeEmergencyCount) - 1} more emergency alert(s) are active.`}
+              </Text>
+            ) : null}
 
             {activeAlert?.type !== 'OFFLINE' && typeof activeAlert?.deviceId === 'number' ? (() => {
               const deviceId = activeAlert.deviceId;

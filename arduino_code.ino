@@ -943,10 +943,15 @@ static unsigned long lastMobileLocLoRaMs = 0;
 const unsigned long mobileLocLoRaIntervalMs = 7000;
 
 // --- SEPARATION ALERT CONFIGURATION ---
-#define SEPARATION_ALERT_METERS  100  // alert fires at 100m
-#define SEPARATION_CLEAR_METERS  50   // clears when back within 50m
+#define SEPARATION_WARN_METERS   150  // notify at 150m
+#define SEPARATION_RING_METERS   300  // ring at 300m
+#define SEPARATION_CLEAR_METERS   50  // re-arm only when back within 50m
+#define SEPARATION_CRITICAL_CONFIRM_COUNT 2
 #define SEPARATION_BUZZ_ON_MS    300  // Red LED + buzzer ON per pulse
 #define SEPARATION_BUZZ_OFF_MS  1000  // Gap between pulses
+#define SEPARATION_PEER_STALE_MS 45000UL
+#define SEPARATION_LOCAL_MOBILE_STALE_MS 30000UL
+#define MAX_SEPARATION_PEERS 64
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -1032,18 +1037,43 @@ const int GREEN_LED = 4;
 bool sosActive     = false;
 bool morseActive   = false;
 bool okayActive    = false;
-bool receivedSOS   = false;
-bool receivedMorse = false;
+
+#define REMOTE_ALERT_BITMAP_BYTES 32  // 256 devices / 8 bits
+const unsigned long REMOTE_ALERT_ROTATE_MS = 2500;
+uint8_t remoteSosBitmap[REMOTE_ALERT_BITMAP_BYTES] = {0};
+uint8_t remoteMorseBitmap[REMOTE_ALERT_BITMAP_BYTES] = {0};
+uint8_t remoteAlertDisplayDevice = 0;
+bool remoteAlertDisplayIsMorse = false;
+unsigned long lastRemoteAlertRotateMs = 0;
 
 // When true, keep SOS/MORSE visible but silence the buzzer (e.g. after ON_MY_WAY).
 bool emergencySilenced = false;
 
 // --- SEPARATION ALERT STATE ---
+#define SEP_LEVEL_NONE     0
+#define SEP_LEVEL_WARN     1
+#define SEP_LEVEL_CRITICAL 2
+
 bool  separationAlert      = false;
+uint8_t separationLevel    = SEP_LEVEL_NONE;
+bool separationCriticalLatched = false;
+uint8_t separationCriticalHits = 0;
 float lastKnownDistance    = -1.0;
 int   separationFromDevice = 0;
+int   separationFromMobile = 0;
 unsigned long lastSepBuzzTime = 0;
 bool  sepBuzzState         = false;
+unsigned long lastSeparationEvalMs = 0;
+
+struct SeparationPeer {
+  uint8_t deviceId;
+  uint8_t mobileId;
+  float latitude;
+  float longitude;
+  unsigned long lastSeen;
+  bool active;
+};
+SeparationPeer separationPeers[MAX_SEPARATION_PEERS];
 
 int  remoteDevice = 0;
 int  lastRssi     = 0;
@@ -1154,7 +1184,7 @@ const unsigned long timeoutInterval = 90000;
 bool isOffline = false;
 
 unsigned long lastSOSTime = 0;
-const unsigned long sosInterval = 10000;
+const unsigned long sosInterval = 3000;
 
 unsigned long lastECBroadcastTime = 0;
 const unsigned long ecBroadcastInterval = 45000;  
@@ -1249,7 +1279,17 @@ void checkBluetoothCommands();
 void blinkNormalSOSNonBlocking();
 void blinkMorseSOSNonBlocking();
 void handleSeparationAlarmNonBlocking();
-void checkSeparationAlert(uint8_t fromDevice, float remoteLat, float remoteLon, uint8_t remoteSatellites);
+void evaluateSeparationState();
+void upsertSeparationPeer(uint8_t fromDevice, uint8_t fromMobile, float remoteLat, float remoteLon);
+void clearSeparationPeers();
+bool getBestLocalMobileOrigin(float* outLat, float* outLon, uint8_t* outMobileId);
+void resetSeparationHardware();
+bool hasRemoteEmergencyAlerts();
+void clearAllRemoteEmergencyAlerts();
+void setRemoteEmergencyAlert(uint8_t deviceId, bool isMorse);
+void clearRemoteEmergencyAlert(uint8_t deviceId);
+bool getFocusedRemoteEmergency(uint8_t* outDevice, bool* outIsMorse);
+uint16_t countRemoteEmergencyAlerts();
 
 // ============================================================
 // HAVERSINE DISTANCE
@@ -1272,37 +1312,387 @@ int rssiToDistance(int rssi) {
   return (int)distance;  
 }
 
-void checkSeparationAlert(uint8_t fromDevice, float remoteLat, float remoteLon, uint8_t remoteSatellites) {
-  if (!gps.location.isValid()) return;
-  if (remoteSatellites == 0) return;  
-  if (remoteLat == 0.0 && remoteLon == 0.0) return;
+static bool isValidEmergencyDeviceId(uint8_t deviceId) {
+  return deviceId > 0;
+}
 
-  float dist = haversineDistance(
-    gps.location.lat(), gps.location.lng(),
-    remoteLat, remoteLon
-  );
-  lastKnownDistance    = dist;
-  separationFromDevice = fromDevice;
+static bool getBitmapBit(const uint8_t* bitmap, uint8_t deviceId) {
+  if (!bitmap || !isValidEmergencyDeviceId(deviceId)) return false;
+  const uint8_t idx = deviceId >> 3;
+  if (idx >= REMOTE_ALERT_BITMAP_BYTES) return false;
+  const uint8_t mask = (uint8_t)(1U << (deviceId & 0x07));
+  return (bitmap[idx] & mask) != 0;
+}
 
-  if (!separationAlert && dist > SEPARATION_ALERT_METERS) {
-    Serial.printf("[WARN] Separation Alert! Dist: %.1fm\n", dist);
-    separationAlert = true;
-    sendToPhone("ALERT:TOO_FAR," + String(fromDevice) + "," + String(dist, 1));
-    updateDisplay(); // Important alerts update display immediately
-  } else if (separationAlert && dist <= SEPARATION_CLEAR_METERS) {
-    Serial.printf("[INFO] Regrouped. Dist: %.1fm\n", dist);
-    separationAlert = false;
-    digitalWrite(SOS_LED, LOW);
-    digitalWrite(BUZZER,  LOW);
-    sepBuzzState = false;
-    sendToPhone("ALERT:REGROUPED," + String(fromDevice) + "," + String(dist, 1));
+static void setBitmapBit(uint8_t* bitmap, uint8_t deviceId, bool enabled) {
+  if (!bitmap || !isValidEmergencyDeviceId(deviceId)) return;
+  const uint8_t idx = deviceId >> 3;
+  if (idx >= REMOTE_ALERT_BITMAP_BYTES) return;
+  const uint8_t mask = (uint8_t)(1U << (deviceId & 0x07));
+  if (enabled) {
+    bitmap[idx] |= mask;
+  } else {
+    bitmap[idx] &= (uint8_t)(~mask);
+  }
+}
+
+static bool bitmapHasAny(const uint8_t* bitmap) {
+  if (!bitmap) return false;
+  for (uint8_t i = 0; i < REMOTE_ALERT_BITMAP_BYTES; i++) {
+    if (bitmap[i] != 0) return true;
+  }
+  return false;
+}
+
+static bool getRemoteEmergencyTypeForDevice(uint8_t deviceId, bool* outIsMorse) {
+  if (!isValidEmergencyDeviceId(deviceId)) return false;
+  const bool hasSos = getBitmapBit(remoteSosBitmap, deviceId);
+  const bool hasMorse = getBitmapBit(remoteMorseBitmap, deviceId);
+  if (!hasSos && !hasMorse) return false;
+
+  if (outIsMorse) {
+    // Prefer SOS if both are accidentally set for the same source.
+    *outIsMorse = hasMorse && !hasSos;
+  }
+  return true;
+}
+
+static bool findNextRemoteEmergencyFrom(uint8_t startDevice, uint8_t* outDevice, bool* outIsMorse) {
+  if (!outDevice || !outIsMorse) return false;
+  if (!bitmapHasAny(remoteSosBitmap) && !bitmapHasAny(remoteMorseBitmap)) return false;
+
+  for (uint16_t step = 1; step <= 255; step++) {
+    const uint8_t candidate = (uint8_t)(((uint16_t)startDevice + step) & 0xFF);
+    if (candidate == 0) continue;
+
+    bool candidateIsMorse = false;
+    if (getRemoteEmergencyTypeForDevice(candidate, &candidateIsMorse)) {
+      *outDevice = candidate;
+      *outIsMorse = candidateIsMorse;
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static void refreshRemoteEmergencyFocus(bool forceAdvance) {
+  if (!hasRemoteEmergencyAlerts()) {
+    remoteAlertDisplayDevice = 0;
+    remoteAlertDisplayIsMorse = false;
+    return;
+  }
+
+  bool currentIsMorse = false;
+  const bool currentIsActive = getRemoteEmergencyTypeForDevice(remoteAlertDisplayDevice, &currentIsMorse);
+  if (currentIsActive) {
+    remoteAlertDisplayIsMorse = currentIsMorse;
+  }
+
+  const unsigned long now = millis();
+  bool shouldAdvance = forceAdvance || !currentIsActive || remoteAlertDisplayDevice == 0;
+  if (!shouldAdvance && (now - lastRemoteAlertRotateMs >= REMOTE_ALERT_ROTATE_MS)) {
+    shouldAdvance = true;
+  }
+
+  if (!shouldAdvance) {
+    return;
+  }
+
+  const uint8_t startDevice = currentIsActive ? remoteAlertDisplayDevice : 0;
+  uint8_t nextDevice = 0;
+  bool nextIsMorse = false;
+  if (findNextRemoteEmergencyFrom(startDevice, &nextDevice, &nextIsMorse)) {
+    remoteAlertDisplayDevice = nextDevice;
+    remoteAlertDisplayIsMorse = nextIsMorse;
+    lastRemoteAlertRotateMs = now;
+    return;
+  }
+
+  remoteAlertDisplayDevice = 0;
+  remoteAlertDisplayIsMorse = false;
+}
+
+bool hasRemoteEmergencyAlerts() {
+  return bitmapHasAny(remoteSosBitmap) || bitmapHasAny(remoteMorseBitmap);
+}
+
+void clearAllRemoteEmergencyAlerts() {
+  for (uint8_t i = 0; i < REMOTE_ALERT_BITMAP_BYTES; i++) {
+    remoteSosBitmap[i] = 0;
+    remoteMorseBitmap[i] = 0;
+  }
+  remoteAlertDisplayDevice = 0;
+  remoteAlertDisplayIsMorse = false;
+  lastRemoteAlertRotateMs = 0;
+}
+
+void setRemoteEmergencyAlert(uint8_t deviceId, bool isMorse) {
+  if (!isValidEmergencyDeviceId(deviceId)) return;
+
+  if (isMorse) {
+    setBitmapBit(remoteMorseBitmap, deviceId, true);
+    setBitmapBit(remoteSosBitmap, deviceId, false);
+  } else {
+    setBitmapBit(remoteSosBitmap, deviceId, true);
+    setBitmapBit(remoteMorseBitmap, deviceId, false);
+  }
+
+  if (remoteAlertDisplayDevice == 0) {
+    remoteAlertDisplayDevice = deviceId;
+    remoteAlertDisplayIsMorse = isMorse;
+    lastRemoteAlertRotateMs = millis();
+  }
+}
+
+void clearRemoteEmergencyAlert(uint8_t deviceId) {
+  if (!isValidEmergencyDeviceId(deviceId)) return;
+
+  setBitmapBit(remoteSosBitmap, deviceId, false);
+  setBitmapBit(remoteMorseBitmap, deviceId, false);
+
+  if (!hasRemoteEmergencyAlerts()) {
+    remoteAlertDisplayDevice = 0;
+    remoteAlertDisplayIsMorse = false;
+    return;
+  }
+
+  if (remoteAlertDisplayDevice == deviceId) {
+    refreshRemoteEmergencyFocus(true);
+  }
+}
+
+bool getFocusedRemoteEmergency(uint8_t* outDevice, bool* outIsMorse) {
+  refreshRemoteEmergencyFocus(false);
+  if (remoteAlertDisplayDevice == 0) {
+    return false;
+  }
+
+  if (outDevice) *outDevice = remoteAlertDisplayDevice;
+  if (outIsMorse) *outIsMorse = remoteAlertDisplayIsMorse;
+  return true;
+}
+
+uint16_t countRemoteEmergencyAlerts() {
+  uint16_t total = 0;
+  for (uint8_t i = 0; i < REMOTE_ALERT_BITMAP_BYTES; i++) {
+    uint8_t merged = (uint8_t)(remoteSosBitmap[i] | remoteMorseBitmap[i]);
+    while (merged) {
+      total += (uint16_t)(merged & 0x01);
+      merged >>= 1;
+    }
+  }
+  return total;
+}
+
+static bool isValidSeparationCoord(float lat, float lon) {
+  if (lat == 0.0 && lon == 0.0) return false;
+  if (lat < -90.0 || lat > 90.0) return false;
+  if (lon < -180.0 || lon > 180.0) return false;
+  return true;
+}
+
+void clearSeparationPeers() {
+  for (uint8_t i = 0; i < MAX_SEPARATION_PEERS; i++) {
+    separationPeers[i].active = false;
+    separationPeers[i].deviceId = 0;
+    separationPeers[i].mobileId = 0;
+    separationPeers[i].latitude = 0.0;
+    separationPeers[i].longitude = 0.0;
+    separationPeers[i].lastSeen = 0;
+  }
+}
+
+void upsertSeparationPeer(uint8_t fromDevice, uint8_t fromMobile, float remoteLat, float remoteLon) {
+  if (fromDevice == 0 || fromDevice == DEVICE_ID) return;
+  if (!isValidSeparationCoord(remoteLat, remoteLon)) return;
+
+  const unsigned long now = millis();
+  int existingIdx = -1;
+  int freeIdx = -1;
+  int oldestIdx = -1;
+  unsigned long oldestSeen = 0;
+  bool oldestInit = false;
+
+  for (uint8_t i = 0; i < MAX_SEPARATION_PEERS; i++) {
+    if (!separationPeers[i].active) {
+      if (freeIdx < 0) freeIdx = i;
+      continue;
+    }
+
+    if (separationPeers[i].deviceId == fromDevice && separationPeers[i].mobileId == fromMobile) {
+      existingIdx = i;
+      break;
+    }
+
+    if (!oldestInit || separationPeers[i].lastSeen < oldestSeen) {
+      oldestSeen = separationPeers[i].lastSeen;
+      oldestIdx = i;
+      oldestInit = true;
+    }
+  }
+
+  int idx = existingIdx;
+  if (idx < 0) idx = (freeIdx >= 0) ? freeIdx : oldestIdx;
+  if (idx < 0) return;
+
+  separationPeers[idx].active = true;
+  separationPeers[idx].deviceId = fromDevice;
+  separationPeers[idx].mobileId = fromMobile;
+  separationPeers[idx].latitude = remoteLat;
+  separationPeers[idx].longitude = remoteLon;
+  separationPeers[idx].lastSeen = now;
+}
+
+bool getBestLocalMobileOrigin(float* outLat, float* outLon, uint8_t* outMobileId) {
+  if (!outLat || !outLon) return false;
+
+  const unsigned long now = millis();
+  int bestIdx = -1;
+  unsigned long newestSeen = 0;
+
+  for (uint8_t i = 0; i < connectedMobileCount; i++) {
+    if (connectedMobiles[i].mobileID == 0) continue;
+    if (currentLobbyCode != 0 && !connectedMobiles[i].isInLobby) continue;
+    if (!isValidSeparationCoord(connectedMobiles[i].latitude, connectedMobiles[i].longitude)) continue;
+
+    const unsigned long seen = connectedMobiles[i].lastSeen;
+    if (seen == 0) continue;
+    const unsigned long age = (now >= seen) ? (now - seen) : 0;
+    if (age > SEPARATION_LOCAL_MOBILE_STALE_MS) continue;
+
+    if (bestIdx < 0 || seen > newestSeen) {
+      bestIdx = i;
+      newestSeen = seen;
+    }
+  }
+
+  if (bestIdx < 0) return false;
+
+  *outLat = connectedMobiles[bestIdx].latitude;
+  *outLon = connectedMobiles[bestIdx].longitude;
+  if (outMobileId) *outMobileId = connectedMobiles[bestIdx].mobileID;
+  return true;
+}
+
+void resetSeparationHardware() {
+  separationAlert = false;
+  digitalWrite(SOS_LED, LOW);
+  digitalWrite(BUZZER, LOW);
+  sepBuzzState = false;
+}
+
+void evaluateSeparationState() {
+  float localLat = 0.0;
+  float localLon = 0.0;
+  uint8_t localMobileId = 0;
+  if (!getBestLocalMobileOrigin(&localLat, &localLon, &localMobileId)) {
+    separationCriticalHits = 0;
+    resetSeparationHardware();
+    return;
+  }
+
+  const unsigned long now = millis();
+  bool foundNearest = false;
+  float nearestDist = 0.0;
+  uint8_t nearestDevice = 0;
+  uint8_t nearestMobile = 0;
+
+  for (uint8_t i = 0; i < MAX_SEPARATION_PEERS; i++) {
+    if (!separationPeers[i].active) continue;
+
+    const unsigned long age = (now >= separationPeers[i].lastSeen) ? (now - separationPeers[i].lastSeen) : 0;
+    if (age > SEPARATION_PEER_STALE_MS) {
+      separationPeers[i].active = false;
+      continue;
+    }
+
+    if (!isValidSeparationCoord(separationPeers[i].latitude, separationPeers[i].longitude)) {
+      separationPeers[i].active = false;
+      continue;
+    }
+
+    const float dist = haversineDistance(
+      localLat,
+      localLon,
+      separationPeers[i].latitude,
+      separationPeers[i].longitude
+    );
+
+    if (!foundNearest || dist < nearestDist) {
+      nearestDist = dist;
+      nearestDevice = separationPeers[i].deviceId;
+      nearestMobile = separationPeers[i].mobileId;
+      foundNearest = true;
+    }
+  }
+
+  if (!foundNearest) {
+    lastKnownDistance = -1.0;
+    separationFromDevice = 0;
+    separationFromMobile = 0;
+    separationCriticalHits = 0;
+    resetSeparationHardware();
+    return;
+  }
+
+  lastKnownDistance = nearestDist;
+  separationFromDevice = nearestDevice;
+  separationFromMobile = nearestMobile;
+
+  if (nearestDist <= SEPARATION_CLEAR_METERS) {
+    if (separationLevel != SEP_LEVEL_NONE) {
+      Serial.printf("[INFO] Regrouped at %.1fm (nearest D%d-M%d)\n", nearestDist, nearestDevice, nearestMobile);
+      sendToPhone("ALERT:REGROUPED," + String(nearestDevice) + "," + String(nearestDist, 1));
+      updateDisplay();
+    }
+
+    separationLevel = SEP_LEVEL_NONE;
+    separationCriticalLatched = false;
+    separationCriticalHits = 0;
+    resetSeparationHardware();
+    return;
+  }
+
+  if (nearestDist > SEPARATION_RING_METERS) {
+    if (separationCriticalHits < 255) {
+      separationCriticalHits++;
+    }
+
+    if (separationLevel == SEP_LEVEL_NONE) {
+      sendToPhone("ALERT:TOO_FAR," + String(nearestDevice) + "," + String(nearestDist, 1) + ",WARN");
+      separationLevel = SEP_LEVEL_WARN;
+    }
+
+    if (!separationCriticalLatched && separationCriticalHits >= SEPARATION_CRITICAL_CONFIRM_COUNT) {
+      Serial.printf("[CRITICAL] Separation %.1fm (nearest D%d-M%d)\n", nearestDist, nearestDevice, nearestMobile);
+      sendToPhone("ALERT:TOO_FAR," + String(nearestDevice) + "," + String(nearestDist, 1) + ",CRITICAL");
+      separationCriticalLatched = true;
+      separationLevel = SEP_LEVEL_CRITICAL;
+      separationAlert = true;
+      updateDisplay();
+    }
+    return;
+  }
+
+  // Warning zone: 150m < distance <= 300m. Notify only; no buzzer.
+  separationCriticalHits = 0;
+  if (separationLevel == SEP_LEVEL_NONE) {
+    Serial.printf("[WARN] Separation warning %.1fm (nearest D%d-M%d)\n", nearestDist, nearestDevice, nearestMobile);
+    sendToPhone("ALERT:TOO_FAR," + String(nearestDevice) + "," + String(nearestDist, 1) + ",WARN");
     updateDisplay();
   }
+
+  if (separationLevel != SEP_LEVEL_WARN) {
+    separationLevel = SEP_LEVEL_WARN;
+    updateDisplay();
+  }
+  resetSeparationHardware();
 }
 
 void handleSeparationAlarmNonBlocking() {
   if (!separationAlert) return;
-  if (sosActive || morseActive || receivedSOS || receivedMorse) return;
+  if (sosActive || morseActive || hasRemoteEmergencyAlerts()) return;
 
   unsigned long now      = millis();
   unsigned long interval = sepBuzzState ? SEPARATION_BUZZ_ON_MS : SEPARATION_BUZZ_OFF_MS;
@@ -1444,6 +1834,7 @@ void setup() {
   setupPreferences();
   Serial.println("\n[INFO] --- Booting HikeSafe ---");
   clearAllMobiles();
+  clearSeparationPeers();
 
   Wire.begin(21, 22);
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
@@ -1625,8 +2016,8 @@ void loop() {
   if (digitalRead(BUTTON_SOS) == LOW && !sosActive) triggerSOS();
 
   if (digitalRead(BUTTON_OKAY) == LOW) {
-    if (receivedSOS || receivedMorse) {
-      receivedSOS = receivedMorse = false;
+    if (hasRemoteEmergencyAlerts()) {
+      clearAllRemoteEmergencyAlerts();
       emergencySilenced = false;
       digitalWrite(SOS_LED, LOW);
       digitalWrite(BUZZER,  LOW);
@@ -1636,11 +2027,14 @@ void loop() {
     } else if (sosActive || morseActive) {
       emergencySilenced = false;
       triggerOkay();
-    } else if (separationAlert) {
-      separationAlert = false;
-      digitalWrite(SOS_LED, LOW);
-      digitalWrite(BUZZER,  LOW);
-      sepBuzzState = false;
+    } else if (separationLevel != SEP_LEVEL_NONE) {
+      separationLevel = SEP_LEVEL_NONE;
+      separationCriticalLatched = false;
+      separationCriticalHits = 0;
+      lastKnownDistance = -1.0;
+      separationFromDevice = 0;
+      separationFromMobile = 0;
+      resetSeparationHardware();
       sendToPhone("ALERT:SEP_ACK");
       updateDisplay();
     }
@@ -1678,12 +2072,14 @@ void loop() {
     else if (millis() - lastTapTime > MORSE_TIMEOUT) checkMorseInput();
   }
 
-  if (receivedSOS) {
+  bool focusedRemoteIsMorse = false;
+  if (getFocusedRemoteEmergency(nullptr, &focusedRemoteIsMorse)) {
     digitalWrite(GREEN_LED, LOW);
-    blinkNormalSOSNonBlocking();
-  } else if (receivedMorse) {
-    digitalWrite(GREEN_LED, LOW);
-    blinkMorseSOSNonBlocking();
+    if (focusedRemoteIsMorse) {
+      blinkMorseSOSNonBlocking();
+    } else {
+      blinkNormalSOSNonBlocking();
+    }
   } else if (sosActive) {
     digitalWrite(GREEN_LED, LOW);
     blinkNormalSOSNonBlocking();
@@ -1703,6 +2099,10 @@ void loop() {
   if (millis() - lastGPSCheck >= 2000) {
     lastGPSCheck = millis();
     sendStatusUpdate();
+  }
+  if (millis() - lastSeparationEvalMs >= 1200) {
+    lastSeparationEvalMs = millis();
+    evaluateSeparationState();
   }
     if (millis() - lastDisplayUpdate >= 1000) {
     lastDisplayUpdate = millis();
@@ -1738,7 +2138,7 @@ void sendToPhone(String msg) {
 void triggerSOS() {
   sosActive   = true;
   morseActive = false;
-  receivedSOS = receivedMorse = false;
+  clearAllRemoteEmergencyAlerts();
   // Local sender should not buzz itself while transmitting emergency.
   emergencySilenced = true;
   preferences.putBool("sos_state",   true);
@@ -1760,6 +2160,9 @@ void triggerSOS() {
   for (uint8_t i = 0; i < connectedMobileCount; i++) {
     sendLoRaMessage(MSG_SOS, connectedMobiles[i].mobileID);
   }
+  sendLoRaMessage(MSG_SOS, 0);
+  // Quick retry improves first-delivery reliability on noisy links.
+  delay(120);
   sendLoRaMessage(MSG_SOS, 0);
   
   delay(100);
@@ -1820,8 +2223,8 @@ void processBLECommand(const String& cmd) {
   } else if (cmd == "OK") {
     logLobbyEvent("OK command received");
     emergencySilenced = false;
-    if (receivedSOS || receivedMorse) {
-      receivedSOS = receivedMorse = false;
+    if (hasRemoteEmergencyAlerts()) {
+      clearAllRemoteEmergencyAlerts();
       digitalWrite(SOS_LED, LOW);
       digitalWrite(BUZZER, LOW);
       updateDisplay();
@@ -2024,6 +2427,27 @@ void processBLECommand(const String& cmd) {
     // Local echo to all connected phones (apps will filter by toMobileId).
     sendToPhone("ECHO_MSG:" + String(target) + "," + tagged);
   }
+  } else if (cmd.startsWith("ACKMSG:")) {
+  // Delivery acknowledgement from recipient app.
+  // Format: ACKMSG:<targetDevice>,<messageId>
+  int comma = cmd.indexOf(',', 7);
+  if (comma > 7) {
+    int target = cmd.substring(7, comma).toInt();
+    String messageId = cmd.substring(comma + 1);
+    messageId.trim();
+
+    if (currentLobbyCode == 0) {
+      sendToPhone("STATUS:JOIN_LOBBY_FIRST");
+      return;
+    }
+
+    if (target <= 0 || messageId.length() == 0) {
+      return;
+    }
+
+    String ackTagged = "__ACK__:" + messageId;
+    sendLoRaTextMessage((uint8_t)target, ackTagged, 0);
+  }
   } else if (cmd.startsWith("CLAIM:")) {
   String token = cmd.substring(6);
   const unsigned long now = millis();
@@ -2074,6 +2498,20 @@ void processBLECommand(const String& cmd) {
       }
     }
   }
+
+  // 4) If we still couldn't assign a slot, notify the requester explicitly.
+  if (!handled) {
+    String reason = "WAIT_RETRY";
+    if (connectedMobileCount == 0) {
+      reason = "NO_CONNECTED_SLOT";
+    } else if (connectedMobileCount >= MAX_MOBILE_PHONES) {
+      reason = "FULL_OR_STALE";
+    }
+
+    sendToPhone("CLAIM_FAILED:" + token + "," + reason);
+    Serial.printf("[BLE] CLAIM_FAILED token=%s reason=%s trackedSlots=%u\n",
+                  token.c_str(), reason.c_str(), (unsigned int)connectedMobileCount);
+  }
   } else if (cmd.startsWith("PLOC:")) {
   int firstComma = cmd.indexOf(',', 5);
   int secondComma = cmd.indexOf(',', firstComma + 1);
@@ -2088,6 +2526,7 @@ void processBLECommand(const String& cmd) {
         connectedMobiles[i].latitude = lat;
         connectedMobiles[i].longitude = lng;
         connectedMobiles[i].lastSeen = millis();
+        evaluateSeparationState();
         break;
       }
     }
@@ -2303,6 +2742,9 @@ void receiveLoRaMessage() {
         String(currentRssi) + "," + String(rssiToDistance(currentRssi))
       );
 
+      upsertSeparationPeer(msg.deviceID, msg.mobileID, msg.latitude, msg.longitude);
+      evaluateSeparationState();
+
       // Mobile-location packets are telemetry only; do not generate ALERT/LOC messages.
       if (isOffline) {
         isOffline = false;
@@ -2317,30 +2759,36 @@ void receiveLoRaMessage() {
     }
 
     if (msg.mobileID == 0 &&
-        (msg.msgType == MSG_SOS   ||
-         msg.msgType == MSG_MORSE ||
-         msg.msgType == MSG_OKAY  ||
-         msg.msgType == MSG_BEAT)) {
-      checkSeparationAlert(msg.deviceID, msg.latitude, msg.longitude, msg.satellites);
+        (msg.msgType == MSG_SOS       ||
+         msg.msgType == MSG_MORSE     ||
+         msg.msgType == MSG_OKAY      ||
+         msg.msgType == MSG_BEAT      ||
+         msg.msgType == MSG_ON_MY_WAY)) {
+      upsertSeparationPeer(msg.deviceID, 0, msg.latitude, msg.longitude);
+      evaluateSeparationState();
     }
 
     String alert = "ALERT:";
     if (msg.msgType == MSG_SOS) {
       alert += "SOS,";
-      if (!receivedSOS && !receivedMorse && !sosActive && !morseActive) {
+      const bool hadRemoteAlerts = hasRemoteEmergencyAlerts();
+      if (!hadRemoteAlerts && !sosActive && !morseActive) {
         emergencySilenced = false;
       }
-      receivedSOS = true;
+      setRemoteEmergencyAlert(msg.deviceID, false);
     } else if (msg.msgType == MSG_MORSE) {
       alert += "MORSE,";
-      if (!receivedSOS && !receivedMorse && !sosActive && !morseActive) {
+      const bool hadRemoteAlerts = hasRemoteEmergencyAlerts();
+      if (!hadRemoteAlerts && !sosActive && !morseActive) {
         emergencySilenced = false;
       }
-      receivedMorse = true;
+      setRemoteEmergencyAlert(msg.deviceID, true);
     } else if (msg.msgType == MSG_OKAY) {
       alert += "OK,";
-      receivedSOS = receivedMorse = false;
-      emergencySilenced = false;
+      clearRemoteEmergencyAlert(msg.deviceID);
+      if (!hasRemoteEmergencyAlerts()) {
+        emergencySilenced = false;
+      }
       digitalWrite(GREEN_LED, HIGH); delay(500); digitalWrite(GREEN_LED, LOW);
     } else if (msg.msgType == MSG_ON_MY_WAY) {
       alert += "ON_MY_WAY,";
@@ -2396,8 +2844,6 @@ void receiveLoRaMessage() {
     if (text == "__SOS_REARM__" || text == "__MORSE_REARM__") {
       // Explicit rearm marker from sender: allow this device to alert again.
       emergencySilenced = false;
-      receivedSOS = false;
-      receivedMorse = false;
       digitalWrite(BUZZER, LOW);
       updateDisplay();
     }
@@ -2493,10 +2939,14 @@ void updateDisplay() {
       display.print("TX MC!");
     }
     display.setTextSize(1);
-  } else if (separationAlert) {
+  } else if (separationLevel != SEP_LEVEL_NONE) {
     display.setTextSize(2);
-    display.setCursor(5, 18);
-    display.print("TOO FAR!");
+    display.setCursor(2, 18);
+    if (separationLevel == SEP_LEVEL_CRITICAL) {
+      display.print("TOO FAR!");
+    } else {
+      display.print("SEP WARN");
+    }
     display.setTextSize(1);
     display.setCursor(10, 38);
     if (lastKnownDistance >= 0) {
@@ -2533,22 +2983,39 @@ void updateDisplay() {
   // --- BOTTOM ALERT BAR ---
   display.drawLine(0, 48, 128, 48, SSD1306_WHITE);
 
-  if (receivedSOS) {
+  uint8_t focusedRemoteDevice = 0;
+  bool focusedRemoteIsMorse = false;
+  const bool hasFocusedRemote = getFocusedRemoteEmergency(&focusedRemoteDevice, &focusedRemoteIsMorse);
+
+  if (hasFocusedRemote) {
     display.fillRect(0, 49, 128, 15, SSD1306_WHITE);
     display.setTextColor(SSD1306_BLACK);
-    display.setCursor(4, 53);
-    display.print("!!! SOS FROM D"); display.print(remoteDevice); display.print(" !!!");
-  } else if (receivedMorse) {
+    display.setCursor(2, 53);
+    if (focusedRemoteIsMorse) {
+      display.print("MORSE D");
+    } else {
+      display.print("SOS D");
+    }
+    display.print(focusedRemoteDevice);
+
+    const uint16_t totalRemoteAlerts = countRemoteEmergencyAlerts();
+    if (totalRemoteAlerts > 1) {
+      display.print(" +");
+      display.print(totalRemoteAlerts - 1);
+    }
+  } else if (separationLevel != SEP_LEVEL_NONE) {
     display.fillRect(0, 49, 128, 15, SSD1306_WHITE);
     display.setTextColor(SSD1306_BLACK);
-    display.setCursor(4, 53);
-    display.print("! MORSE FROM D"); display.print(remoteDevice); display.print(" !");
-  } else if (separationAlert) {
-    display.fillRect(0, 49, 128, 15, SSD1306_WHITE);
-    display.setTextColor(SSD1306_BLACK);
-    display.setCursor(4, 53);
+    display.setCursor(2, 53);
     display.print("D"); display.print(separationFromDevice);
-    display.print(" >100m AWAY!");   
+    if (separationFromMobile > 0) {
+      display.print("-M"); display.print(separationFromMobile);
+    }
+    if (separationLevel == SEP_LEVEL_CRITICAL) {
+      display.print(" >300m");
+    } else {
+      display.print(" >150m");
+    }
   } else {
     display.setTextColor(SSD1306_WHITE);
     display.setCursor(0, 53);
@@ -2589,6 +3056,9 @@ void checkMorseInput() {
     for (uint8_t i = 0; i < connectedMobileCount; i++) {
       sendLoRaMessage(MSG_MORSE, connectedMobiles[i].mobileID);
     }
+    sendLoRaMessage(MSG_MORSE, 0);
+    // Quick retry improves first-delivery reliability on noisy links.
+    delay(120);
     sendLoRaMessage(MSG_MORSE, 0);
     
     delay(100);
@@ -2659,6 +3129,20 @@ void setLobbyCode(uint32_t lobbyCode, bool isHost) {
   lobbyHostActive = isHost;
   preferences.putUInt("lobby_code", lobbyCode);
   preferences.putBool("lobby_host", isHost);
+
+  if (lobbyCode != prevLobbyCode) {
+    clearAllRemoteEmergencyAlerts();
+    emergencySilenced = false;
+    separationLevel = SEP_LEVEL_NONE;
+    separationCriticalLatched = false;
+    separationCriticalHits = 0;
+    lastKnownDistance = -1.0;
+    separationFromDevice = 0;
+    separationFromMobile = 0;
+    clearSeparationPeers();
+    resetSeparationHardware();
+  }
+
   logLobbyEvent("Lobby code set: " + String(lobbyCode) + ", Host: " + String(isHost));
   sendToPhone("STATUS:LOBBY_SET," + String(lobbyCode));
   // Defer lobby announcements / EC broadcast slightly to avoid doing multiple radio TX

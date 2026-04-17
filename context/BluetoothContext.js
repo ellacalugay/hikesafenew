@@ -21,6 +21,17 @@ const PHONE_MOBILE_ID_KEY = '@hikesafe_phone_mobile_id';
 // Keep runtime memory bounded (storage already caps at 200).
 const MAX_MESSAGES_IN_MEMORY = 300;
 const LORA_MAX_TEXT_LEN = 50;
+const MESSAGE_ID_PREFIX = '__MID__:';
+const MESSAGE_ACK_PREFIX = '__ACK__:';
+const MESSAGE_ACK_TIMEOUT_MS = 14000;
+const MESSAGE_ACK_MAX_RETRIES = 1;
+const INBOUND_MESSAGE_CACHE_TTL_MS = 90000;
+const ACK_SEND_COOLDOWN_MS = 5000;
+const REMOTE_TRAIL_PER_KEY_MAX_POINTS = 5000;
+const REMOTE_TRAIL_GLOBAL_MAX_POINTS = 20000;
+const BLE_CONNECTION_CHECK_TIMEOUT_MS = 3000;
+const BLE_WRITE_TIMEOUT_MS = 7000;
+const DIAGNOSTICS_MAX_EVENTS = 300;
 
 // Vibration patterns (milliseconds)
 const VIBRATION_PATTERNS = {
@@ -109,6 +120,8 @@ export const BluetoothProvider = ({ children }) => {
   // We keep this stable across list reorderings and reset lobby-confirmation state when it changes.
   const activeHubIdRef = useRef(null);
   const lastActiveHubIdRef = useRef(null);
+  const [activeHubId, setActiveHubId] = useState(null);
+  const duplicateHubIdWarnRef = useRef({ ts: 0, signature: '' });
 
   // Auto-clear chat history on lobby join/switch.
   // Keep refs to avoid clearing during initial hydration (e.g., persisted lobby on app start).
@@ -145,15 +158,33 @@ export const BluetoothProvider = ({ children }) => {
       activeHubIdRef.current = list.length > 0 ? list[0].id : null;
     }
 
+    const previousActive = lastActiveHubIdRef.current;
     const nextActive = activeHubIdRef.current;
-    if (lastActiveHubIdRef.current !== nextActive) {
+    if (previousActive !== nextActive) {
       lastActiveHubIdRef.current = nextActive;
       deviceLobbyCodeRef.current = null;
       hubReportsLobbyRef.current = false;
       lastHubLobbySupportHintRef.current = 0;
       lastLobbyChangePromptRef.current = { code: null, ts: 0 };
       lastLobbyMismatchDropRef.current = { ts: 0, desired: null, device: null };
+
+      // Hub switch can leave stale members/messages from the previous active hub.
+      // Reset volatile member/signal state so the next hub repopulates cleanly.
+      setMemberLocations([]);
+      knownMembersRef.current = new Set();
+      setActiveAlert(null);
+      setActiveAlertsByKey({});
+      setConnectedDevicesCount(0);
+      setIsDeviceReachable(false);
+      setLocalMobileNicknames({});
+      setRemoteMobileNicknames({});
+
+      // Reset emergency silencing/throttle state when hopping across hubs.
+      emergencyThrottleRef.current.clear();
+      silencedEmergencyRef.current.clear();
     }
+
+    setActiveHubId(nextActive || null);
   }, [connectedDevicesList]);
   
   // For backward compatibility, expose first connected device as "connectedDevice"
@@ -206,13 +237,25 @@ export const BluetoothProvider = ({ children }) => {
   
   // Alerts
   const [activeAlert, setActiveAlert] = useState(null);
+  const [activeAlertsByKey, setActiveAlertsByKey] = useState({});
+  const activeAlertRef = useRef(null);
+  const activeAlertsByKeyRef = useRef({});
   const [statusMessage, setStatusMessage] = useState('');
+
+  useEffect(() => {
+    activeAlertRef.current = activeAlert;
+  }, [activeAlert]);
+
+  useEffect(() => {
+    activeAlertsByKeyRef.current = activeAlertsByKey || {};
+  }, [activeAlertsByKey]);
 
   // Phone-as-sensor (many-to-one): each phone claims a mobileID (1..4) and relays its own GPS to the LoRa hub.
   const [phoneToken, setPhoneToken] = useState(null);
   const [myMobileId, setMyMobileId] = useState(null);
   const myMobileIdRef = useRef(null);
   const lastClaimedAtRef = useRef(0);
+  const lastClaimFailureStatusAtRef = useRef({ ts: 0, reason: '' });
   useEffect(() => {
     myMobileIdRef.current = myMobileId;
   }, [myMobileId]);
@@ -329,6 +372,87 @@ export const BluetoothProvider = ({ children }) => {
   // Activity log for real-time updates
   const [activityLog, setActivityLog] = useState([]);
   const knownMembersRef = useRef(new Set());
+
+  // Structured diagnostics (bounded in-memory ring buffer).
+  const [diagnostics, setDiagnostics] = useState([]);
+  const diagnosticsRef = useRef([]);
+  const appendDiagnostic = useCallback((event, details = {}) => {
+    const payload = (details && typeof details === 'object') ? details : { value: String(details ?? '') };
+    const entry = {
+      id: `diag-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      ts: Date.now(),
+      event: String(event || 'event'),
+      details: payload,
+    };
+
+    const next = [...(diagnosticsRef.current || []), entry].slice(-DIAGNOSTICS_MAX_EVENTS);
+    diagnosticsRef.current = next;
+    setDiagnostics(next);
+  }, []);
+
+  const getDiagnostics = useCallback(() => {
+    return diagnosticsRef.current || [];
+  }, []);
+
+  const clearDiagnostics = useCallback(() => {
+    diagnosticsRef.current = [];
+    setDiagnostics([]);
+  }, []);
+
+  useEffect(() => {
+    appendDiagnostic('active_hub_changed', { activeHubId: activeHubId || null });
+  }, [activeHubId, appendDiagnostic]);
+
+  useEffect(() => {
+    const list = Array.isArray(connectedDevicesList) ? connectedDevicesList : [];
+    if (list.length < 2) {
+      duplicateHubIdWarnRef.current = { ts: 0, signature: '' };
+      return;
+    }
+
+    const ids = list
+      .map((device) => {
+        const source = `${device?.name || ''} ${device?.id || ''}`;
+        const match = source.match(/(?:HikeSafe-D|SOS-Device)(\d+)/i);
+        const parsed = match ? parseInt(match[1], 10) : NaN;
+        return Number.isNaN(parsed) ? null : parsed;
+      })
+      .filter((id) => typeof id === 'number');
+
+    if (ids.length < 2) {
+      return;
+    }
+
+    const counts = new Map();
+    ids.forEach((id) => {
+      counts.set(id, (counts.get(id) || 0) + 1);
+    });
+
+    const duplicates = Array.from(counts.entries())
+      .filter(([, count]) => count > 1)
+      .map(([id]) => id)
+      .sort((a, b) => a - b);
+
+    if (duplicates.length === 0) {
+      return;
+    }
+
+    const signature = duplicates.join(',');
+    const now = Date.now();
+    const last = duplicateHubIdWarnRef.current || { ts: 0, signature: '' };
+    const shouldWarn = last.signature !== signature || (now - (last.ts || 0) > 15000);
+
+    if (!shouldWarn) {
+      return;
+    }
+
+    duplicateHubIdWarnRef.current = { ts: now, signature };
+    appendDiagnostic('duplicate_hub_device_id', { deviceIds: duplicates });
+    showTemporaryStatus(
+      `Duplicate hub DEVICE_ID (${signature}) detected. Use unique DEVICE_ID per hub to avoid mixed SOS/nickname data.`,
+      5000
+    );
+  }, [appendDiagnostic, connectedDevicesList, showTemporaryStatus]);
   
   // Trail breadcrumbs for tracking path
   const [breadcrumbs, setBreadcrumbs] = useState([]);
@@ -379,6 +503,52 @@ export const BluetoothProvider = ({ children }) => {
     return !!(entry && entry.alertType === 'SOS');
   }, []);
 
+  const enforceRemoteTrailMemoryCap = useCallback((trailMap) => {
+    if (!trailMap || typeof trailMap !== 'object') return {};
+
+    const normalized = {};
+    let totalPoints = 0;
+
+    Object.keys(trailMap).forEach((key) => {
+      const arr = Array.isArray(trailMap[key]) ? trailMap[key].slice(-REMOTE_TRAIL_PER_KEY_MAX_POINTS) : [];
+      if (arr.length > 0) {
+        normalized[key] = arr;
+        totalPoints += arr.length;
+      }
+    });
+
+    if (totalPoints <= REMOTE_TRAIL_GLOBAL_MAX_POINTS) {
+      return normalized;
+    }
+
+    let overflow = totalPoints - REMOTE_TRAIL_GLOBAL_MAX_POINTS;
+    const keysByOldestPoint = Object.keys(normalized).sort((a, b) => {
+      const aTs = normalized[a]?.[0]?.timestamp ?? Number.MAX_SAFE_INTEGER;
+      const bTs = normalized[b]?.[0]?.timestamp ?? Number.MAX_SAFE_INTEGER;
+      return aTs - bTs;
+    });
+
+    for (let i = 0; i < keysByOldestPoint.length && overflow > 0; i++) {
+      const key = keysByOldestPoint[i];
+      const arr = normalized[key];
+      if (!Array.isArray(arr) || arr.length === 0) {
+        delete normalized[key];
+        continue;
+      }
+
+      const dropCount = Math.min(overflow, arr.length);
+      const nextArr = arr.slice(dropCount);
+      if (nextArr.length > 0) {
+        normalized[key] = nextArr;
+      } else {
+        delete normalized[key];
+      }
+      overflow -= dropCount;
+    }
+
+    return normalized;
+  }, []);
+
   const clearRemoteTrailsForDevice = useCallback((deviceId) => {
     if (deviceId === null || deviceId === undefined || Number.isNaN(deviceId)) return;
     const devicePrefix = `${deviceId}-m`;
@@ -395,9 +565,9 @@ export const BluetoothProvider = ({ children }) => {
         }
       });
 
-      return changed ? next : prev;
+      return changed ? enforceRemoteTrailMemoryCap(next) : prev;
     });
-  }, []);
+  }, [enforceRemoteTrailMemoryCap]);
 
   const requestSosTrailSnapshot = useCallback((deviceId) => {
     if (!isConnectedRef.current || (connectedDevicesListRef.current?.length || 0) === 0) return;
@@ -467,26 +637,182 @@ export const BluetoothProvider = ({ children }) => {
   const silencedEmergencyRef = useRef(new Map());
   const EMERGENCY_SILENCE_WINDOW_MS = 10 * 60 * 1000;
 
-  const unsilenceEmergencyForDevice = useCallback((type, deviceId, options = {}) => {
-    if (!type) return;
-    if (typeof deviceId !== 'number' || Number.isNaN(deviceId) || deviceId <= 0) return;
+  const isTrackedAlertType = useCallback((type) => {
+    return type === 'SOS' || type === 'MORSE' || type === 'OFFLINE';
+  }, []);
 
-    const key = `${type}-${deviceId}`;
-    silencedEmergencyRef.current.delete(key);
+  const getTrackedAlertKey = useCallback((type, deviceId) => {
+    const normalizedType = String(type || '').toUpperCase();
+    if (!normalizedType) return null;
 
-    setActiveAlert(prev => {
-      if (!prev) return prev;
-      if (prev.type !== type || prev.deviceId !== deviceId) return prev;
+    const normalizedDeviceId =
+      (typeof deviceId === 'number' && !Number.isNaN(deviceId) && deviceId > 0)
+        ? deviceId
+        : 'local';
+
+    return `${normalizedType}-${normalizedDeviceId}`;
+  }, []);
+
+  const pickFocusedAlert = useCallback((alertMap, preferredKey = null) => {
+    const map = (alertMap && typeof alertMap === 'object') ? alertMap : {};
+
+    if (preferredKey && map[preferredKey]) {
+      return map[preferredKey];
+    }
+
+    const entries = Object.entries(map).filter(([, alert]) => {
+      if (!alert) return false;
+      return isTrackedAlertType(String(alert.type || '').toUpperCase());
+    });
+
+    if (entries.length === 0) {
+      return null;
+    }
+
+    const current = activeAlertRef.current;
+    const currentKey = current ? getTrackedAlertKey(current.type, current.deviceId) : null;
+    if (currentKey && map[currentKey]) {
+      const currentEntry = map[currentKey];
+      if (!currentEntry.silenced) {
+        return currentEntry;
+      }
+    }
+
+    const typeRank = (alert) => {
+      const t = String(alert?.type || '').toUpperCase();
+      if (t === 'SOS' || t === 'MORSE') return 0;
+      if (t === 'OFFLINE') return 1;
+      return 2;
+    };
+
+    entries.sort((a, b) => {
+      const aAlert = a[1];
+      const bAlert = b[1];
+
+      const aRank = typeRank(aAlert);
+      const bRank = typeRank(bAlert);
+      if (aRank !== bRank) return aRank - bRank;
+
+      const aSilenced = aAlert?.silenced ? 1 : 0;
+      const bSilenced = bAlert?.silenced ? 1 : 0;
+      if (aSilenced !== bSilenced) return aSilenced - bSilenced;
+
+      const aTs = Number(aAlert?.timestamp || 0);
+      const bTs = Number(bAlert?.timestamp || 0);
+      return bTs - aTs;
+    });
+
+    return entries[0][1] || null;
+  }, [getTrackedAlertKey, isTrackedAlertType]);
+
+  const updateTrackedAlerts = useCallback((updater, options = {}) => {
+    const preferredKey = options?.preferredKey || null;
+
+    setActiveAlertsByKey(prev => {
+      const base = (prev && typeof prev === 'object') ? prev : {};
+      const updated = typeof updater === 'function' ? updater(base) : base;
+      const candidate = (updated && typeof updated === 'object') ? updated : {};
+      const next = {};
+
+      Object.keys(candidate).forEach((key) => {
+        const value = candidate[key];
+        if (!value) return;
+        const normalizedType = String(value.type || '').toUpperCase();
+        if (!isTrackedAlertType(normalizedType)) return;
+        next[key] = {
+          ...value,
+          type: normalizedType,
+        };
+      });
+
+      setActiveAlert(pickFocusedAlert(next, preferredKey));
+      return next;
+    });
+  }, [isTrackedAlertType, pickFocusedAlert]);
+
+  const upsertTrackedAlert = useCallback((alertLike, options = {}) => {
+    if (!alertLike) return;
+
+    const normalizedType = String(alertLike.type || '').toUpperCase();
+    if (!isTrackedAlertType(normalizedType)) return;
+
+    const key = getTrackedAlertKey(normalizedType, alertLike.deviceId);
+    if (!key) return;
+
+    updateTrackedAlerts((prev) => {
+      const existing = prev[key] || {};
+      const normalizedDeviceId =
+        (typeof alertLike.deviceId === 'number' && !Number.isNaN(alertLike.deviceId) && alertLike.deviceId > 0)
+          ? alertLike.deviceId
+          : (typeof existing.deviceId === 'number' ? existing.deviceId : null);
+
+      const nextAlert = {
+        ...existing,
+        ...alertLike,
+        type: normalizedType,
+        deviceId: normalizedDeviceId,
+        timestamp: typeof alertLike.timestamp === 'number'
+          ? alertLike.timestamp
+          : (typeof existing.timestamp === 'number' ? existing.timestamp : Date.now()),
+      };
+
       return {
         ...prev,
-        silenced: false,
-        silencedAt: null,
-        silencedByDeviceId: null,
-        helperName: null,
-        rearmPending: options?.markRearm === true,
+        [key]: nextAlert,
       };
+    }, {
+      preferredKey: options?.preferFocus ? key : null,
     });
+  }, [getTrackedAlertKey, isTrackedAlertType, updateTrackedAlerts]);
+
+  const removeTrackedAlerts = useCallback((predicate, options = {}) => {
+    if (typeof predicate !== 'function') return;
+
+    updateTrackedAlerts((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      Object.keys(next).forEach((key) => {
+        if (predicate(next[key], key)) {
+          delete next[key];
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    }, options);
+  }, [updateTrackedAlerts]);
+
+  const clearTrackedAlerts = useCallback(() => {
+    setActiveAlertsByKey({});
+    setActiveAlert(null);
   }, []);
+
+  const unsilenceEmergencyForDevice = useCallback((type, deviceId, options = {}) => {
+    const normalizedType = String(type || '').toUpperCase();
+    if (!normalizedType) return;
+    if (typeof deviceId !== 'number' || Number.isNaN(deviceId) || deviceId <= 0) return;
+
+    const key = `${normalizedType}-${deviceId}`;
+    silencedEmergencyRef.current.delete(key);
+
+    updateTrackedAlerts((prev) => {
+      const existing = prev[key];
+      if (!existing) return prev;
+
+      return {
+        ...prev,
+        [key]: {
+          ...existing,
+          silenced: false,
+          silencedAt: null,
+          silencedByDeviceId: null,
+          helperName: null,
+          rearmPending: options?.markRearm === true,
+        },
+      };
+    }, {
+      preferredKey: key,
+    });
+  }, [updateTrackedAlerts]);
 
   // Multi-phone-to-one-hub: the hub can broadcast STATUS:SENDING_SOS to all phones.
   // Track whether *this* phone initiated SOS recently so only the sender gets localEmergency UI.
@@ -767,9 +1093,124 @@ export const BluetoothProvider = ({ children }) => {
   
   // Save chat history when messages change
   const messagesRef = useRef(messages);
+  const messageAckTimeoutsRef = useRef(new Map());
+  const recentInboundMessageIdsRef = useRef(new Map());
+  const recentSentAcksRef = useRef(new Map());
+  const queueDeliveryAckRef = useRef(null);
+  const armRecipientAckFallbackRef = useRef(null);
+
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    return () => {
+      const timers = messageAckTimeoutsRef.current;
+      timers.forEach((timerId) => clearTimeout(timerId));
+      timers.clear();
+    };
+  }, []);
+
+  const createShortMessageId = useCallback(() => {
+    const ts = Date.now().toString(36).slice(-6);
+    const rand = Math.random().toString(36).slice(2, 5);
+    return `${ts}${rand}`;
+  }, []);
+
+  const encodeMessageEnvelope = useCallback((text, messageId = null) => {
+    const body = String(text || '');
+    if (!messageId) return body;
+    return `${MESSAGE_ID_PREFIX}${messageId}:${body}`;
+  }, []);
+
+  const decodeMessageEnvelope = useCallback((rawText) => {
+    const value = String(rawText || '');
+    if (!value.startsWith(MESSAGE_ID_PREFIX)) {
+      return { messageId: null, text: value };
+    }
+
+    const payload = value.substring(MESSAGE_ID_PREFIX.length);
+    const separator = payload.indexOf(':');
+    if (separator <= 0) {
+      return { messageId: null, text: value };
+    }
+
+    const candidateId = payload.substring(0, separator).trim();
+    if (!/^[a-z0-9_-]{4,24}$/i.test(candidateId)) {
+      return { messageId: null, text: value };
+    }
+
+    return {
+      messageId: candidateId,
+      text: payload.substring(separator + 1),
+    };
+  }, []);
+
+  const decodeAckPayload = useCallback((rawText) => {
+    const value = String(rawText || '');
+    if (!value.startsWith(MESSAGE_ACK_PREFIX)) {
+      return null;
+    }
+
+    const ackId = value.substring(MESSAGE_ACK_PREFIX.length).trim();
+    if (!/^[a-z0-9_-]{4,24}$/i.test(ackId)) {
+      return null;
+    }
+
+    return ackId;
+  }, []);
+
+  const clearMessageAckTimer = useCallback((messageId) => {
+    if (!messageId) return;
+    const timers = messageAckTimeoutsRef.current;
+    const existing = timers.get(messageId);
+    if (existing) {
+      clearTimeout(existing);
+      timers.delete(messageId);
+    }
+  }, []);
+
+  const wasInboundMessageRecentlySeen = useCallback((fromDeviceId, messageId) => {
+    if (typeof fromDeviceId !== 'number' || Number.isNaN(fromDeviceId) || !messageId) {
+      return false;
+    }
+
+    const now = Date.now();
+    const cache = recentInboundMessageIdsRef.current;
+    for (const [key, ts] of cache.entries()) {
+      if (now - ts > INBOUND_MESSAGE_CACHE_TTL_MS) {
+        cache.delete(key);
+      }
+    }
+
+    const cacheKey = `${fromDeviceId}:${messageId}`;
+    const last = cache.get(cacheKey);
+    cache.set(cacheKey, now);
+    return typeof last === 'number' && (now - last) <= INBOUND_MESSAGE_CACHE_TTL_MS;
+  }, []);
+
+  const shouldThrottleAckSend = useCallback((targetDeviceId, messageId) => {
+    if (typeof targetDeviceId !== 'number' || Number.isNaN(targetDeviceId) || !messageId) {
+      return true;
+    }
+
+    const now = Date.now();
+    const cache = recentSentAcksRef.current;
+    for (const [key, ts] of cache.entries()) {
+      if (now - ts > INBOUND_MESSAGE_CACHE_TTL_MS) {
+        cache.delete(key);
+      }
+    }
+
+    const ackKey = `${targetDeviceId}:${messageId}`;
+    const last = cache.get(ackKey);
+    if (typeof last === 'number' && (now - last) < ACK_SEND_COOLDOWN_MS) {
+      return true;
+    }
+
+    cache.set(ackKey, now);
+    return false;
+  }, []);
   
   // Debounced save to avoid too many writes
   const saveTimeoutRef = useRef(null);
@@ -804,6 +1245,8 @@ export const BluetoothProvider = ({ children }) => {
   const clearChatHistory = useCallback(async () => {
     try {
       await AsyncStorage.removeItem(CHAT_HISTORY_KEY);
+      messageAckTimeoutsRef.current.forEach((timerId) => clearTimeout(timerId));
+      messageAckTimeoutsRef.current.clear();
       setMessages([]);
       setUnreadCount(0);
       console.log('Chat history cleared');
@@ -1694,6 +2137,7 @@ export const BluetoothProvider = ({ children }) => {
         
         // Handle OFFLINE/ONLINE alerts (only have deviceId, no coordinates)
         if (type === 'OFFLINE') {
+          const displayName = (typeof getMemberNickname === 'function') ? getMemberNickname(deviceId) : `Device ${deviceId}`;
           setMemberLocations(prev => {
             const existing = prev.findIndex(m => m.deviceId === deviceId);
             if (existing >= 0) {
@@ -1703,7 +2147,13 @@ export const BluetoothProvider = ({ children }) => {
             }
             return [...prev, { deviceId, isOffline: true, alertType: 'OFFLINE', lastUpdate: Date.now() }];
           });
-          setActiveAlert({ type: 'OFFLINE', deviceId, timestamp: Date.now() });
+          upsertTrackedAlert({
+            type: 'OFFLINE',
+            deviceId,
+            timestamp: Date.now(),
+            displayName,
+            isOffline: true,
+          });
           if (isInLobbyRef.current) {
             setMemberOffline(deviceId, true);
           }
@@ -1722,12 +2172,9 @@ export const BluetoothProvider = ({ children }) => {
             }
             return prev;
           });
-          // Clear any offline alert for this device
-          setActiveAlert(prev => {
-            if (prev && prev.deviceId === deviceId && prev.type === 'OFFLINE') {
-              return null;
-            }
-            return prev;
+          // Clear any offline alert for this device.
+          removeTrackedAlerts(alert => {
+            return !!alert && alert.deviceId === deviceId && alert.type === 'OFFLINE';
           });
           if (isInLobbyRef.current) {
             setMemberOffline(deviceId, false);
@@ -1740,19 +2187,36 @@ export const BluetoothProvider = ({ children }) => {
 
         // Separation alerts (no coordinates)
         // Firmware format:
-        // - ALERT:TOO_FAR,<deviceId>,<distanceMeters>
+        // - ALERT:TOO_FAR,<deviceId>,<distanceMeters>,<WARN|CRITICAL>
         // - ALERT:REGROUPED,<deviceId>,<distanceMeters>
         if (type === 'TOO_FAR' || type === 'REGROUPED') {
           const dist = parts.length >= 3 ? parseFloat(parts[2]) : 0;
+          const level = parts.length >= 4
+            ? String(parts[3] || '').toUpperCase()
+            : (Number.isFinite(dist) && dist > 300 ? 'CRITICAL' : 'WARN');
           const displayName = getMemberNickname ? getMemberNickname(deviceId) : `Device ${deviceId}`;
 
           if (type === 'TOO_FAR') {
-            showTemporaryStatus(
-              `Warning: ${displayName} is ${Number.isFinite(dist) ? dist.toFixed(0) : '?'}m away`,
-              6000
-            );
-            triggerVibration('ALERT');
-            addActivity('separation', deviceId, `Separation warning: ${displayName} is ${Number.isFinite(dist) ? dist.toFixed(1) : '?'}m away`);
+            if (level === 'CRITICAL') {
+              showTemporaryStatus(
+                `Critical: ${displayName} is ${Number.isFinite(dist) ? dist.toFixed(0) : '?'}m away`,
+                7000
+              );
+              triggerVibration('SOS');
+              pushEmergencyNotification(
+                'Critical Separation Alert',
+                `${displayName} is ${Number.isFinite(dist) ? dist.toFixed(0) : '?'}m away`,
+                `sep-critical-${deviceId}-${Math.round(dist || 0)}`
+              );
+              addActivity('separation', deviceId, `Critical separation: ${displayName} is ${Number.isFinite(dist) ? dist.toFixed(1) : '?'}m away`);
+            } else {
+              showTemporaryStatus(
+                `Warning: ${displayName} is ${Number.isFinite(dist) ? dist.toFixed(0) : '?'}m away`,
+                6000
+              );
+              triggerVibration('ALERT');
+              addActivity('separation', deviceId, `Separation warning: ${displayName} is ${Number.isFinite(dist) ? dist.toFixed(1) : '?'}m away`);
+            }
           } else {
             showTemporaryStatus(`${displayName} is back in range`, 3500);
             triggerVibration('OK');
@@ -1771,36 +2235,34 @@ export const BluetoothProvider = ({ children }) => {
           let shouldNotifySender = false;
           const now = Date.now();
 
-          // One acknowledgement silences ringing/prompts for everyone.
-          setActiveAlert(prev => {
-            if (!prev || (prev.type !== 'SOS' && prev.type !== 'MORSE')) {
-              return prev;
-            }
+          // One acknowledgement silences ringing/prompts for everyone with active SOS/MORSE.
+          updateTrackedAlerts((prev) => {
+            let changed = false;
+            const next = { ...prev };
 
-            shouldNotifySender = !!prev.localEmergency;
+            Object.keys(next).forEach((key) => {
+              const alert = next[key];
+              if (!alert) return;
+              if (alert.type !== 'SOS' && alert.type !== 'MORSE') return;
 
-            // Ignore accidental self-ack loops.
-            if (typeof prev.deviceId === 'number' && prev.deviceId === deviceId) {
-              shouldNotifySender = false;
-              return prev;
-            }
+              // Ignore accidental self-ack loops.
+              if (typeof alert.deviceId === 'number' && alert.deviceId === deviceId) {
+                return;
+              }
 
-            const key =
-              (typeof prev.deviceId === 'number' && prev.deviceId > 0)
-                ? `${prev.type}-${prev.deviceId}`
-                : null;
-
-            if (key) {
+              shouldNotifySender = shouldNotifySender || !!alert.localEmergency;
               silencedEmergencyRef.current.set(key, { ts: now, byDeviceId: deviceId });
-            }
+              next[key] = {
+                ...alert,
+                silenced: true,
+                silencedAt: now,
+                silencedByDeviceId: deviceId,
+                helperName,
+              };
+              changed = true;
+            });
 
-            return {
-              ...prev,
-              silenced: true,
-              silencedAt: now,
-              silencedByDeviceId: deviceId,
-              helperName,
-            };
+            return changed ? next : prev;
           });
 
           stopEmergencySignals();
@@ -1883,37 +2345,33 @@ export const BluetoothProvider = ({ children }) => {
             const now = Date.now();
             const silencedEntry = silencedEmergencyRef.current.get(emergencyKey);
             const isSilenced = !!(silencedEntry && (now - (silencedEntry.ts || 0)) < EMERGENCY_SILENCE_WINDOW_MS);
+            const existingEmergency = activeAlertsByKeyRef.current[emergencyKey] || null;
 
-            let isLocalEmergency = false;
-            let isRepeatEmergency = false;
+            const isLocalEmergency = !!(existingEmergency && existingEmergency.localEmergency);
+            const isRepeatEmergency = !!(
+              existingEmergency &&
+              !existingEmergency.silenced &&
+              !isSilenced &&
+              !existingEmergency.rearmPending
+            );
 
-            // Preserve localEmergency (sender) and existing helperName (when silenced) across repeated SOS packets.
-            setActiveAlert(prev => {
-              const isSameEmergency = !!prev && prev.type === type && prev.deviceId === deviceId;
-
-              isLocalEmergency = !!(isSameEmergency && prev.localEmergency);
-              isRepeatEmergency = !!(
-                isSameEmergency &&
-                !prev.silenced &&
-                !isSilenced &&
-                !prev.rearmPending
-              );
-
-              return {
-                ...(isSameEmergency ? prev : {}),
-                type,
-                deviceId,
-                lat,
-                lng,
-                timestamp: now,
-                displayName,
-                localEmergency: isLocalEmergency,
-                silenced: isSilenced,
-                silencedAt: isSilenced ? (silencedEntry.ts || null) : null,
-                silencedByDeviceId: isSilenced ? (silencedEntry.byDeviceId ?? null) : null,
-                helperName: isSilenced ? (isSameEmergency ? (prev.helperName ?? null) : null) : null,
-                rearmPending: false,
-              };
+            // Preserve localEmergency (sender) and helperName (when silenced) across repeated SOS packets.
+            upsertTrackedAlert({
+              ...(existingEmergency || {}),
+              type,
+              deviceId,
+              lat,
+              lng,
+              timestamp: now,
+              displayName,
+              localEmergency: isLocalEmergency,
+              silenced: isSilenced,
+              silencedAt: isSilenced ? (silencedEntry.ts || null) : null,
+              silencedByDeviceId: isSilenced ? (silencedEntry.byDeviceId ?? null) : null,
+              helperName: isSilenced ? (existingEmergency?.helperName ?? null) : null,
+              rearmPending: false,
+            }, {
+              preferFocus: true,
             });
 
             if (!isRepeatEmergency) {
@@ -1956,13 +2414,10 @@ export const BluetoothProvider = ({ children }) => {
             silencedEmergencyRef.current.delete(`MORSE-${deviceId}`);
 
             // OK received - clear any active alert from that device
-            setActiveAlert(prev => {
-              if (prev && prev.deviceId === deviceId) {
-                console.log(`Clearing alert from Device ${deviceId} (received OK)`);
-                return null;
-              }
-              return prev;
+            removeTrackedAlerts(alert => {
+              return !!alert && alert.deviceId === deviceId;
             });
+            console.log(`Clearing alert from Device ${deviceId} (received OK)`);
             stopEmergencySignals();
             // Update member to clear alert indicator
             setMemberLocations(prev => {
@@ -1997,36 +2452,34 @@ export const BluetoothProvider = ({ children }) => {
             let shouldNotifySender = false;
             const now = Date.now();
 
-            // One acknowledgement silences ringing/prompts for everyone.
-            setActiveAlert(prev => {
-              if (!prev || (prev.type !== 'SOS' && prev.type !== 'MORSE')) {
-                return prev;
-              }
+            // One acknowledgement silences ringing/prompts for everyone with active SOS/MORSE.
+            updateTrackedAlerts((prev) => {
+              let changed = false;
+              const next = { ...prev };
 
-              shouldNotifySender = !!prev.localEmergency;
+              Object.keys(next).forEach((key) => {
+                const alert = next[key];
+                if (!alert) return;
+                if (alert.type !== 'SOS' && alert.type !== 'MORSE') return;
 
-              // Ignore accidental self-ack loops.
-              if (typeof prev.deviceId === 'number' && prev.deviceId === deviceId) {
-                shouldNotifySender = false;
-                return prev;
-              }
+                // Ignore accidental self-ack loops.
+                if (typeof alert.deviceId === 'number' && alert.deviceId === deviceId) {
+                  return;
+                }
 
-              const key =
-                (typeof prev.deviceId === 'number' && prev.deviceId > 0)
-                  ? `${prev.type}-${prev.deviceId}`
-                  : null;
-
-              if (key) {
+                shouldNotifySender = shouldNotifySender || !!alert.localEmergency;
                 silencedEmergencyRef.current.set(key, { ts: now, byDeviceId: deviceId });
-              }
+                next[key] = {
+                  ...alert,
+                  silenced: true,
+                  silencedAt: now,
+                  silencedByDeviceId: deviceId,
+                  helperName,
+                };
+                changed = true;
+              });
 
-              return {
-                ...prev,
-                silenced: true,
-                silencedAt: now,
-                silencedByDeviceId: deviceId,
-                helperName,
-              };
+              return changed ? next : prev;
             });
 
             stopEmergencySignals();
@@ -2295,7 +2748,7 @@ export const BluetoothProvider = ({ children }) => {
 
           const emergencyKey = `${emergencyType}-${typeof localDeviceId === 'number' ? localDeviceId : 'local'}`;
 
-          setActiveAlert({
+          upsertTrackedAlert({
             type: emergencyType,
             deviceId: (typeof localDeviceId === 'number' ? localDeviceId : null),
             lat: localLat,
@@ -2305,6 +2758,8 @@ export const BluetoothProvider = ({ children }) => {
             displayName,
             silenced: false,
             rearmPending: false,
+          }, {
+            preferFocus: true,
           });
 
           addActivity('sos', `${displayName} triggered ${emergencyType}`);
@@ -2342,14 +2797,25 @@ export const BluetoothProvider = ({ children }) => {
           // Status displayed via setStatusMessage below.
           return;
         } else if (status === 'SENDING_OK') {
-          // Clear active emergency state for this connected device when OK is sent.
-          setActiveAlert(prev => {
-            if (!prev) return null;
-            if (prev.type === 'SOS' || prev.type === 'MORSE') {
-              return null;
+          const localDeviceId = (typeof myDeviceId === 'number' && !Number.isNaN(myDeviceId))
+            ? myDeviceId
+            : parseDeviceId(connectedDevice || deviceRef.current);
+
+          // Clear local active emergency state when this hub reports OK sent.
+          removeTrackedAlerts((alert) => {
+            if (!alert) return false;
+            if (alert.type !== 'SOS' && alert.type !== 'MORSE') return false;
+
+            if (typeof localDeviceId === 'number' && localDeviceId > 0) {
+              return alert.deviceId === localDeviceId;
             }
-            return prev;
+
+            return !!alert.localEmergency;
           });
+          if (typeof localDeviceId === 'number' && localDeviceId > 0) {
+            silencedEmergencyRef.current.delete(`SOS-${localDeviceId}`);
+            silencedEmergencyRef.current.delete(`MORSE-${localDeviceId}`);
+          }
           stopEmergencySignals();
           setStatusMessage('Emergency cleared (OK sent)');
           setIsSosTrailSharingActive(false);
@@ -2383,11 +2849,20 @@ export const BluetoothProvider = ({ children }) => {
               registerMemberSync(deviceId, Date.now(), { source: 'nickname' });
             }
 
-            // If we're currently showing an alert for this device, update its display name.
-            setActiveAlert(prev => {
-              if (!prev) return prev;
-              if (prev.deviceId !== deviceId) return prev;
-              return { ...prev, displayName: nickname };
+            // Keep tracked alerts aligned to latest nickname.
+            updateTrackedAlerts((prev) => {
+              let changed = false;
+              const next = { ...prev };
+
+              Object.keys(next).forEach((key) => {
+                const alert = next[key];
+                if (!alert) return;
+                if (alert.deviceId !== deviceId) return;
+                next[key] = { ...alert, displayName: nickname };
+                changed = true;
+              });
+
+              return changed ? next : prev;
             });
 
             // Update any existing "joined" system messages for this device to use the new nickname
@@ -2497,6 +2972,11 @@ export const BluetoothProvider = ({ children }) => {
 
           // If firmware didn't provide target, assume broadcast (safest: prevents mixing into direct threads).
           const normalizedTarget = (typeof targetDeviceId === 'number') ? targetDeviceId : 0;
+          const localDeviceId = (() => {
+            if (typeof myDeviceId === 'number' && !Number.isNaN(myDeviceId)) return myDeviceId;
+            const parsed = connectedDevice ? parseDeviceId(connectedDevice) : null;
+            return (typeof parsed === 'number' && !Number.isNaN(parsed)) ? parsed : 0;
+          })();
 
           // Phone-targeted DM tagging.
           // Format in text: __DM__:<toMobileId>:<fromMobileId>:<text>
@@ -2535,6 +3015,63 @@ export const BluetoothProvider = ({ children }) => {
                 text = body;
               }
             }
+          }
+
+          const ackId = decodeAckPayload(text);
+          if (ackId) {
+            let deliveredMessageId = null;
+            setMessages(prev => prev.map(msg => {
+              if (msg?.isMine && msg?.ackId === ackId) {
+                deliveredMessageId = msg.id;
+                return {
+                  ...msg,
+                  pending: false,
+                  awaitingAck: false,
+                  failed: false,
+                  deliveryUnconfirmed: false,
+                  delivered: true,
+                  deliveredAt: Date.now(),
+                };
+              }
+              return msg;
+            }));
+
+            if (deliveredMessageId) {
+              clearMessageAckTimer(deliveredMessageId);
+              appendDiagnostic('message_ack_received', {
+                messageId: deliveredMessageId,
+                ackId,
+                fromDeviceId: fromId,
+              });
+              showTemporaryStatus('Message delivered', 2000);
+            }
+            return;
+          }
+
+          const decodedEnvelope = decodeMessageEnvelope(text);
+          const inboundMessageId = decodedEnvelope.messageId;
+          text = decodedEnvelope.text;
+
+          const shouldSendDeliveryAck =
+            !!inboundMessageId &&
+            typeof fromId === 'number' && !Number.isNaN(fromId) && fromId > 0 &&
+            typeof normalizedTarget === 'number' && normalizedTarget > 0 &&
+            typeof localDeviceId === 'number' && localDeviceId > 0 &&
+            normalizedTarget === localDeviceId;
+
+          if (shouldSendDeliveryAck && !shouldThrottleAckSend(fromId, inboundMessageId)) {
+            const queueAck = queueDeliveryAckRef.current;
+            if (typeof queueAck === 'function') {
+              queueAck(fromId, inboundMessageId);
+            }
+          }
+
+          if (inboundMessageId && wasInboundMessageRecentlySeen(fromId, inboundMessageId)) {
+            appendDiagnostic('message_duplicate_dropped', {
+              fromDeviceId: fromId,
+              messageId: inboundMessageId,
+            });
+            return;
           }
 
           const isJoinTsMessage =
@@ -2599,8 +3136,10 @@ export const BluetoothProvider = ({ children }) => {
               const last = existing.length > 0 ? existing[existing.length - 1] : null;
               if (last && last.lat === lat && last.lng === lng && last.timestamp === timestamp) return prev;
 
-              const nextArr = [...existing, { lat, lng, timestamp, deviceId: fromId, mobileId: senderMobileId }].slice(-5000);
-              return { ...(prev || {}), [key]: nextArr };
+              const nextArr = [...existing, { lat, lng, timestamp, deviceId: fromId, mobileId: senderMobileId }]
+                .slice(-REMOTE_TRAIL_PER_KEY_MAX_POINTS);
+              const merged = { ...(prev || {}), [key]: nextArr };
+              return enforceRemoteTrailMemoryCap(merged);
             });
             return;
           }
@@ -2694,6 +3233,7 @@ export const BluetoothProvider = ({ children }) => {
             rssi: rssiValue,
             dmToMobileId: dmToMobileId,
             dmFromMobileId: dmFromMobileId,
+            incomingMessageId: inboundMessageId,
           };
           
           setMessages(prev => [...prev, newMessage].slice(-MAX_MESSAGES_IN_MEMORY));
@@ -2800,6 +3340,10 @@ export const BluetoothProvider = ({ children }) => {
             }
           }
 
+          const decodedEchoEnvelope = decodeMessageEnvelope(text);
+          const echoMessageId = decodedEchoEnvelope.messageId;
+          text = decodedEchoEnvelope.text;
+
           if (text === '__SOS_REARM__' || text === '__MORSE_REARM__') {
             const rearmType = text === '__SOS_REARM__' ? 'SOS' : 'MORSE';
             if (typeof localDeviceId === 'number' && localDeviceId > 0) {
@@ -2830,6 +3374,7 @@ export const BluetoothProvider = ({ children }) => {
 
           const now = Date.now();
           let shouldIncrementUnread = true;
+          let ackWaitTarget = null;
           const isFromMeDm =
             (typeof dmFromMobileId === 'number' && dmFromMobileId >= 1 && dmFromMobileId <= 4) &&
             (typeof myMobileIdRef.current === 'number' && myMobileIdRef.current >= 1 && myMobileIdRef.current <= 4) &&
@@ -2839,20 +3384,37 @@ export const BluetoothProvider = ({ children }) => {
             // If this phone already added the outgoing message, avoid duplicates and just clear pending state.
             const existingMineIdx = prev.findIndex(msg =>
               msg.isMine &&
-              msg.to === targetDeviceId &&
-              msg.text === text &&
-              (!!msg.localOnly === !!localOnly) &&
-              (dmToMobileId ? msg.dmToMobileId === dmToMobileId : !msg.dmToMobileId) &&
-              now - msg.timestamp < 15000
+              (
+                (echoMessageId && msg.ackId === echoMessageId) ||
+                (
+                  msg.to === targetDeviceId &&
+                  msg.text === text &&
+                  (!!msg.localOnly === !!localOnly) &&
+                  (dmToMobileId ? msg.dmToMobileId === dmToMobileId : !msg.dmToMobileId) &&
+                  now - msg.timestamp < 15000
+                )
+              )
             );
 
             if (existingMineIdx >= 0) {
               shouldIncrementUnread = false;
               const updated = [...prev];
+              const existing = updated[existingMineIdx];
+              const shouldAwaitRecipientAck = !!existing?.requiresDeliveryAck && !existing?.delivered;
               updated[existingMineIdx] = {
-                ...updated[existingMineIdx],
+                ...existing,
                 pending: false,
+                awaitingAck: shouldAwaitRecipientAck,
                 failed: false,
+                deliveryUnconfirmed: false,
+                delivered: existing?.delivered ? true : !existing?.requiresDeliveryAck,
+                hubConfirmedAt: now,
+              };
+
+              ackWaitTarget = {
+                messageId: updated[existingMineIdx].id,
+                requiresDeliveryAck: shouldAwaitRecipientAck,
+                label: dmToMobileId ? 'Direct message' : 'Message',
               };
               return updated;
             }
@@ -2873,9 +3435,20 @@ export const BluetoothProvider = ({ children }) => {
                 localOnly,
                 dmToMobileId: dmToMobileId,
                 dmFromMobileId: dmFromMobileId,
+                incomingMessageId: echoMessageId,
               },
             ];
           });
+
+          if (ackWaitTarget?.messageId) {
+            clearMessageAckTimer(ackWaitTarget.messageId);
+            if (ackWaitTarget.requiresDeliveryAck) {
+              const armAckFallback = armRecipientAckFallbackRef.current;
+              if (typeof armAckFallback === 'function') {
+                armAckFallback(ackWaitTarget.messageId, ackWaitTarget.label);
+              }
+            }
+          }
 
           if (shouldIncrementUnread && !isFromMeDm) {
             setUnreadCount(prev => prev + 1);
@@ -3125,8 +3698,10 @@ export const BluetoothProvider = ({ children }) => {
                 return prev;
               }
 
-              const nextArr = [...existing, { lat, lng, timestamp: pointTs, deviceId, mobileId }].slice(-5000);
-              return { ...(prev || {}), [trailKey]: nextArr };
+              const nextArr = [...existing, { lat, lng, timestamp: pointTs, deviceId, mobileId }]
+                .slice(-REMOTE_TRAIL_PER_KEY_MAX_POINTS);
+              const merged = { ...(prev || {}), [trailKey]: nextArr };
+              return enforceRemoteTrailMemoryCap(merged);
             });
           }
         }
@@ -3149,6 +3724,37 @@ export const BluetoothProvider = ({ children }) => {
                 showTemporaryStatus('Phone slot assigned', 2500);
               }
               lastClaimedAtRef.current = Date.now();
+              lastClaimFailureStatusAtRef.current = { ts: 0, reason: '' };
+              appendDiagnostic('claim_assigned', {
+                mobileId,
+              });
+            }
+          }
+        }
+      }
+
+      // CLAIM_FAILED: hub could not assign a slot yet.
+      // Format: CLAIM_FAILED:<token>,<reason>
+      else if (trimmed.startsWith('CLAIM_FAILED:')) {
+        const rest = trimmed.substring(13);
+        const comma = rest.indexOf(',');
+        const token = (comma > 0 ? rest.substring(0, comma) : rest).trim();
+        const reason = (comma > 0 ? rest.substring(comma + 1) : 'UNKNOWN').trim() || 'UNKNOWN';
+
+        if (phoneToken && token === phoneToken) {
+          appendDiagnostic('claim_failed', { reason });
+          const now = Date.now();
+          const last = lastClaimFailureStatusAtRef.current || { ts: 0, reason: '' };
+          const shouldSurface = (now - (last.ts || 0) > 5000) || last.reason !== reason;
+
+          if (shouldSurface) {
+            lastClaimFailureStatusAtRef.current = { ts: now, reason };
+            if (reason === 'FULL_OR_STALE') {
+              showTemporaryStatus('Phone slots are busy. Retry in a few seconds...', 3000);
+            } else if (reason === 'NO_CONNECTED_SLOT') {
+              showTemporaryStatus('Waiting for hub slot registration...', 2500);
+            } else {
+              showTemporaryStatus('Waiting for phone slot assignment...', 2500);
             }
           }
         }
@@ -3166,7 +3772,7 @@ export const BluetoothProvider = ({ children }) => {
         });
       }
     });
-  }, [addActivity, clearPendingDeviceLobbySync, clearRemoteTrailsForDevice, connectedDevice, getMemberNickname, isDeviceSosActive, myDeviceId, myLocation?.lat, myLocation?.lng, myLocation?.valid, parseDeviceId, pendingDeviceLobbySyncCode, pushEmergencyNotification, pushMessageNotification, registerMemberSync, requestSosTrailSnapshot, sendSosTrailSnapshot, setEmergencyContactForDevice, setMemberNickname, setMemberOffline, setMyDeviceId, shouldThrottleEmergency, showTemporaryStatus, startEmergencySignals, stopEmergencySignals, triggerVibration, unsilenceEmergencyForDevice]);
+  }, [addActivity, appendDiagnostic, clearMessageAckTimer, clearPendingDeviceLobbySync, clearRemoteTrailsForDevice, connectedDevice, decodeAckPayload, decodeMessageEnvelope, enforceRemoteTrailMemoryCap, getMemberNickname, isDeviceSosActive, myDeviceId, myLocation?.lat, myLocation?.lng, myLocation?.valid, parseDeviceId, pendingDeviceLobbySyncCode, pushEmergencyNotification, pushMessageNotification, registerMemberSync, removeTrackedAlerts, requestSosTrailSnapshot, sendSosTrailSnapshot, setEmergencyContactForDevice, setMemberNickname, setMemberOffline, setMyDeviceId, shouldThrottleAckSend, shouldThrottleEmergency, showTemporaryStatus, startEmergencySignals, stopEmergencySignals, triggerVibration, unsilenceEmergencyForDevice, updateTrackedAlerts, upsertTrackedAlert, wasInboundMessageRecentlySeen]);
 
   const sendMyNicknameToDevice = useCallback(async () => {
     if (!isConnected) return false;
@@ -3353,11 +3959,19 @@ export const BluetoothProvider = ({ children }) => {
       
       // Play connection success sound
       playConnectionSound();
+      appendDiagnostic('ble_connect_ok', {
+        deviceId: device.id,
+        totalConnected: connectedDevicesList.length + 1,
+      });
       
       console.log(`Successfully connected to device ${device.id}. Total connected: ${connectedDevicesList.length + 1}`);
       return true;
     } catch (error) {
       console.error('Connection error:', error);
+      appendDiagnostic('ble_connect_failed', {
+        deviceId: device?.id || null,
+        message: error?.message || 'unknown',
+      });
       Alert.alert(
         'Connection Failed', 
         'Could not connect to the device. Make sure it is powered on and in range.\n\nError: ' + error.message
@@ -3366,7 +3980,7 @@ export const BluetoothProvider = ({ children }) => {
     } finally {
       setIsConnecting(false);
     }
-  }, [connectedDevicesList, ensureBleManagerReady, isInLobby, parseBluetoothData, parseDeviceId, playConnectionSound, registerMemberSync, requestPermissions, setMyDeviceId]);
+  }, [appendDiagnostic, connectedDevicesList, ensureBleManagerReady, isInLobby, parseBluetoothData, parseDeviceId, playConnectionSound, registerMemberSync, requestPermissions, setMyDeviceId]);
 
   // Disconnect from a specific device (multi-device support)
   const disconnectFromDevice = useCallback(async (deviceId, options = {}) => {
@@ -3442,17 +4056,24 @@ export const BluetoothProvider = ({ children }) => {
       setLastDataReceived(null);
       setLoraSignalStrength(null);
       setConnectionHealth('unknown');
+      setActiveAlertsByKey({});
+      setActiveAlert(null);
 
       // Many-to-one: slot IDs and local nicknames are hub-assigned.
       // Reset on disconnect so we don't mis-label phones after reconnecting to a hub.
       setMyMobileId(null);
       lastClaimedAtRef.current = 0;
+      lastClaimFailureStatusAtRef.current = { ts: 0, reason: '' };
       setLocalMobileNicknames({});
       setRemoteMobileNicknames({});
     }
     
+    appendDiagnostic('ble_disconnected', {
+      deviceId,
+      isLastDevice,
+    });
     console.log(`Disconnected from device ${deviceId}`);
-  }, []);
+  }, [appendDiagnostic]);
 
   // Disconnect from all devices
   const disconnect = useCallback(async () => {
@@ -3488,11 +4109,89 @@ export const BluetoothProvider = ({ children }) => {
     }
   }, [disconnectFromDevice, stopEmergencySignals]);
 
+  const clearRuntimeSessionData = useCallback(async (options = {}) => {
+    const clearPersistedChat = options?.clearPersistedChat === true;
+    const clearPersistedBreadcrumbs = options?.clearPersistedBreadcrumbs === true;
+
+    setMemberLocations([]);
+    setMessages([]);
+    setUnreadCount(0);
+    setActivityLog([]);
+    setActiveAlert(null);
+    setActiveAlertsByKey({});
+    setStatusMessage('');
+    setConnectedDevicesCount(0);
+    setIsDeviceReachable(false);
+    setMyLocation({ lat: 0, lng: 0, satellites: 0, valid: false });
+    setPhoneLocation({ lat: 0, lng: 0, valid: false, lastUpdate: 0 });
+    setRemoteBreadcrumbs({});
+    setMyMobileId(null);
+    setLocalMobileNicknames({});
+    setRemoteMobileNicknames({});
+
+    messageAckTimeoutsRef.current.forEach((timerId) => clearTimeout(timerId));
+    messageAckTimeoutsRef.current.clear();
+    recentInboundMessageIdsRef.current.clear();
+    recentSentAcksRef.current.clear();
+
+    knownMembersRef.current = new Set();
+    emergencyThrottleRef.current.clear();
+    silencedEmergencyRef.current.clear();
+    lastClaimedAtRef.current = 0;
+    lastClaimFailureStatusAtRef.current = { ts: 0, reason: '' };
+    commandQueueRef.current = Promise.resolve();
+
+    stopEmergencySignals();
+
+    if (clearPersistedChat) {
+      try {
+        await AsyncStorage.removeItem(CHAT_HISTORY_KEY);
+      } catch {
+        // ignore
+      }
+    }
+
+    if (clearPersistedBreadcrumbs) {
+      try {
+        await AsyncStorage.removeItem(BREADCRUMBS_KEY);
+      } catch {
+        // ignore
+      }
+      setBreadcrumbs([]);
+      lastBreadcrumbRef.current = null;
+      setBreadcrumbSessionDay(getLocalDayStamp(Date.now()));
+    }
+
+    appendDiagnostic('runtime_session_cleared', {
+      clearPersistedChat,
+      clearPersistedBreadcrumbs,
+    });
+
+    return true;
+  }, [appendDiagnostic, getLocalDayStamp, stopEmergencySignals]);
+
+  const setActiveHub = useCallback((deviceId) => {
+    const list = Array.isArray(connectedDevicesListRef.current) ? connectedDevicesListRef.current : [];
+    const exists = list.some(d => d?.id === deviceId);
+    if (!exists) return false;
+
+    if (activeHubIdRef.current === deviceId) {
+      return true;
+    }
+
+    activeHubIdRef.current = deviceId;
+    setActiveHubId(deviceId);
+    appendDiagnostic('active_hub_selected', { deviceId });
+    showTemporaryStatus('Active hub switched', 2000);
+    return true;
+  }, [appendDiagnostic, showTemporaryStatus]);
+
   // Send command to the ACTIVE connected device via BLE.
   // Note: the app UI doesn't support per-hub routing, so broadcasting to multiple hubs
   // can break lobby sync and message delivery.
   const sendCommand = useCallback(async (command, options = {}) => {
     const silent = options?.silent === true;
+    const preferNoResponse = options?.preferNoResponse === true;
     const list = Array.isArray(connectedDevicesListRef.current) ? connectedDevicesListRef.current : [];
     const activeId = activeHubIdRef.current;
     const activeDevice = (activeId ? list.find(d => d?.id === activeId) : list[0]) || null;
@@ -3500,6 +4199,9 @@ export const BluetoothProvider = ({ children }) => {
 
     const run = async () => {
       if (!isConnectedRef.current || devicesSnapshot.length === 0) {
+        appendDiagnostic('ble_send_blocked_not_connected', {
+          command: String(command || ''),
+        });
         if (!silent) {
           Alert.alert('Not Connected', 'Please connect to a device first.');
         }
@@ -3519,6 +4221,9 @@ export const BluetoothProvider = ({ children }) => {
       if (!BleManager || devicesSnapshot.length === 0) {
         // Mock command handling
         console.log('Mock sending:', cmdWithNewline);
+        appendDiagnostic('ble_send_mock', {
+          command: String(command || ''),
+        });
         if (command === 'SOS') {
           showTemporaryStatus('SENDING_SOS', 2000);
         } else if (command === 'OK') {
@@ -3530,6 +4235,21 @@ export const BluetoothProvider = ({ children }) => {
       const encoded = Buffer.from(cmdWithNewline, 'utf-8').toString('base64');
       let successCount = 0;
       let failureCount = 0;
+
+      const withTimeout = async (promise, timeoutMs, label) => {
+        let timeoutId;
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(new Error(`${label} timeout after ${timeoutMs}ms`));
+          }, timeoutMs);
+        });
+
+        try {
+          return await Promise.race([promise, timeoutPromise]);
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+      };
 
       // Send to the active connected device
       const sendPromises = devicesSnapshot.map(async (deviceInfo) => {
@@ -3545,10 +4265,15 @@ export const BluetoothProvider = ({ children }) => {
 
         try {
           const dev = connInfo.device;
+          const writeTimeoutMs = preferNoResponse ? Math.min(BLE_WRITE_TIMEOUT_MS, 2500) : BLE_WRITE_TIMEOUT_MS;
 
           // Defensive: check if connection is still valid
           try {
-            const stillConnected = await dev.isConnected();
+            const stillConnected = await withTimeout(
+              dev.isConnected(),
+              BLE_CONNECTION_CHECK_TIMEOUT_MS,
+              'BLE connection check'
+            );
             if (!stillConnected) {
               failureCount++;
               await disconnectFromDevice(deviceInfo.id);
@@ -3560,12 +4285,42 @@ export const BluetoothProvider = ({ children }) => {
             return false;
           }
 
+          // Emergency commands benefit from lower-latency writes. Try no-response first when requested.
+          if (preferNoResponse && typeof dev.writeCharacteristicWithoutResponseForService === 'function') {
+            try {
+              await withTimeout(
+                dev.writeCharacteristicWithoutResponseForService(
+                  NUS_SERVICE_UUID,
+                  NUS_RX_CHAR_UUID,
+                  encoded
+                ),
+                writeTimeoutMs,
+                'BLE preferred write without response'
+              );
+              console.log(`Command sent to device ${deviceInfo.id} (preferred no response)`);
+              successCount++;
+              return true;
+            } catch (preferredWriteError) {
+              const msg = (preferredWriteError?.message || '').toLowerCase();
+              if (msg.includes('disconnected') || msg.includes('cancel')) {
+                await disconnectFromDevice(deviceInfo.id);
+                failureCount++;
+                return false;
+              }
+              // Fall through to with-response attempt.
+            }
+          }
+
           // Try write with response first
           try {
-            await dev.writeCharacteristicWithResponseForService(
-              NUS_SERVICE_UUID,
-              NUS_RX_CHAR_UUID,
-              encoded
+            await withTimeout(
+              dev.writeCharacteristicWithResponseForService(
+                NUS_SERVICE_UUID,
+                NUS_RX_CHAR_UUID,
+                encoded
+              ),
+              writeTimeoutMs,
+              'BLE write with response'
             );
             console.log(`Command sent to device ${deviceInfo.id}`);
             successCount++;
@@ -3588,10 +4343,14 @@ export const BluetoothProvider = ({ children }) => {
                   failureCount++;
                   return false;
                 }
-                await dev.writeCharacteristicWithoutResponseForService(
-                  NUS_SERVICE_UUID,
-                  NUS_RX_CHAR_UUID,
-                  encoded
+                await withTimeout(
+                  dev.writeCharacteristicWithoutResponseForService(
+                    NUS_SERVICE_UUID,
+                    NUS_RX_CHAR_UUID,
+                    encoded
+                  ),
+                  writeTimeoutMs,
+                  'BLE write without response'
                 );
                 console.log(`Command sent to device ${deviceInfo.id} (no response)`);
                 successCount++;
@@ -3618,12 +4377,24 @@ export const BluetoothProvider = ({ children }) => {
       // Provide feedback
       if (successCount > 0) {
         console.log(`Command delivered to active device (${successCount} ok)`);
+        appendDiagnostic('ble_send_ok', {
+          command: String(command || ''),
+          successCount,
+          failureCount,
+          activeHubId: activeHubIdRef.current || null,
+        });
         return true;
       } else {
         // All failed
         if (!silent) {
           console.error('Command failed on all devices', { failureCount });
         }
+        appendDiagnostic('ble_send_failed', {
+          command: String(command || ''),
+          successCount,
+          failureCount,
+          activeHubId: activeHubIdRef.current || null,
+        });
         if (!silent) {
           Alert.alert('Send Failed', 'Could not send command to any device.');
         }
@@ -3635,7 +4406,7 @@ export const BluetoothProvider = ({ children }) => {
     const queued = writeQueueRef.current.then(run, run);
     writeQueueRef.current = queued.catch(() => {});
     return queued;
-  }, [delay, disconnectFromDevice, showTemporaryStatus]);
+  }, [appendDiagnostic, delay, disconnectFromDevice, showTemporaryStatus]);
 
   // Expose BLE command sender to LobbyContext so it can sync lobby code to device.
   useEffect(() => {
@@ -3643,6 +4414,29 @@ export const BluetoothProvider = ({ children }) => {
       registerBleCommandSender(sendCommand);
     }
   }, [registerBleCommandSender, sendCommand]);
+
+  const queueDeliveryAck = useCallback((targetDeviceId, messageId) => {
+    if (typeof targetDeviceId !== 'number' || Number.isNaN(targetDeviceId) || targetDeviceId <= 0) return;
+    if (!messageId) return;
+
+    const cmd = `ACKMSG:${targetDeviceId},${messageId}`;
+    void (async () => {
+      const ok = await sendCommand(cmd, { silent: true });
+      appendDiagnostic(ok ? 'message_ack_sent' : 'message_ack_send_failed', {
+        targetDeviceId,
+        messageId,
+      });
+    })();
+  }, [appendDiagnostic, sendCommand]);
+
+  useEffect(() => {
+    queueDeliveryAckRef.current = queueDeliveryAck;
+    return () => {
+      if (queueDeliveryAckRef.current === queueDeliveryAck) {
+        queueDeliveryAckRef.current = null;
+      }
+    };
+  }, [queueDeliveryAck]);
 
   // Retry device lobby sync only when explicitly marked as pending.
   // This prevents other phones from overwriting the device lobby just because they have a saved lobbyCode.
@@ -3746,6 +4540,7 @@ export const BluetoothProvider = ({ children }) => {
         const ok = await sendCommand(`CLAIM:${phoneToken}`, { silent: true });
         if (ok) {
           // We still wait for CLAIMED to confirm assignment.
+          appendDiagnostic('claim_attempt_sent', { tokenTail: String(phoneToken).slice(-6) });
         }
       } catch {
         // ignore
@@ -3760,7 +4555,7 @@ export const BluetoothProvider = ({ children }) => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [isConnected, phoneToken, myMobileId, sendCommand]);
+  }, [appendDiagnostic, isConnected, phoneToken, myMobileId, sendCommand]);
 
   // Many-to-one: share this phone's nickname with the hub so other local phones can label M1–M4.
   const lastSentMobileNickRef = useRef({ token: null, mobileId: null, nick: null, ts: 0 });
@@ -3888,12 +4683,141 @@ export const BluetoothProvider = ({ children }) => {
       unsilenceEmergencyForDevice('SOS', localDeviceId, { markRearm: true });
     }
 
-    // Explicit re-arm marker so peers clear ON_MY_WAY silence only for a fresh sender action.
-    await sendCommand('MSG:0,__SOS_REARM__', { silent: true });
-    const ok = await sendCommand('SOS');
+    // Send SOS immediately; re-arm marker is best-effort and should not delay the emergency command.
+    const ok = await sendCommand('SOS', { preferNoResponse: true });
+    if (ok) {
+      sendCommand('MSG:0,__SOS_REARM__', { silent: true, preferNoResponse: true }).catch(() => {});
+    }
     return ok;
   }, [connectedDevice, myDeviceId, parseDeviceId, sendCommand, unsilenceEmergencyForDevice]);
   const sendOK = useCallback(() => sendCommand('OK'), [sendCommand]);
+
+  const armHubEchoFallback = useCallback((messageId, label = 'Message') => {
+    const timeoutMs = 12000;
+    setTimeout(() => {
+      const snapshot = Array.isArray(messagesRef.current)
+        ? messagesRef.current.find((m) => m && m.id === messageId)
+        : null;
+
+      if (!snapshot || !snapshot.pending) {
+        return;
+      }
+
+      clearMessageAckTimer(messageId);
+
+      setMessages(prev => prev.map(msg => (
+        msg.id === messageId && msg.pending
+          ? {
+            ...msg,
+            pending: false,
+            awaitingAck: false,
+            failed: true,
+            deliveryUnconfirmed: true,
+          }
+          : msg
+      )));
+
+      showTemporaryStatus(`${label} not confirmed by hub. Tap Retry.`, 3500);
+      appendDiagnostic('message_delivery_unconfirmed', {
+        messageId,
+        label,
+      });
+    }, timeoutMs);
+  }, [appendDiagnostic, clearMessageAckTimer, showTemporaryStatus]);
+
+  const armRecipientAckFallback = useCallback((messageId, label = 'Message') => {
+    if (!messageId) return;
+
+    clearMessageAckTimer(messageId);
+
+    const timerId = setTimeout(async () => {
+      messageAckTimeoutsRef.current.delete(messageId);
+
+      const snapshot = Array.isArray(messagesRef.current)
+        ? messagesRef.current.find((m) => m && m.id === messageId)
+        : null;
+
+      if (!snapshot || !snapshot.awaitingAck || !snapshot.requiresDeliveryAck) {
+        return;
+      }
+
+      const retryCount = Number(snapshot.ackRetryCount || 0);
+      if (retryCount < MESSAGE_ACK_MAX_RETRIES && snapshot.resendCommand) {
+        const nextRetry = retryCount + 1;
+
+        setMessages(prev => prev.map(msg => (
+          msg.id === messageId
+            ? {
+              ...msg,
+              pending: true,
+              awaitingAck: false,
+              failed: false,
+              deliveryUnconfirmed: false,
+              ackRetryCount: nextRetry,
+            }
+            : msg
+        )));
+
+        appendDiagnostic('message_ack_retry', {
+          messageId,
+          ackId: snapshot.ackId || null,
+          retryCount: nextRetry,
+        });
+
+        const ok = await sendCommand(snapshot.resendCommand, { silent: true });
+        if (ok) {
+          armHubEchoFallback(messageId, label);
+          showTemporaryStatus(`${label} retrying…`, 1800);
+          return;
+        }
+
+        setMessages(prev => prev.map(msg => (
+          msg.id === messageId
+            ? {
+              ...msg,
+              pending: false,
+              awaitingAck: false,
+              failed: true,
+              deliveryUnconfirmed: true,
+            }
+            : msg
+        )));
+
+        showTemporaryStatus(`${label} retry failed. Tap Retry.`, 3000);
+        return;
+      }
+
+      setMessages(prev => prev.map(msg => (
+        msg.id === messageId
+          ? {
+            ...msg,
+            pending: false,
+            awaitingAck: false,
+            failed: true,
+            deliveryUnconfirmed: true,
+          }
+          : msg
+      )));
+
+      appendDiagnostic('message_ack_timeout', {
+        messageId,
+        ackId: snapshot.ackId || null,
+        retryCount,
+      });
+      showTemporaryStatus(`${label} not confirmed by recipient. Tap Retry.`, 3500);
+    }, MESSAGE_ACK_TIMEOUT_MS);
+
+    messageAckTimeoutsRef.current.set(messageId, timerId);
+  }, [appendDiagnostic, armHubEchoFallback, clearMessageAckTimer, sendCommand, showTemporaryStatus]);
+
+  useEffect(() => {
+    armRecipientAckFallbackRef.current = armRecipientAckFallback;
+    return () => {
+      if (armRecipientAckFallbackRef.current === armRecipientAckFallback) {
+        armRecipientAckFallbackRef.current = null;
+      }
+    };
+  }, [armRecipientAckFallback]);
   
   // Remove a member from the local tracking (host kick from lobby)
   const removeMemberLocation = useCallback((deviceId) => {
@@ -3922,22 +4846,49 @@ export const BluetoothProvider = ({ children }) => {
     if (!trimmedText) {
       return false;
     }
-    if (trimmedText.length > LORA_MAX_TEXT_LEN) {
-      Alert.alert('Message Too Long', `Message limit is ${LORA_MAX_TEXT_LEN} characters.`);
+
+    const parsedTargetDevice = (typeof toDeviceId === 'string') ? parseInt(toDeviceId, 10) : toDeviceId;
+    if (typeof parsedTargetDevice !== 'number' || Number.isNaN(parsedTargetDevice) || parsedTargetDevice < 0) {
+      Alert.alert('Invalid Target', 'Choose a valid device target.');
       return false;
     }
 
-    const command = `MSG:${toDeviceId},${trimmedText}`;
+    const targetDevice = parsedTargetDevice;
+    const localDeviceId = (typeof myDeviceId === 'number' && !Number.isNaN(myDeviceId))
+      ? myDeviceId
+      : parseDeviceId(connectedDevice || deviceRef.current);
+    const requiresDeliveryAck =
+      targetDevice > 0 &&
+      !(typeof localDeviceId === 'number' && localDeviceId > 0 && targetDevice === localDeviceId);
+    const ackId = requiresDeliveryAck ? createShortMessageId() : null;
+    const payloadText = encodeMessageEnvelope(trimmedText, ackId);
+
+    if (payloadText.length > LORA_MAX_TEXT_LEN) {
+      const envelopeOverhead = ackId ? `${MESSAGE_ID_PREFIX}${ackId}:`.length : 0;
+      const maxBodyLen = Math.max(0, LORA_MAX_TEXT_LEN - envelopeOverhead);
+      Alert.alert('Message Too Long', `Message limit is ${maxBodyLen} characters.`);
+      return false;
+    }
+
+    const command = `MSG:${targetDevice},${payloadText}`;
     
     const newMessage = {
-      id: `msg-${Date.now()}-me`,
+      id: `msg-${Date.now()}-me-${targetDevice}-${ackId || 'plain'}`,
       from: 'me',
-      to: toDeviceId,
-      targetDeviceId: toDeviceId,
+      to: targetDevice,
+      targetDeviceId: targetDevice,
       text: trimmedText,
       timestamp: Date.now(),
       isMine: true,
       pending: true,
+      awaitingAck: false,
+      failed: false,
+      deliveryUnconfirmed: false,
+      delivered: !requiresDeliveryAck,
+      requiresDeliveryAck,
+      ackId,
+      ackRetryCount: 0,
+      resendCommand: command,
     };
     
     setMessages(prev => [...prev, newMessage].slice(-MAX_MESSAGES_IN_MEMORY));
@@ -4000,7 +4951,7 @@ export const BluetoothProvider = ({ children }) => {
 
         setMessages(prev => prev.map(msg =>
           msg.id === newMessage.id
-            ? { ...msg, pending: false, failed: true }
+            ? { ...msg, pending: false, awaitingAck: false, failed: true }
             : msg
         ));
 
@@ -4030,16 +4981,34 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
                     // Re-add the message as pending and attempt the send.
                     setMessages(prev => prev.map(msg =>
                       msg.id === newMessage.id
-                        ? { ...msg, pending: true, failed: false }
+                        ? { ...msg, pending: true, awaitingAck: false, failed: false }
                         : msg
                     ));
 
                     const ok = await sendCommand(command);
-                    setMessages(prev => prev.map(msg =>
-                      msg.id === newMessage.id
-                        ? { ...msg, pending: false, failed: !ok }
-                        : msg
-                    ));
+                    if (ok) {
+                      setMessages(prev => prev.map(msg =>
+                        msg.id === newMessage.id
+                          ? (msg.pending
+                            ? {
+                              ...msg,
+                              pending: true,
+                              awaitingAck: false,
+                              failed: false,
+                              deliveryUnconfirmed: false,
+                              delivered: false,
+                            }
+                            : msg)
+                          : msg
+                      ));
+                      armHubEchoFallback(newMessage.id, 'Message');
+                    } else {
+                      setMessages(prev => prev.map(msg =>
+                        msg.id === newMessage.id
+                          ? { ...msg, pending: false, awaitingAck: false, failed: true }
+                          : msg
+                      ));
+                    }
 
                     if (ok) {
                       showTemporaryStatus('Sent without lobby confirmation', 3000);
@@ -4064,15 +5033,39 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
     }
     
     const success = await sendCommand(command);
-    
-    setMessages(prev => prev.map(msg => 
-      msg.id === newMessage.id 
-        ? { ...msg, pending: false, failed: !success }
-        : msg
-    ));
+
+    if (success) {
+      setMessages(prev => prev.map(msg =>
+        msg.id === newMessage.id
+          ? (msg.pending
+            ? {
+              ...msg,
+              pending: true,
+              awaitingAck: false,
+              failed: false,
+              deliveryUnconfirmed: false,
+              delivered: false,
+            }
+            : msg)
+          : msg
+      ));
+      armHubEchoFallback(newMessage.id, 'Message');
+    } else {
+      setMessages(prev => prev.map(msg =>
+        msg.id === newMessage.id
+          ? { ...msg, pending: false, awaitingAck: false, failed: true }
+          : msg
+      ));
+    }
+
+    appendDiagnostic(success ? 'msg_send_enqueued' : 'msg_send_failed', {
+      toDeviceId: targetDevice,
+      ackId,
+      requiresDeliveryAck,
+    });
     
     return success;
-  }, [isConnected, sendCommand, showTemporaryStatus, syncLobbyToDevice]);
+  }, [appendDiagnostic, armHubEchoFallback, connectedDevice, createShortMessageId, encodeMessageEnvelope, isConnected, myDeviceId, parseDeviceId, sendCommand, showTemporaryStatus, syncLobbyToDevice]);
 
   // Send a phone-targeted direct message.
   // This routes through the hub, and is filtered on each phone using the claimed mobile slot (M1..M4).
@@ -4096,7 +5089,14 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
       return false;
     }
 
-    const fromMobileId = (typeof myMobileIdRef.current === 'number' && myMobileIdRef.current >= 1 && myMobileIdRef.current <= 4)
+    const parsedTargetDevice = (typeof toDeviceId === 'string') ? parseInt(toDeviceId, 10) : toDeviceId;
+    if (typeof parsedTargetDevice !== 'number' || Number.isNaN(parsedTargetDevice) || parsedTargetDevice <= 0) {
+      Alert.alert('Invalid Target', 'Choose a valid target device.');
+      return false;
+    }
+    const targetDevice = parsedTargetDevice;
+
+    let fromMobileId = (typeof myMobileIdRef.current === 'number' && myMobileIdRef.current >= 1 && myMobileIdRef.current <= 4)
       ? myMobileIdRef.current
       : 0;
 
@@ -4105,34 +5105,23 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
       typeof myDeviceId === 'number' &&
       typeof targetMobile === 'number' &&
       typeof myMobileIdRef.current === 'number' &&
-      toDeviceId === myDeviceId &&
+      targetDevice === myDeviceId &&
       targetMobile === myMobileIdRef.current
     ) {
       Alert.alert("Can't Message Yourself", 'Choose a different phone on this hub.');
       return false;
     }
 
-    if (fromMobileId === 0) {
-      // Without a claimed slot, the recipient can't route this DM thread correctly.
-      // Kick the claim handshake once more and ask the user to retry.
-      try {
-        if (phoneToken) {
-          await sendCommand(`CLAIM:${phoneToken}`);
-        }
-      } catch {
-        // ignore
-      }
-      Alert.alert(
-        'Phone Slot Not Ready',
-        "This phone hasn't claimed a slot yet. Wait a few seconds after connecting, then try again."
-      );
-      return false;
-    }
+    const isSameHubDirect = (typeof myDeviceId === 'number' && targetDevice === myDeviceId);
+    const requiresDeliveryAck = !isSameHubDirect;
+    const ackId = requiresDeliveryAck ? createShortMessageId() : null;
 
     // Device MAX_TEXT_LEN = 50, and firmware tags DM payloads as:
     // __DM__:<toMobileId>:<fromMobileId>:<text>
-    const dmPrefix = `__DM__:${targetMobile}:${fromMobileId}:`;
-    const maxBodyLen = Math.max(0, LORA_MAX_TEXT_LEN - dmPrefix.length);
+    const fromMobileForLimit = fromMobileId === 0 ? 1 : fromMobileId;
+    const dmPrefix = `__DM__:${targetMobile}:${fromMobileForLimit}:`;
+    const envelopeOverhead = ackId ? `${MESSAGE_ID_PREFIX}${ackId}:`.length : 0;
+    const maxBodyLen = Math.max(0, LORA_MAX_TEXT_LEN - dmPrefix.length - envelopeOverhead);
     const trimmedText = String(text || '').trim();
     if (!trimmedText) {
       return false;
@@ -4142,22 +5131,119 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
       return false;
     }
 
-    const command = `DM:${toDeviceId},${fromMobileId},${targetMobile},${trimmedText}`;
+    const payloadText = encodeMessageEnvelope(trimmedText, ackId);
+
+    const messageId = `dm-${Date.now()}-me-${targetDevice}-${targetMobile}-${ackId || 'plain'}`;
 
     const newMessage = {
-      id: `dm-${Date.now()}-me-${toDeviceId}-${targetMobile}`,
+      id: messageId,
       from: 'me',
-      to: toDeviceId,
-      targetDeviceId: toDeviceId,
+      to: targetDevice,
+      targetDeviceId: targetDevice,
       text: trimmedText,
       timestamp: Date.now(),
       isMine: true,
       pending: true,
+      awaitingAck: false,
+      failed: false,
+      deliveryUnconfirmed: false,
+      delivered: !requiresDeliveryAck,
+      requiresDeliveryAck,
+      ackId,
+      ackRetryCount: 0,
+      resendCommand: null,
       dmToMobileId: targetMobile,
-      dmFromMobileId: fromMobileId,
+      dmFromMobileId: fromMobileId || null,
+      waitingForClaim: fromMobileId === 0,
     };
 
     setMessages(prev => [...prev, newMessage].slice(-MAX_MESSAGES_IN_MEMORY));
+
+    const waitForClaimAssignment = (timeoutMs = 9000) => new Promise((resolve) => {
+      const start = Date.now();
+      const intervalId = setInterval(() => {
+        const claimed = myMobileIdRef.current;
+        if (typeof claimed === 'number' && claimed >= 1 && claimed <= 4) {
+          clearInterval(intervalId);
+          resolve(claimed);
+          return;
+        }
+        if (Date.now() - start >= timeoutMs) {
+          clearInterval(intervalId);
+          resolve(null);
+        }
+      }, 150);
+    });
+
+    if (fromMobileId === 0) {
+      appendDiagnostic('dm_wait_claim_started', {
+        toDeviceId: targetDevice,
+        targetMobile,
+      });
+
+      try {
+        if (phoneToken) {
+          await sendCommand(`CLAIM:${phoneToken}`, { silent: true });
+        }
+      } catch {
+        // ignore
+      }
+
+      showTemporaryStatus('Waiting for phone slot assignment...', 2500);
+      const claimedMobileId = await waitForClaimAssignment(9000);
+
+      if (!claimedMobileId) {
+        const reason = (lastClaimFailureStatusAtRef.current?.reason || '').trim();
+        setMessages(prev => prev.map(msg =>
+          msg.id === messageId
+            ? { ...msg, pending: false, awaitingAck: false, failed: true, waitingForClaim: false }
+            : msg
+        ));
+
+        appendDiagnostic('dm_wait_claim_timeout', {
+          toDeviceId: targetDevice,
+          targetMobile,
+          reason: reason || 'TIMEOUT',
+        });
+
+        let reasonText = "This phone couldn't claim a slot yet.";
+        if (reason === 'FULL_OR_STALE') {
+          reasonText = 'Phone slots on this hub are currently busy.';
+        } else if (reason === 'NO_CONNECTED_SLOT') {
+          reasonText = 'Hub is still registering connected phone slots.';
+        } else if (reason) {
+          reasonText = 'Hub is still assigning a phone slot.';
+        }
+
+        Alert.alert('Phone Slot Not Ready', `${reasonText} Please wait a few seconds and try again.`);
+        return false;
+      }
+
+      fromMobileId = claimedMobileId;
+      setMessages(prev => prev.map(msg =>
+        msg.id === messageId
+          ? { ...msg, dmFromMobileId: fromMobileId, waitingForClaim: false }
+          : msg
+      ));
+
+      appendDiagnostic('dm_wait_claim_resolved', {
+        toDeviceId: targetDevice,
+        targetMobile,
+        fromMobileId,
+      });
+      showTemporaryStatus(`Phone slot ready (M${fromMobileId})`, 2000);
+    }
+
+    const command = `DM:${targetDevice},${fromMobileId},${targetMobile},${payloadText}`;
+    setMessages(prev => prev.map(msg => (
+      msg.id === newMessage.id
+        ? {
+          ...msg,
+          dmFromMobileId: fromMobileId || null,
+          resendCommand: command,
+        }
+        : msg
+    )));
 
     const waitForDeviceLobby = (expectedLobby, timeoutMs = 9000) => new Promise((resolve) => {
       const start = Date.now();
@@ -4212,7 +5298,7 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
 
         setMessages(prev => prev.map(msg =>
           msg.id === newMessage.id
-            ? { ...msg, pending: false, failed: true }
+            ? { ...msg, pending: false, awaitingAck: false, failed: true }
             : msg
         ));
 
@@ -4239,16 +5325,34 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
                   onPress: async () => {
                     setMessages(prev => prev.map(msg =>
                       msg.id === newMessage.id
-                        ? { ...msg, pending: true, failed: false }
+                        ? { ...msg, pending: true, awaitingAck: false, failed: false }
                         : msg
                     ));
 
                     const ok = await sendCommand(command);
-                    setMessages(prev => prev.map(msg =>
-                      msg.id === newMessage.id
-                        ? { ...msg, pending: false, failed: !ok }
-                        : msg
-                    ));
+                    if (ok) {
+                      setMessages(prev => prev.map(msg =>
+                        msg.id === newMessage.id
+                          ? (msg.pending
+                            ? {
+                              ...msg,
+                              pending: true,
+                              awaitingAck: false,
+                              failed: false,
+                              deliveryUnconfirmed: false,
+                              delivered: false,
+                            }
+                            : msg)
+                          : msg
+                      ));
+                      armHubEchoFallback(newMessage.id, 'Direct message');
+                    } else {
+                      setMessages(prev => prev.map(msg =>
+                        msg.id === newMessage.id
+                          ? { ...msg, pending: false, awaitingAck: false, failed: true }
+                          : msg
+                      ));
+                    }
 
                     if (ok) {
                       showTemporaryStatus('Sent without lobby confirmation', 3000);
@@ -4274,14 +5378,39 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
 
     const success = await sendCommand(command);
 
-    setMessages(prev => prev.map(msg =>
-      msg.id === newMessage.id
-        ? { ...msg, pending: false, failed: !success }
-        : msg
-    ));
+    if (success) {
+      setMessages(prev => prev.map(msg =>
+        msg.id === newMessage.id
+          ? (msg.pending
+            ? {
+              ...msg,
+              pending: true,
+              awaitingAck: false,
+              failed: false,
+              deliveryUnconfirmed: false,
+              delivered: false,
+            }
+            : msg)
+          : msg
+      ));
+      armHubEchoFallback(newMessage.id, 'Direct message');
+    } else {
+      setMessages(prev => prev.map(msg =>
+        msg.id === newMessage.id
+          ? { ...msg, pending: false, awaitingAck: false, failed: true }
+          : msg
+      ));
+    }
+
+    appendDiagnostic(success ? 'dm_send_enqueued' : 'dm_send_failed', {
+      toDeviceId: targetDevice,
+      toMobileId: targetMobile,
+      ackId,
+      requiresDeliveryAck,
+    });
 
     return success;
-  }, [isConnected, sendCommand, showTemporaryStatus, syncLobbyToDevice]);
+  }, [appendDiagnostic, armHubEchoFallback, createShortMessageId, encodeMessageEnvelope, isConnected, myDeviceId, sendCommand, showTemporaryStatus, syncLobbyToDevice]);
   
   // Send broadcast message (targetID = 0 means all devices)
   const sendBroadcastMessage = useCallback(async (text) => {
@@ -4463,39 +5592,69 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
       return Math.max(0, prev - unreadFromDevice);
     });
   }, [messages]);
+
+  const activeAlerts = Object.values(activeAlertsByKey || {})
+    .filter(alert => !!alert)
+    .sort((a, b) => Number(b?.timestamp || 0) - Number(a?.timestamp || 0));
+
+  const activeEmergencyCount = activeAlerts.filter(alert => {
+    return alert.type === 'SOS' || alert.type === 'MORSE';
+  }).length;
+
+  const unsilencedEmergencyCount = activeAlerts.filter(alert => {
+    return (alert.type === 'SOS' || alert.type === 'MORSE') && !alert.silenced;
+  }).length;
   
   const silenceActiveAlert = useCallback((byDeviceId = null) => {
+    const focused = activeAlertRef.current;
+    if (!focused) {
+      stopEmergencySignals();
+      return;
+    }
+    if (focused.type !== 'SOS' && focused.type !== 'MORSE') {
+      stopEmergencySignals();
+      return;
+    }
+
     const now = Date.now();
+    const key = getTrackedAlertKey(focused.type, focused.deviceId);
 
-    setActiveAlert(prev => {
-      if (!prev) return prev;
-      if (prev.type !== 'SOS' && prev.type !== 'MORSE') return prev;
-
-      const key =
-        (typeof prev.deviceId === 'number' && prev.deviceId > 0)
-          ? `${prev.type}-${prev.deviceId}`
-          : null;
-
-      if (key) {
-        silencedEmergencyRef.current.set(key, { ts: now, byDeviceId });
-      }
-
-      return {
-        ...prev,
-        silenced: true,
-        silencedAt: now,
-        silencedByDeviceId: byDeviceId ?? prev.silencedByDeviceId ?? null,
-      };
-    });
+    if (key) {
+      silencedEmergencyRef.current.set(key, { ts: now, byDeviceId });
+      updateTrackedAlerts((prev) => {
+        const existing = prev[key];
+        if (!existing) return prev;
+        return {
+          ...prev,
+          [key]: {
+            ...existing,
+            silenced: true,
+            silencedAt: now,
+            silencedByDeviceId: byDeviceId ?? existing.silencedByDeviceId ?? null,
+          },
+        };
+      }, {
+        preferredKey: key,
+      });
+    }
 
     stopEmergencySignals();
-  }, [stopEmergencySignals]);
+  }, [getTrackedAlertKey, stopEmergencySignals, updateTrackedAlerts]);
 
   // Clear active alert
   const dismissAlert = useCallback(() => {
-    setActiveAlert(null);
+    const focused = activeAlertRef.current;
+    const key = focused ? getTrackedAlertKey(focused.type, focused.deviceId) : null;
+
+    if (!key) {
+      clearTrackedAlerts();
+      stopEmergencySignals();
+      return;
+    }
+
+    removeTrackedAlerts((_, alertKey) => alertKey === key);
     stopEmergencySignals();
-  }, [stopEmergencySignals]);
+  }, [clearTrackedAlerts, getTrackedAlertKey, removeTrackedAlerts, stopEmergencySignals]);
   
   // Clear morse input
   const clearMorseInput = useCallback(() => {
@@ -4530,6 +5689,7 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
     isDeviceReachable,
     connectedDevice,
     connectedDevicesList,  // Multi-device list
+    activeHubId,
     availableDevices,
     connectedDevicesCount,
     myLocation,
@@ -4539,6 +5699,9 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
     localMobileNicknames,
     remoteMobileNicknames,
     activeAlert,
+    activeAlerts,
+    activeEmergencyCount,
+    unsilencedEmergencyCount,
     statusMessage,
     morseInput,
     messages,
@@ -4547,6 +5710,7 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
     lastDataReceived,
     loraSignalStrength,
     activityLog,
+    diagnostics,
     
     // Breadcrumbs / Trail tracking
     breadcrumbs,
@@ -4567,6 +5731,7 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
     connectToDevice,
     disconnect,
     disconnectFromDevice,  // Multi-device disconnect
+    setActiveHub,
     sendCommand,
     sendSOS,
     sendOK,
@@ -4585,6 +5750,9 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
     getConversations,
     markMessagesAsRead,
     clearChatHistory,
+    clearRuntimeSessionData,
+    getDiagnostics,
+    clearDiagnostics,
   };
 
   return (

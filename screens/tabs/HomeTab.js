@@ -13,8 +13,9 @@ import { calculateDistance } from '../../utils/math';
 const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { isConnected, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, sendSOS, sendOK } = useBluetoothDevice();
+  const { isConnected, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, activeEmergencyCount, unsilencedEmergencyCount, sendSOS, sendOK } = useBluetoothDevice();
   const { lobbyCode, lobbyName, myNickname } = useLobby();
+  const additionalEmergencies = Math.max(0, ((unsilencedEmergencyCount || activeEmergencyCount || 0) - 1));
 
   // SOS button pulse/blink (subtle) when connected.
   const sosPulseAnim = useRef(new Animated.Value(0)).current;
@@ -173,7 +174,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
                 {activeAlert.type === 'MORSE' ? 'MORSE EMERGENCY ACTIVE' : 'SOS EMERGENCY ACTIVE'}
               </Text>
               <Text style={localStyles.emergencySubtitle}>
-                {(activeAlert.displayName || (typeof activeAlert.deviceId === 'number' ? `Device ${activeAlert.deviceId}` : 'A member'))} needs attention. Tap to view location.
+                {(activeAlert.displayName || (typeof activeAlert.deviceId === 'number' ? `Device ${activeAlert.deviceId}` : 'A member'))} needs attention. Tap to view location.{additionalEmergencies > 0 ? ` + ${additionalEmergencies} more active` : ''}
               </Text>
             </View>
           </TouchableOpacity>

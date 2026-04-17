@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Dimensions, Alert, Animated, Easing, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Dimensions, Alert, Animated, Easing, ActivityIndicator, PanResponder } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import { Magnetometer } from 'expo-sensors';
@@ -36,6 +36,7 @@ const OFFLINE_DEFAULT_RADIUS_KM = 5;
 const OFFLINE_DEFAULT_ZOOM_MIN = 10;
 const OFFLINE_DEFAULT_ZOOM_MAX = 15;
 const OFFLINE_MAX_TILES = 5000;
+const OFFLINE_PAN_LIMIT = RADAR_SIZE * 0.45;
 
 const TILE_URL_TEMPLATE = process.env.EXPO_PUBLIC_TILE_URL_TEMPLATE || null;
 
@@ -480,8 +481,53 @@ const RadarView = ({ myLocation, members, colors, onMemberPress, locationService
 
 // Map View Component
 // Offline Grid Map Component - Works without internet
-const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumbs = [], remoteBreadcrumbsByDevice = {} }) => {
+const OfflineGridMap = ({
+  myLocation,
+  members,
+  colors,
+  onMemberPress,
+  onTouchStateChange,
+  breadcrumbs = [],
+  remoteBreadcrumbsByDevice = {},
+}) => {
   const pulseAnim = useRef(new Animated.Value(0)).current;
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const panOffsetRef = useRef({ x: 0, y: 0 });
+  const panStartRef = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    panOffsetRef.current = panOffset;
+  }, [panOffset]);
+
+  const clampPan = useCallback((value) => {
+    return Math.max(-OFFLINE_PAN_LIMIT, Math.min(OFFLINE_PAN_LIMIT, value));
+  }, []);
+
+  const resetPan = useCallback(() => {
+    setPanOffset({ x: 0, y: 0 });
+  }, []);
+
+  const panResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_evt, gestureState) => {
+      return Math.abs(gestureState.dx) > 4 || Math.abs(gestureState.dy) > 4;
+    },
+    onPanResponderGrant: () => {
+      panStartRef.current = panOffsetRef.current;
+      onTouchStateChange && onTouchStateChange(true);
+    },
+    onPanResponderMove: (_evt, gestureState) => {
+      setPanOffset({
+        x: clampPan(panStartRef.current.x + gestureState.dx),
+        y: clampPan(panStartRef.current.y + gestureState.dy),
+      });
+    },
+    onPanResponderRelease: () => {
+      onTouchStateChange && onTouchStateChange(false);
+    },
+    onPanResponderTerminate: () => {
+      onTouchStateChange && onTouchStateChange(false);
+    },
+  }), [clampPan, onTouchStateChange]);
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -670,17 +716,43 @@ const OfflineGridMap = ({ myLocation, members, colors, onMemberPress, breadcrumb
               backgroundColor: colors.primary,
               borderWidth: 1,
               borderColor: colors.primary,
+              marginRight: 8,
             }}
-            onPress={() => setManualRangeM(null)}
+            onPress={() => {
+              setManualRangeM(null);
+              resetPan();
+            }}
           >
             <Text style={{ color: colors.textLight, fontWeight: '800' }}>Auto</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              borderRadius: 10,
+              backgroundColor: colors.inputBg,
+              borderWidth: 1,
+              borderColor: colors.glassBorder,
+            }}
+            onPress={resetPan}
+          >
+            <Text style={{ color: colors.textDark, fontWeight: '800' }}>Center</Text>
           </TouchableOpacity>
         </View>
       </View>
       
-      <View style={[localStyles.offlineMapGrid, { width: mapSize, height: mapSize }]}>
+      <View style={[localStyles.offlineMapGrid, { width: mapSize, height: mapSize }]} {...panResponder.panHandlers}>
         {/* Grid background */}
-        <View style={[localStyles.gridBg, { backgroundColor: colors.background }]}>
+        <View
+          style={[
+            localStyles.gridBg,
+            {
+              backgroundColor: colors.background,
+              transform: [{ translateX: panOffset.x }, { translateY: panOffset.y }],
+            },
+          ]}
+        >
           {/* Horizontal grid lines */}
           {Array.from({ length: gridLines + 1 }).map((_, i) => (
             <View
@@ -944,6 +1016,7 @@ const TopoMapView = ({
   members,
   colors,
   onMemberPress,
+  onTouchStateChange,
   tileUrlTemplate,
   offlineEnabled,
   offlineMeta,
@@ -1126,7 +1199,12 @@ const TopoMapView = ({
   }
 
   return (
-    <View style={localStyles.mapContainer}>
+    <View
+      style={localStyles.mapContainer}
+      onTouchStart={() => onTouchStateChange && onTouchStateChange(true)}
+      onTouchEnd={() => onTouchStateChange && onTouchStateChange(false)}
+      onTouchCancel={() => onTouchStateChange && onTouchStateChange(false)}
+    >
       <MLMapView
         style={localStyles.map}
         mapStyle={mapStyle}
@@ -1138,13 +1216,9 @@ const TopoMapView = ({
       >
         <MLCamera
           key={myLocation.valid ? 'cam-valid' : 'cam-invalid'}
-          centerCoordinate={center}
-          zoomLevel={clampedZoom}
           defaultSettings={{ centerCoordinate: center, zoomLevel: clampedZoom }}
           minZoomLevel={offlineZoomMin}
           maxZoomLevel={offlineZoomMax}
-          animationMode="flyTo"
-          animationDuration={500}
         />
 
         {ownTrailShape && (
@@ -1281,6 +1355,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
   } = useBluetoothDevice();
   const { getMemberNickname } = useLobby();
   const [viewMode, setViewMode] = useState('radar'); // 'map', 'radar', 'list'
+  const [isMapTouching, setIsMapTouching] = useState(false);
 
   const [offlineMeta, setOfflineMeta] = useState(null);
   const [offlineDownloading, setOfflineDownloading] = useState(false);
@@ -1344,6 +1419,12 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (viewMode !== 'map' && isMapTouching) {
+      setIsMapTouching(false);
+    }
+  }, [isMapTouching, viewMode]);
 
   
   // Combine member locations with distance calculation
@@ -1552,6 +1633,8 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
       
       <ScrollView
         style={{ flex: 1, backgroundColor: 'transparent' }}
+        scrollEnabled={!isMapTouching}
+        nestedScrollEnabled
         contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 90 }}
       >
         {/* View Mode Toggle */}
@@ -1731,6 +1814,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
               members={membersWithDistance}
               colors={colors}
               onMemberPress={handleMemberPress}
+              onTouchStateChange={setIsMapTouching}
               tileUrlTemplate={TILE_URL_TEMPLATE}
               offlineEnabled={offlineTilesAvailable}
               offlineMeta={offlineMeta}
@@ -1743,6 +1827,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
               members={membersWithDistance}
               colors={colors}
               onMemberPress={handleMemberPress}
+              onTouchStateChange={setIsMapTouching}
               breadcrumbs={breadcrumbs}
               remoteBreadcrumbsByDevice={lobbyRemoteBreadcrumbs}
             />
