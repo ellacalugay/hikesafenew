@@ -104,6 +104,9 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
         <View style={localStyles.deviceLeftSection}>
           <Text style={[localStyles.deviceName, { color: colors.textDark }]}>{item.name || 'Unknown Device'}</Text>
           <Text style={[localStyles.deviceAddress, { color: colors.gray }]}>{item.address || item.id}</Text>
+          {!!item?.unverified && (
+            <Text style={[localStyles.unverifiedHint, { color: colors.gray }]}>Unverified BLE device - tap to try</Text>
+          )}
         </View>
 
         <View style={localStyles.deviceRightSection}>
@@ -160,6 +163,11 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
 
     return list;
   }, [availableDevices, connectedDevicesList]);
+
+  const hasUnverifiedDevices = useMemo(
+    () => displayedDevices.some((d) => !!d?.unverified),
+    [displayedDevices]
+  );
 
   return (
     <ImageBackground
@@ -266,7 +274,9 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
           <BlurView intensity={colors.glassIntensity} tint={colors.glassTint} style={StyleSheet.absoluteFillObject} />
           <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
 
-          <Text style={[localStyles.listTitle, { color: colors.textDark }]}>Nearby HikeSafe Devices</Text>
+          <Text style={[localStyles.listTitle, { color: colors.textDark }]}>
+            {hasUnverifiedDevices ? 'Nearby BLE Devices' : 'Nearby HikeSafe Devices'}
+          </Text>
 
           {isScanning && availableDevices.length === 0 ? (
             <View style={localStyles.centerState}>
@@ -486,6 +496,11 @@ const localStyles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
     fontWeight: '500',
+  },
+  unverifiedHint: {
+    fontSize: 11,
+    marginTop: 4,
+    fontWeight: '600',
   },
   deviceRightSection: {
     alignItems: 'flex-end',

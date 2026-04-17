@@ -1045,7 +1045,7 @@ export const BluetoothProvider = ({ children }) => {
     }
   }, [getLocalDayStamp]);
   
-  // Calculate total trail distance
+ // Calculate total trail distance
   const getTrailDistance = useCallback(() => {
     if (breadcrumbs.length < 2) return 0;
     
@@ -1273,28 +1273,27 @@ export const BluetoothProvider = ({ children }) => {
       const state = await bleManagerRef.current.state();
       return state;
     } catch (e) {
-      // On Android 12+ this can throw if BLUETOOTH_CONNECT isn't granted yet.
-      return 'Unknown';
+      // On some OEM builds, state() can throw even when onStateChange already reported PoweredOn.
+      return lastBleStateRef.current || 'Unknown';
     }
   }, []);
 
   const warnIfLocationServicesOffForBle = useCallback(async () => {
-    if (Platform.OS !== 'android') return;
-    const apiLevel = Platform.Version;
-    // Android 11 and below commonly require Location Services ON for BLE scanning.
-    if (typeof apiLevel === 'number' && apiLevel >= 31) return;
+    if (Platform.OS !== 'android') return true;
 
     try {
       const enabled = await Location.hasServicesEnabledAsync();
       if (!enabled) {
         Alert.alert(
-          'Location Services Required',
-          'On some Android devices, BLE scanning won\'t find devices unless Location Services (GPS) is turned on.'
+          'Turn On Location Services',
+          'BLE scan may return no devices on this phone until Location Services (GPS) is enabled.'
         );
+        return false;
       }
     } catch {
       // best-effort only
     }
+    return true;
   }, []);
 
   // Request to enable Bluetooth
@@ -1376,14 +1375,32 @@ export const BluetoothProvider = ({ children }) => {
       return;
     }
 
-    await warnIfLocationServicesOffForBle();
+    const locationServicesOn = await warnIfLocationServicesOffForBle();
+    if (!locationServicesOn) {
+      return;
+    }
 
-    const state = await getBlePowerStateSafe();
+    let state = await getBlePowerStateSafe();
+
+    // OEM recovery: if state is Unknown and no active connection exists,
+    // rebuild manager once and retry state before scanning.
+    if (state === 'Unknown' && (connectedDevicesListRef.current?.length || 0) === 0) {
+      cleanupBleManager();
+      if (ensureBleManagerReady()) {
+        await delay(300);
+        state = await getBlePowerStateSafe();
+      }
+    }
+
     // Only block scanning when we are sure BLE is not powered on.
     // "Unknown" can happen briefly during permission prompts or OEM quirks.
     if (state && state !== 'PoweredOn' && state !== 'Unknown') {
       Alert.alert('Bluetooth Required', 'Please turn on Bluetooth to scan for devices.');
       return;
+    }
+
+    if (state === 'Unknown') {
+      showTemporaryStatus('Bluetooth state is unstable on this phone. Scanning anyway...', 2500);
     }
 
     console.log('Starting BLE scan. state=', state, 'apiLevel=', Platform.Version);
@@ -1392,6 +1409,9 @@ export const BluetoothProvider = ({ children }) => {
       clearTimeout(scanStopTimeoutRef.current);
       scanStopTimeoutRef.current = null;
     }
+
+    const foundDevices = new Map();
+    const allNearbyCandidates = new Map();
 
     const scheduleStopScan = (delayMs) => {
       if (scanStopTimeoutRef.current) {
@@ -1405,6 +1425,31 @@ export const BluetoothProvider = ({ children }) => {
         } catch {
           // ignore
         }
+
+        console.log('[BLE] Scan complete', {
+          verifiedCandidates: foundDevices.size,
+          nearbyCandidates: allNearbyCandidates.size,
+        });
+
+        // Fallback: if no verified HikeSafe signature was detected, show nearby BLE candidates
+        // so users can still attempt connecting on OEMs that suppress advertisement names.
+        if (foundDevices.size === 0 && allNearbyCandidates.size > 0) {
+          const fallback = Array.from(allNearbyCandidates.values())
+            .sort((a, b) => {
+              const ar = Number.isFinite(a?.rssi) ? a.rssi : -999;
+              const br = Number.isFinite(b?.rssi) ? b.rssi : -999;
+              return br - ar;
+            })
+            .slice(0, 12);
+
+          if (fallback.length > 0) {
+            setAvailableDevices(fallback);
+            showTemporaryStatus('No HikeSafe signature found. Showing nearby BLE devices to try.', 3500);
+          }
+        } else if (foundDevices.size === 0) {
+          showTemporaryStatus('No BLE advertisements found. Move closer and reboot the hub, then rescan.', 3500);
+        }
+
         setIsScanning(false);
         scanStopTimeoutRef.current = null;
       }, Math.max(0, delayMs || 0));
@@ -1413,8 +1458,6 @@ export const BluetoothProvider = ({ children }) => {
     setIsScanning(true);
     setAvailableDevices([]);
     
-    const foundDevices = new Map();
-
     const normalizeUuid = (value) => String(value || '').trim().toUpperCase();
     const isLikelyHikeSafeDevice = (device) => {
       if (!device) return false;
@@ -1451,7 +1494,11 @@ export const BluetoothProvider = ({ children }) => {
       // Scan for all BLE devices, filter by name
       bleManagerRef.current.startDeviceScan(
         null, // null = scan for all services
-        { allowDuplicates: false },
+        {
+          allowDuplicates: false,
+          // Low-latency scan improves discovery reliability on some Android OEM stacks.
+          scanMode: 2,
+        },
         (error, device) => {
           if (error) {
             const errCode = error?.errorCode ?? error?.code;
@@ -1462,15 +1509,41 @@ export const BluetoothProvider = ({ children }) => {
             return;
           }
 
+          if (device && !foundDevices.has(device.id) && !allNearbyCandidates.has(device.id)) {
+            const advName = `${device.name || ''}`.trim();
+            const localName = `${device.localName || ''}`.trim();
+            const display = advName || localName;
+            const serviceUuids = Array.isArray(device.serviceUUIDs) ? device.serviceUUIDs : [];
+            const looksUsable = !!(device.id || display || serviceUuids.length > 0);
+
+            if (looksUsable) {
+              allNearbyCandidates.set(device.id, {
+                id: device.id,
+                name: display || `Nearby BLE (${String(device.id || '').slice(-4)})`,
+                address: device.id,
+                rssi: device.rssi,
+                unverified: true,
+              });
+            }
+          }
+
           if (device && isLikelyHikeSafeDevice(device)) {
             if (!foundDevices.has(device.id)) {
               const displayName = device.name || device.localName || 'HikeSafe Device';
+              allNearbyCandidates.delete(device.id);
               foundDevices.set(device.id, {
                 id: device.id,
                 name: displayName,
                 address: device.id,
                 rssi: device.rssi,
               });
+
+              console.log('[BLE] Verified candidate found', {
+                id: device.id,
+                name: displayName,
+                rssi: device.rssi,
+              });
+
               setAvailableDevices(Array.from(foundDevices.values()));
 
               // Fast path: once a candidate appears, stop scanning soon for quicker connect UX.
@@ -1490,7 +1563,7 @@ export const BluetoothProvider = ({ children }) => {
       scheduleStopScan(0);
       setIsScanning(false);
     }
-  }, [getBlePowerStateSafe, requestPermissions, warnIfLocationServicesOffForBle]);
+  }, [cleanupBleManager, delay, ensureBleManagerReady, getBlePowerStateSafe, requestPermissions, showTemporaryStatus, warnIfLocationServicesOffForBle]);
 
   // Parse incoming BLE data from device
   const parseBluetoothData = useCallback((data, sourceDeviceId = null) => {

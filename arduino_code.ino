@@ -1486,7 +1486,10 @@ void setup() {
   pRxCharacteristic->setCallbacks(new MyCallbacks());
 
   pService->start();
-  pServer->getAdvertising()->start();
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->start();
 
   // --- LORA SETUP ---
   SPI.begin(SCK, MISO, MOSI, SS);
