@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, BackHandler, useWindowDimensions, StyleSheet, ImageBackground } from 'react-native';
+import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, BackHandler, useWindowDimensions, StyleSheet, ImageBackground, PanResponder } from 'react-native';
 import Animated, { Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Home, MapPin, MessageCircle, User, CheckSquare, Square, AlertTriangle, X, Users } from 'lucide-react-native';
@@ -58,6 +58,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const [transitionToTab, setTransitionToTab] = useState(null);
   const transitionToTabRef = useRef(null);
   const isTransitioningRef = useRef(false);
+  const swipeTargetTabRef = useRef(null);
   const transitionProgress = useSharedValue(1);
   const transitionDirection = useSharedValue(1);
   // 0 = slide horizontal, 1 = cross-fade, 2 = slide up (modal), 3 = slide down (dismiss)
@@ -155,6 +156,125 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
     changeTab('location');
   }, [changeTab]);
 
+  // Hide bottom nav when on sub-screens.
+  const showBottomNav = !SUB_SCREENS.includes(activeTab);
+
+  const isAnyModalOpen = showLogoutModal || showLocationModal || showLobbyModal || showSOSAlertModal;
+  const canSwipeTabs = showBottomNav && !isAnyModalOpen && !isTransitioningRef.current;
+
+  const handleSwipeTab = useCallback((direction) => {
+    if (!canSwipeTabs) {
+      return;
+    }
+
+    const currentIndex = TAB_ORDER.indexOf(activeTab);
+    if (currentIndex === -1) {
+      return;
+    }
+
+    const nextIndex = currentIndex + direction;
+    if (nextIndex < 0 || nextIndex >= TAB_ORDER.length) {
+      return;
+    }
+
+    changeTab(TAB_ORDER[nextIndex]);
+  }, [activeTab, changeTab, canSwipeTabs]);
+
+  const tabSwipeResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onStartShouldSetPanResponderCapture: () => false,
+    onMoveShouldSetPanResponder: (_, gestureState) => {
+      if (!canSwipeTabs) return false;
+
+      const { dx, dy } = gestureState;
+      return Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.15;
+    },
+    onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+      if (!canSwipeTabs) return false;
+
+      const { dx, dy } = gestureState;
+      return Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.05;
+    },
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: () => {
+      swipeTargetTabRef.current = null;
+    },
+    onPanResponderMove: (_, gestureState) => {
+      if (!canSwipeTabs) return;
+
+      const { dx, dy } = gestureState;
+      if (Math.abs(dx) <= Math.abs(dy)) {
+        return;
+      }
+
+      const direction = dx < 0 ? 1 : -1;
+      const currentIndex = TAB_ORDER.indexOf(activeTab);
+      if (currentIndex === -1) return;
+
+      const nextIndex = currentIndex + direction;
+      if (nextIndex < 0 || nextIndex >= TAB_ORDER.length) {
+        return;
+      }
+
+      const targetTab = TAB_ORDER[nextIndex];
+      swipeTargetTabRef.current = targetTab;
+
+      if (!isTransitioningRef.current) {
+        setTransitionFromTab(activeTab);
+        setTransitionToTab(targetTab);
+        transitionToTabRef.current = targetTab;
+        isTransitioningRef.current = true;
+      }
+
+      transitionMode.value = 0;
+      transitionDirection.value = direction;
+      transitionProgress.value = Math.min(Math.abs(dx) / windowWidth, 1);
+    },
+    onPanResponderRelease: (_, gestureState) => {
+      const { dx, vx } = gestureState;
+      const shouldTrigger = Math.abs(dx) > 70 || Math.abs(vx) > 0.35;
+      const targetTab = swipeTargetTabRef.current;
+
+      if (!shouldTrigger || !targetTab) {
+        transitionProgress.value = withTiming(
+          0,
+          { duration: 220, easing: Easing.out(Easing.cubic) },
+          (finished) => {
+            if (finished) {
+              runOnJS(finishTabTransition)(activeTab);
+            }
+          }
+        );
+        return;
+      }
+
+      transitionDirection.value = dx < 0 ? 1 : -1;
+      transitionProgress.value = withTiming(
+        1,
+        { duration: 220, easing: Easing.out(Easing.cubic) },
+        (finished) => {
+          if (finished) {
+            runOnJS(finishTabTransition)(targetTab);
+            runOnJS(setActiveTab)(targetTab);
+          }
+        }
+      );
+    },
+    onPanResponderTerminate: () => {
+      const targetTab = swipeTargetTabRef.current;
+      transitionProgress.value = withTiming(
+        0,
+        { duration: 180, easing: Easing.out(Easing.cubic) },
+        (finished) => {
+          if (finished) {
+            runOnJS(finishTabTransition)(activeTab);
+          }
+        }
+      );
+      return true;
+    },
+  }), [canSwipeTabs, handleSwipeTab]);
+
   const getTransitionMode = useCallback((fromTab, toTab) => {
     const fromIsSub = SUB_SCREENS.includes(fromTab);
     const toIsSub = SUB_SCREENS.includes(toTab);
@@ -165,8 +285,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
     const fromIndex = TAB_ORDER.indexOf(fromTab);
     const toIndex = TAB_ORDER.indexOf(toTab);
     if (fromIndex !== -1 && toIndex !== -1) {
-      const delta = Math.abs(toIndex - fromIndex);
-      return delta === 1 ? 0 : 1;
+        return 0;
     }
 
     return 1;
@@ -214,7 +333,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
 
     transitionProgress.value = 0;
 
-    const duration = mode === 0 ? 340 : mode === 1 ? 260 : 380;
+    const duration = mode === 0 ? 420 : mode === 1 ? 240 : 340;
     transitionProgress.value = withTiming(
       1,
       { duration, easing: Easing.out(Easing.cubic) },
@@ -418,9 +537,9 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
 
     if (mode === 0) {
       // Slide horizontal
-      translateX = -direction * windowWidth * progress;
-      opacity = 1 - progress;
-      scale = 1 - 0.01 * progress;
+      translateX = -direction * windowWidth * progress * 0.82;
+      opacity = 1 - 0.06 * progress;
+      scale = 1 - 0.012 * progress;
     } else if (mode === 2) {
       // Main -> sub-screen (incoming slides up); keep background subtly present
       opacity = 1 - 0.25 * progress;
@@ -452,9 +571,9 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
 
     if (mode === 0) {
       // Slide horizontal
-      translateX = direction * windowWidth * (1 - progress);
-      opacity = progress;
-      scale = 0.99 + 0.01 * progress;
+      translateX = direction * windowWidth * (1 - progress) * 0.82;
+      opacity = 0.94 + 0.06 * progress;
+      scale = 0.988 + 0.012 * progress;
     } else if (mode === 2) {
       // Sub-screen slides up
       translateY = windowHeight * (1 - progress);
@@ -473,11 +592,24 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
     };
   }, [windowWidth, windowHeight]);
 
-  // Hide bottom nav when on sub-screens
-  const showBottomNav = !SUB_SCREENS.includes(activeTab);
+  const horizontalPagerStyle = useAnimatedStyle(() => {
+    if (transitionMode.value !== 0 || !transitionFromTab || !transitionToTab) {
+      return {};
+    }
+
+    const direction = transitionDirection.value;
+    const progress = transitionProgress.value;
+    const translateX = direction === 1
+      ? -windowWidth * progress
+      : -windowWidth * (1 - progress);
+
+    return {
+      transform: [{ translateX }],
+    };
+  }, [windowWidth, transitionFromTab, transitionToTab]);
 
   return (
-    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: colors.background }}>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: colors.background }} {...tabSwipeResponder.panHandlers}>
       <ImageBackground
         source={require('../assets/dashboard_bg.png')}
         style={StyleSheet.absoluteFillObject}
@@ -486,7 +618,19 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
       <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.overlay }]} />
 
       <View style={{ flex: 1, overflow: 'hidden', backgroundColor: 'transparent' }}>
-        {transitionFromTab && transitionToTab ? (
+        {transitionFromTab && transitionToTab && transitionMode.value === 0 ? (
+          <Animated.View
+            style={[{ flex: 1, flexDirection: 'row', width: windowWidth * 2 }, horizontalPagerStyle]}
+            pointerEvents="none"
+          >
+            <View style={{ width: windowWidth, flexShrink: 0 }}>
+              {renderContentForTab(transitionDirection.value === 1 ? transitionFromTab : transitionToTab)}
+            </View>
+            <View style={{ width: windowWidth, flexShrink: 0 }}>
+              {renderContentForTab(transitionDirection.value === 1 ? transitionToTab : transitionFromTab)}
+            </View>
+          </Animated.View>
+        ) : transitionFromTab && transitionToTab ? (
           <>
             <Animated.View
               style={[StyleSheet.absoluteFillObject, outgoingStyle]}
