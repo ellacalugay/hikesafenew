@@ -747,6 +747,3 @@ export const LobbyProvider = ({ children }) => {
 };
 
 export default LobbyContext;
-
-// Export the function for external use
-export { createLobbyWithoutDevice };

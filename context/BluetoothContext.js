@@ -5491,17 +5491,11 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
   const getMessagesForDevice = useCallback((deviceId) => {
     const isBroadcastMsg = (msg) => {
       if (!msg) return false;
-      if (msg.localOnly) return false;
       if (typeof msg.targetDeviceId === 'number') {
         return msg.targetDeviceId === 0;
       }
       return typeof msg.to === 'number' && msg.to === 0;
     };
-
-    if (deviceId === -1) {
-      // Local-only broadcast (same hub) - BLE echo only.
-      return messages.filter(m => m && m.localOnly);
-    }
 
     if (deviceId === 0) {
       // Broadcast/Group chat - ONLY show broadcast-targeted messages.
@@ -5522,51 +5516,6 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
       );
     });
   }, [messages]);
-
-  // Send local-only broadcast (same hub / BLE only)
-  const sendLocalBroadcastMessage = useCallback(async (text) => {
-    if (!text || typeof text !== 'string') return false;
-    if (!isConnected) return false;
-
-    if (!isInLobbyRef.current || !lobbyCodeRef.current) {
-      showTemporaryStatus('Join a lobby first', 2000);
-      return false;
-    }
-
-    const trimmedText = text.trim();
-    if (!trimmedText) return false;
-
-    if (trimmedText.length > LORA_MAX_TEXT_LEN) {
-      Alert.alert('Message Too Long', `Message limit is ${LORA_MAX_TEXT_LEN} characters.`);
-      return false;
-    }
-
-    const command = `LMSG:${trimmedText}`;
-
-    const newMessage = {
-      id: `msg-${Date.now()}-local-0`,
-      from: 'me',
-      to: 0,
-      targetDeviceId: 0,
-      text: trimmedText,
-      timestamp: Date.now(),
-      isMine: true,
-      pending: true,
-      failed: false,
-      localOnly: true,
-    };
-
-    setMessages(prev => [...prev, newMessage].slice(-MAX_MESSAGES_IN_MEMORY));
-
-    const success = await sendCommand(command);
-    setMessages(prev => prev.map(msg =>
-      msg.id === newMessage.id
-        ? { ...msg, pending: false, failed: !success }
-        : msg
-    ));
-
-    return success;
-  }, [isConnected, sendCommand, showTemporaryStatus]);
   
   // Get unique conversations
   const getConversations = useCallback(() => {
@@ -5807,7 +5756,6 @@ Send anyway? (May deliver to the wrong group if the hub did not switch.)`;
     sendOK,
     silenceActiveAlert,
     dismissAlert,
-    sendLocalBroadcastMessage,
     clearMorseInput,
     removeMemberLocation,
     addActivity,

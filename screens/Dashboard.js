@@ -17,13 +17,14 @@ import MessageTab from './tabs/MessageTab';
 import ProfileTab from './tabs/ProfileTab';
 import EditProfileScreen from './tabs/EditProfileScreen';
 import ChatScreen from './tabs/ChatScreen';
+import MorseLegendScreen from './tabs/MorseLegendScreen';
 import SettingsScreen from './tabs/SettingsScreen';
 import HelpScreen from './tabs/HelpScreen';
 import ReportProblemScreen from './tabs/ReportProblemScreen';
 import MembersTab from './tabs/MembersTab';
 
 const TAB_ORDER = ['home', 'location', 'message', 'members', 'profile'];
-const SUB_SCREENS = ['editProfile', 'chat', 'settings', 'help', 'reportProblem'];
+const SUB_SCREENS = ['editProfile', 'chat', 'morseLegend', 'settings', 'help', 'reportProblem'];
 
 const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
   <TouchableOpacity style={styles.tabItem} onPress={onPress}>
@@ -372,7 +373,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
           />
         );
       case 'location': return <LocationTab onLocationPress={handleLocationPress} onShowDeviceConnection={onRequireDeviceSetup} />;
-      case 'message': return <MessageTab onOpenChat={handleOpenChat} />;
+      case 'message': return <MessageTab onOpenChat={handleOpenChat} onOpenMorseLegend={() => changeTab('morseLegend')} />;
       case 'profile': return (
         <ProfileTab 
           onLogout={handleLogoutPress} 
@@ -384,6 +385,17 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
       );
       case 'editProfile': return <EditProfileScreen onBack={goBackTab} />;
       case 'chat': return <ChatScreen onBack={goBackTab} chatName={chatName} />;
+      case 'morseLegend': return (
+        <MorseLegendScreen
+          onBack={() => {
+            if (tabHistory.length > 1) {
+              goBackTab();
+              return;
+            }
+            changeTab('message');
+          }}
+        />
+      );
       case 'settings': return <SettingsScreen onBack={goBackTab} onDeleteAccount={onDeleteAccount} />;
       case 'help': return <HelpScreen onBack={goBackTab} />;
       case 'reportProblem': return <ReportProblemScreen onBack={goBackTab} />;
