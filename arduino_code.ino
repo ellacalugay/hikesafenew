@@ -935,7 +935,7 @@ const unsigned char* epd_bitmap_allArray[1] = {
 };
 
 // --- CONFIGURATION ---
-#define DEVICE_ID 1
+#define DEVICE_ID 3
 
 // Broadcast phone (mobile) GPS over LoRa so other hubs can see connected phones.
 // Keep this modest to avoid congesting the channel.
@@ -1196,6 +1196,30 @@ bool pendingLobbyAnnounce = false;
 bool pendingLobbyECBroadcast = false;
 unsigned long pendingLobbyAnnounceAt = 0;
 unsigned long pendingLobbyECBroadcastAt = 0;
+
+// ── Non-blocking LED/Buzzer one-shot timers ───────────────────────────────────
+// Each "pendingXxxOffAt" holds the millis() time when the pin should go LOW.
+// A value of 0 means no pending action. Checked every loop iteration.
+unsigned long pendingGreenLedOffAt  = 0;  // GREEN_LED pulse timer
+unsigned long pendingSosLedOffAt    = 0;  // SOS_LED pulse timer
+unsigned long pendingBuzzerOffAt    = 0;  // BUZZER pulse timer
+
+// Non-blocking boot-splash timer (replaces two delay(3000) in setup())
+bool     splashDone        = false;
+uint8_t  splashPhase       = 0;   // 0 = logo, 1 = boot text, 2 = done
+unsigned long splashAt     = 0;
+
+// Non-blocking post-SOS / post-OK guard: prevents the very next loop iteration
+// from re-triggering button actions immediately after triggerSOS/triggerOkay.
+unsigned long bleConnectFlashOffAt = 0;   // GREEN_LED after BLE connect
+unsigned long bleConnectGuardUntil = 0;   // 500 ms quiet after BLE connect event
+
+// Pending LoRa retransmit scheduling (replaces delay(120) in triggerSOS/checkMorse)
+bool     pendingSosRetx    = false;
+unsigned long pendingSosRetxAt = 0;
+bool     pendingMorseRetx  = false;
+unsigned long pendingMorseRetxAt = 0;
+// ─────────────────────────────────────────────────────────────────────────────
 
 uint32_t currentLobbyCode = 0;
 bool lobbyHostActive = false;                 
@@ -1702,6 +1726,8 @@ void handleSeparationAlarmNonBlocking() {
     sepBuzzState    = !sepBuzzState;
     digitalWrite(SOS_LED, sepBuzzState ? HIGH : LOW);
     digitalWrite(BUZZER,  sepBuzzState ? HIGH : LOW);
+    // This function owns the buzzer; cancel any pending one-shot off-timer.
+    pendingBuzzerOffAt = 0;
   }
 }
 
@@ -1848,19 +1874,10 @@ void setup() {
   drawBitmapFitToOled_P(epd_bitmap_hike, HIKE_LOGO_W, HIKE_LOGO_H);
   display.display();
 
-  // Hold the logo on screen for 3 seconds before continuing boot
-  delay(3000);
-
-  display.clearDisplay();
-  display.setTextSize(2);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(15, 20);
-  display.print("HikeSafe");
-  display.setTextSize(1);
-  display.setCursor(15, 45);
-  display.print("System Booting...");
-  display.display();
-  delay(3000);
+  // Splash logo shown; hand off to non-blocking splash state machine in loop().
+  // splashPhase=0: showing logo → at splashAt show boot text → at splashAt+3000 done.
+  splashPhase = 0;
+  splashAt    = millis() + 3000;  // advance to boot-text phase after 3 s
 
   // --- BLE SETUP ---
   String bleName = "HikeSafe-D" + String(DEVICE_ID);
@@ -1919,6 +1936,59 @@ void setup() {
 // MAIN LOOP
 // ============================================================
 void loop() {
+  unsigned long now = millis();
+
+  // ── Non-blocking boot splash (replaces two delay(3000) in setup) ─────────
+  if (!splashDone) {
+    if (splashPhase == 0 && now >= splashAt) {
+      // Show "HikeSafe / System Booting..." screen
+      display.clearDisplay();
+      display.setTextSize(2);
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(15, 20);
+      display.print("HikeSafe");
+      display.setTextSize(1);
+      display.setCursor(15, 45);
+      display.print("System Booting...");
+      display.display();
+      splashPhase = 1;
+      splashAt    = now + 3000;
+    } else if (splashPhase == 1 && now >= splashAt) {
+      splashDone  = true;
+      splashPhase = 2;
+    }
+    return; // hold here until splash is done; loop() re-enters immediately
+  }
+
+  // ── Service non-blocking one-shot LED / Buzzer timers ────────────────────
+  if (pendingGreenLedOffAt  && now >= pendingGreenLedOffAt)  { digitalWrite(GREEN_LED, LOW);  pendingGreenLedOffAt  = 0; }
+  if (pendingSosLedOffAt    && now >= pendingSosLedOffAt)    { digitalWrite(SOS_LED,   LOW);  pendingSosLedOffAt    = 0; }
+  if (pendingBuzzerOffAt    && now >= pendingBuzzerOffAt)    { digitalWrite(BUZZER,    LOW);  pendingBuzzerOffAt    = 0; }
+  if (bleConnectFlashOffAt  && now >= bleConnectFlashOffAt)  { digitalWrite(GREEN_LED, LOW);  bleConnectFlashOffAt  = 0; }
+
+  // ── Pending LoRa SOS retransmit ───────────────────────────────────────────
+  if (pendingSosRetx && now >= pendingSosRetxAt) {
+    pendingSosRetx = false;
+    sendLoRaMessage(MSG_SOS, 0);
+    if (currentLobbyCode > 0) sendLoRaEmergencyContact();
+    lastSOSTime = millis();
+    // Start SOS-LED flash (1 s on)
+    digitalWrite(SOS_LED, HIGH);
+    pendingSosLedOffAt = millis() + 1000;
+    updateDisplay();
+  }
+  if (pendingMorseRetx && now >= pendingMorseRetxAt) {
+    pendingMorseRetx = false;
+    sendLoRaMessage(MSG_MORSE, 0);
+    if (currentLobbyCode > 0) sendLoRaEmergencyContact();
+    lastSOSTime = millis();
+    // Flash SOS LED (1 s on)
+    digitalWrite(SOS_LED, HIGH);
+    pendingSosLedOffAt = millis() + 1000;
+    updateDisplay();
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   // Remove stale mobile slots when disconnect callbacks are missed.
   static unsigned long lastStalePruneMs = 0;
   if (millis() - lastStalePruneMs >= 3000) {
@@ -1956,12 +2026,20 @@ void loop() {
 
   if (connectedMobileCount != oldConnectedMobileCount) {
     if (connectedMobileCount > oldConnectedMobileCount) {
-      digitalWrite(GREEN_LED, HIGH); delay(200); digitalWrite(GREEN_LED, LOW);
+      // Non-blocking 200 ms GREEN_LED flash on new connection
+      digitalWrite(GREEN_LED, HIGH);
+      bleConnectFlashOffAt  = millis() + 200;
+      bleConnectGuardUntil  = millis() + 500;  // replaces delay(500)
     }
-    delay(500);
-    pServer->startAdvertising(); 
+    // startAdvertising() deferred until guard expires so we don't call it
+    // in the same cycle as the HIGH pulse. Handled below.
     oldConnectedMobileCount = connectedMobileCount;
     updateDisplay();
+  }
+  // Deferred startAdvertising after BLE connect event
+  if (bleConnectGuardUntil && millis() >= bleConnectGuardUntil) {
+    bleConnectGuardUntil = 0;
+    pServer->startAdvertising();
   }
 
   updateGPS();
@@ -2021,9 +2099,10 @@ void loop() {
       emergencySilenced = false;
       digitalWrite(SOS_LED, LOW);
       digitalWrite(BUZZER,  LOW);
-      digitalWrite(GREEN_LED, HIGH); delay(500); digitalWrite(GREEN_LED, LOW);
+      digitalWrite(GREEN_LED, HIGH);
+      pendingGreenLedOffAt = millis() + 500;
       updateDisplay();
-      delay(500);
+      // (replaces second delay(500) — loop continues immediately)
     } else if (sosActive || morseActive) {
       emergencySilenced = false;
       triggerOkay();
@@ -2053,11 +2132,13 @@ void loop() {
         if (pressTime < DOT_MAX) {
           morseInput += ".";
           sendToPhone("MORSE_DOT");
-          digitalWrite(SOS_LED, HIGH); delay(80); digitalWrite(SOS_LED, LOW);
+          digitalWrite(SOS_LED, HIGH);
+          pendingSosLedOffAt = millis() + 80;   // non-blocking 80 ms flash
         } else {
           morseInput += "-";
           sendToPhone("MORSE_DASH");
-          digitalWrite(SOS_LED, HIGH); delay(200); digitalWrite(SOS_LED, LOW);
+          digitalWrite(SOS_LED, HIGH);
+          pendingSosLedOffAt = millis() + 200;  // non-blocking 200 ms flash
         }
         lastTapTime = millis();
         // FIX 4: Removed spammy updateDisplay() here. Loop handles it.
@@ -2129,8 +2210,7 @@ void sendToPhone(String msg) {
       const String chunk = msg.substring(i, end);
       pTxCharacteristic->setValue((uint8_t*)chunk.c_str(), chunk.length());
       pTxCharacteristic->notify();
-      // Small gap helps avoid dropped notifications on some stacks.
-      delay(5);
+      // The BLE stack queues notifications; no artificial delay needed here.
     }
   }
 }
@@ -2161,17 +2241,11 @@ void triggerSOS() {
     sendLoRaMessage(MSG_SOS, connectedMobiles[i].mobileID);
   }
   sendLoRaMessage(MSG_SOS, 0);
-  // Quick retry improves first-delivery reliability on noisy links.
-  delay(120);
-  sendLoRaMessage(MSG_SOS, 0);
-  
-  delay(100);
-  if (currentLobbyCode > 0) sendLoRaEmergencyContact();
-  
-  lastSOSTime = millis();
-  digitalWrite(SOS_LED, HIGH); delay(1000); digitalWrite(SOS_LED, LOW);
-  updateDisplay();
-  delay(300);
+  // Schedule quick retransmit non-blocking (replaces delay(120) + second sendLoRaMessage)
+  pendingSosRetx   = true;
+  pendingSosRetxAt = millis() + 120;
+  // EC broadcast and LED flash handled when retransmit fires (pendingSosRetx block in loop)
+  // (replaces delay(100) + sendLoRaEmergencyContact + delay(1000) LED + delay(300))
 }
 
 void triggerOkay() {
@@ -2192,9 +2266,10 @@ void triggerOkay() {
   }
   sendLoRaMessage(MSG_OKAY, 0);
   
-  digitalWrite(GREEN_LED, HIGH); delay(1000); digitalWrite(GREEN_LED, LOW);
+  // Non-blocking 1 s GREEN_LED confirmation flash (replaces delay(1000) + delay(300))
+  digitalWrite(GREEN_LED, HIGH);
+  pendingGreenLedOffAt = millis() + 1000;
   updateDisplay();
-  delay(300);
 }
 
 void checkBluetoothCommands() {
@@ -2789,7 +2864,8 @@ void receiveLoRaMessage() {
       if (!hasRemoteEmergencyAlerts()) {
         emergencySilenced = false;
       }
-      digitalWrite(GREEN_LED, HIGH); delay(500); digitalWrite(GREEN_LED, LOW);
+      digitalWrite(GREEN_LED, HIGH);
+      pendingGreenLedOffAt = millis() + 500;  // non-blocking 500 ms flash
     } else if (msg.msgType == MSG_ON_MY_WAY) {
       alert += "ON_MY_WAY,";
       emergencySilenced = true;
@@ -2857,7 +2933,8 @@ void receiveLoRaMessage() {
       "," + text +
       ",RSSI:" + String(currentRssi)
     );
-    digitalWrite(GREEN_LED, HIGH); delay(200); digitalWrite(GREEN_LED, LOW);
+    digitalWrite(GREEN_LED, HIGH);
+    pendingGreenLedOffAt = millis() + 200;  // non-blocking 200 ms flash
 
   } else if (packetSize == sizeof(LoRaNickMessage)) {
     LoRaNickMessage nickMsg;
@@ -3057,16 +3134,10 @@ void checkMorseInput() {
       sendLoRaMessage(MSG_MORSE, connectedMobiles[i].mobileID);
     }
     sendLoRaMessage(MSG_MORSE, 0);
-    // Quick retry improves first-delivery reliability on noisy links.
-    delay(120);
-    sendLoRaMessage(MSG_MORSE, 0);
-    
-    delay(100);
-    if (currentLobbyCode > 0) {
-      sendLoRaEmergencyContact();
-    }
-    
-    lastSOSTime = millis();
+    // Schedule non-blocking retransmit + EC broadcast (replaces delay(120) + retx + delay(100) + EC)
+    pendingMorseRetx   = true;
+    pendingMorseRetxAt = millis() + 120;
+    // LED confirmation and lastSOSTime set when retransmit fires in loop()
 
     display.clearDisplay();
     display.setTextSize(2);
@@ -3075,7 +3146,9 @@ void checkMorseInput() {
     display.print("MC ON!");
     display.display();
 
-    digitalWrite(SOS_LED, HIGH); delay(1000); digitalWrite(SOS_LED, LOW);
+    // Non-blocking 1 s SOS_LED confirmation (replaces delay(1000))
+    digitalWrite(SOS_LED, HIGH);
+    pendingSosLedOffAt = millis() + 1000;
   } else {
     display.clearDisplay();
     display.setTextSize(2);
@@ -3085,8 +3158,9 @@ void checkMorseInput() {
     display.display();
 
     sendToPhone("STATUS:MORSE_FAIL");
-    // FIX 3: Shortened blocking delay from 1000ms to 200ms
-    digitalWrite(BUZZER, HIGH); delay(200); digitalWrite(BUZZER, LOW);
+    // Non-blocking 200 ms buzzer beep (replaces delay(200))
+    digitalWrite(BUZZER, HIGH);
+    pendingBuzzerOffAt = millis() + 200;
   }
   morseInput = "";
   updateDisplay();
@@ -3099,6 +3173,9 @@ void blinkNormalSOSNonBlocking() {
     alarmLedState  = !alarmLedState;
     digitalWrite(SOS_LED, alarmLedState ? HIGH : LOW);
     digitalWrite(BUZZER,  (!emergencySilenced && alarmLedState) ? HIGH : LOW);
+    // Blink function owns the buzzer now; cancel any one-shot off-timer
+    // so it doesn't interrupt the blink pattern mid-cycle.
+    pendingBuzzerOffAt = 0;
   }
 }
 
@@ -3109,6 +3186,8 @@ void blinkMorseSOSNonBlocking() {
     alarmLedState  = !alarmLedState;
     digitalWrite(SOS_LED, alarmLedState ? HIGH : LOW);
     digitalWrite(BUZZER,  (!emergencySilenced && alarmLedState) ? HIGH : LOW);
+    // Blink function owns the buzzer now; cancel any one-shot off-timer.
+    pendingBuzzerOffAt = 0;
   }
 }
 
