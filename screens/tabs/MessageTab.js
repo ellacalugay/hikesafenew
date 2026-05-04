@@ -8,7 +8,7 @@ import { useLobby } from '../../context/LobbyContext';
 import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const MessageTab = ({ onOpenChat }) => {
+const MessageTab = ({ onOpenChat, onOpenMorseLegend }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const {
@@ -251,35 +251,23 @@ const MessageTab = ({ onOpenChat }) => {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Group Chat - Broadcast - only show if not searching or matches */}
-        {(!searchQuery || 'group chat broadcast'.includes(searchQuery.toLowerCase())) && (
-          (() => {
-            const meta = getLastMessageMeta(-1);
-            const preview = meta.lastText ? meta.lastText : 'Send to phones on this hub only';
-            const unread = meta.unreadCount || 0;
-            return (
+        {(!searchQuery || 'morse code legend sos'.includes(searchLower)) && (
           <TouchableOpacity
+            activeOpacity={0.9}
             style={[styles.chatItem, { backgroundColor: colors.primaryLight, borderWidth: 1, borderColor: colors.primary }]}
-            onPress={() => onOpenChat({ type: 'localBroadcast', name: 'Local Broadcast (This Hub)', deviceId: -1 })}
+            onPress={onOpenMorseLegend}
           >
             <View style={[localStyles.groupIcon, { backgroundColor: colors.primary }]}>
-              <Users size={18} color={colors.textLight} />
+              <MessageCircle size={16} color={colors.textLight} />
             </View>
+
             <View style={localStyles.chatInfo}>
-              <Text style={[styles.chatName, { color: colors.textLight }]}>Local Broadcast (This Hub)</Text>
-              <Text style={[localStyles.chatPreview, { color: colors.textLight, opacity: 0.9 }]} numberOfLines={1}>{preview}</Text>
-            </View>
-            <View style={localStyles.rightStatusRow}>
-              {unread > 0 && (
-                <View style={[localStyles.unreadBadge, { backgroundColor: colors.primary }]}>
-                  <Text style={localStyles.unreadText}>{unread}</Text>
-                </View>
-              )}
-              {isConnected && <View style={styles.onlineDot} />}
+              <Text style={[styles.chatName, { color: colors.textLight }]}>Morse Code Tab</Text>
+              <Text style={[localStyles.chatPreview, { color: colors.textLight, opacity: 0.9 }]} numberOfLines={1}>
+                Tap to open full Morse legend page
+              </Text>
             </View>
           </TouchableOpacity>
-            );
-          })()
         )}
 
         {(!searchQuery || 'group chat broadcast'.includes(searchQuery.toLowerCase())) && (
@@ -453,10 +441,11 @@ const MessageTab = ({ onOpenChat }) => {
         {(() => {
           if (!searchQuery) return null;
           const groupMatches = 'group chat broadcast'.includes(searchLower);
+          const morseMatches = 'morse code legend sos'.includes(searchLower);
           const localMatches =
             showLocalPhones &&
             'this hub local phones direct message m1 m2 m3 m4'.includes(searchLower);
-          const hasResults = groupMatches || localMatches || filteredDevices.length > 0;
+          const hasResults = groupMatches || morseMatches || localMatches || filteredDevices.length > 0;
           if (hasResults) return null;
           return (
           <View

@@ -34,7 +34,6 @@ const ChatScreen = ({ onBack, chatName }) => {
     sendMessage,
     sendDirectMessage,
     sendBroadcastMessage,
-    sendLocalBroadcastMessage,
     markMessagesAsRead,
     clearChatHistory,
     localMobileNicknames,
@@ -103,14 +102,13 @@ const ChatScreen = ({ onBack, chatName }) => {
     deviceId: null 
   };
   
-  const isLocalBroadcast = chatInfo.type === 'localBroadcast' || chatInfo.deviceId === -1;
-  const isBroadcast = isLocalBroadcast || chatInfo.type === 'broadcast' || chatInfo.deviceId === 0;
-  const deviceId = isLocalBroadcast ? -1 : chatInfo.deviceId;
+  const isBroadcast = chatInfo.type === 'broadcast' || chatInfo.deviceId === 0;
+  const deviceId = chatInfo.deviceId;
   const initialMobileId = chatInfo && typeof chatInfo.mobileId === 'number' ? chatInfo.mobileId : null;
   const hasLockedDmTarget = !!(initialMobileId && initialMobileId >= 1 && initialMobileId <= 4);
 
   const isSelfHubChat = !isBroadcast && typeof myDeviceId === 'number' && myDeviceId !== null && deviceId === myDeviceId;
-  const canUseDeviceLevelChat = !isBroadcast && !isLocalBroadcast && !isSelfHubChat && !hasLockedDmTarget;
+  const canUseDeviceLevelChat = !isBroadcast && !isSelfHubChat && !hasLockedDmTarget;
   const dmTargets = useMemo(() => {
     if (isBroadcast || deviceId === null || deviceId === 0) return [];
 
@@ -150,7 +148,7 @@ const ChatScreen = ({ onBack, chatName }) => {
 
   const maxMessageLength = useMemo(() => {
     const baseLimit = 50;
-    if (isBroadcast || isLocalBroadcast || canUseDeviceLevelChat) return baseLimit;
+    if (isBroadcast || canUseDeviceLevelChat) return baseLimit;
 
     const targetMobile = typeof dmTarget === 'number' ? dmTarget : null;
     const fromMobile = (typeof myMobileId === 'number' && myMobileId >= 1 && myMobileId <= 4) ? myMobileId : 0;
@@ -158,7 +156,7 @@ const ChatScreen = ({ onBack, chatName }) => {
 
     const prefix = `__DM__:${targetMobile}:${fromMobile}:`;
     return Math.max(1, baseLimit - prefix.length);
-  }, [canUseDeviceLevelChat, dmTarget, isBroadcast, isLocalBroadcast, myMobileId]);
+  }, [canUseDeviceLevelChat, dmTarget, isBroadcast, myMobileId]);
 
   // When opening a DM thread (device + mobile), preselect that mobile.
   useEffect(() => {
@@ -227,9 +225,7 @@ const ChatScreen = ({ onBack, chatName }) => {
     
     setSending(true);
     try {
-      if (isLocalBroadcast) {
-        await sendLocalBroadcastMessage(text);
-      } else if (isBroadcast) {
+      if (isBroadcast) {
         await sendBroadcastMessage(text);
       } else {
         if (canUseDeviceLevelChat) {
@@ -515,11 +511,9 @@ const ChatScreen = ({ onBack, chatName }) => {
                 {isBroadcast ? 'Group Chat' : `Chat with ${chatInfo.name}`}
               </Text>
               <Text style={[localStyles.emptyText, { color: ui.onSurfaceVariant }]}>
-                {isLocalBroadcast
-                  ? 'Messages sent here go only to phones connected to this hub.'
-                  : isBroadcast
-                    ? 'Messages sent here will be broadcast to all devices in LoRa range.'
-                    : 'Start a conversation. Messages are sent via LoRa radio.'}
+                {isBroadcast
+                  ? 'Messages sent here will be broadcast to all devices in LoRa range.'
+                  : 'Start a conversation. Messages are sent via LoRa radio.'}
               </Text>
               <View style={[localStyles.infoBox, { backgroundColor: ui.surfaceContainer, borderColor: ui.outlineVariant }]}> 
                 <AlertCircle size={16} color={ui.onSurfaceVariant} />

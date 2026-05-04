@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, BackHandler, useWindowDimensions, StyleSheet, ImageBackground } from 'react-native';
 import Animated, { Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Home, MapPin, MessageCircle, User, CheckSquare, Square, AlertTriangle, X, Users } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
@@ -17,13 +17,14 @@ import MessageTab from './tabs/MessageTab';
 import ProfileTab from './tabs/ProfileTab';
 import EditProfileScreen from './tabs/EditProfileScreen';
 import ChatScreen from './tabs/ChatScreen';
+import MorseLegendScreen from './tabs/MorseLegendScreen';
 import SettingsScreen from './tabs/SettingsScreen';
 import HelpScreen from './tabs/HelpScreen';
 import ReportProblemScreen from './tabs/ReportProblemScreen';
 import MembersTab from './tabs/MembersTab';
 
 const TAB_ORDER = ['home', 'location', 'message', 'members', 'profile'];
-const SUB_SCREENS = ['editProfile', 'chat', 'settings', 'help', 'reportProblem'];
+const SUB_SCREENS = ['editProfile', 'chat', 'morseLegend', 'settings', 'help', 'reportProblem'];
 
 const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
   <TouchableOpacity style={styles.tabItem} onPress={onPress}>
@@ -44,6 +45,7 @@ const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
 
 const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const { colors, isDarkMode } = useTheme();
+  const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { activeAlert, activeEmergencyCount, unsilencedEmergencyCount, dismissAlert, silenceActiveAlert, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
   const { lobbyCode, lobbyName, leaveLobby, isInLobby, getEmergencyContactForDevice, getMemberNickname } = useLobby();
@@ -372,7 +374,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
           />
         );
       case 'location': return <LocationTab onLocationPress={handleLocationPress} onShowDeviceConnection={onRequireDeviceSetup} />;
-      case 'message': return <MessageTab onOpenChat={handleOpenChat} />;
+      case 'message': return <MessageTab onOpenChat={handleOpenChat} onOpenMorseLegend={() => changeTab('morseLegend')} />;
       case 'profile': return (
         <ProfileTab 
           onLogout={handleLogoutPress} 
@@ -384,6 +386,17 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
       );
       case 'editProfile': return <EditProfileScreen onBack={goBackTab} />;
       case 'chat': return <ChatScreen onBack={goBackTab} chatName={chatName} />;
+      case 'morseLegend': return (
+        <MorseLegendScreen
+          onBack={() => {
+            if (tabHistory.length > 1) {
+              goBackTab();
+              return;
+            }
+            changeTab('message');
+          }}
+        />
+      );
       case 'settings': return <SettingsScreen onBack={goBackTab} onDeleteAccount={onDeleteAccount} />;
       case 'help': return <HelpScreen onBack={goBackTab} />;
       case 'reportProblem': return <ReportProblemScreen onBack={goBackTab} />;
@@ -500,7 +513,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
             {
               backgroundColor: colors.surfaceBg,
               borderTopColor: colors.borderColor,
-              paddingBottom: 18,
+              paddingBottom: Math.max(18, (insets?.bottom || 0) + 0),
             },
           ]}
         >
