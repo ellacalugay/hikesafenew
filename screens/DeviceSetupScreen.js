@@ -8,6 +8,7 @@ import {
   StyleSheet,
   ImageBackground,
   Image,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -42,6 +43,12 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
   } = useBluetoothDevice();
 
   const [dotCount, setDotCount] = useState(0);
+
+  // Responsive font sizes based on screen width
+  const screenWidth = Dimensions.get('window').width;
+  const responsiveBrandFontSize = Math.round(screenWidth * 0.11); // ~30px on 375w, ~38px on 480w
+  const responsiveConnectingFontSize = Math.round(screenWidth * 0.065); // ~24px on 375w, ~31px on 480w
+  const responsiveLabelFontSize = Math.round(screenWidth * 0.052); // ~20px on 375w, ~25px on 480w
 
   useEffect(() => {
     if (isEnabled && !isConnected) {
@@ -181,20 +188,20 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
         <View style={localStyles.headerArea}>
           <View style={localStyles.headerRow}>
             <View style={localStyles.headerLeft}>
-              <Text style={[localStyles.brandTitle, { color: colors.primary }]}>HikeSafe</Text>
-              <Text style={[localStyles.connectingLabel, { color: colors.textDark }]}>Long Range Device</Text>
+              <Text style={[localStyles.brandTitle, { color: colors.primary, fontSize: responsiveBrandFontSize }]}>HikeSafe</Text>
+              <Text style={[localStyles.connectingLabel, { color: colors.textDark, fontSize: responsiveLabelFontSize }]}>Long Range Device</Text>
               <View style={localStyles.connectingRow}>
                 <Text
                   numberOfLines={1}
                   ellipsizeMode="clip"
-                  style={[localStyles.connectingText, localStyles.connectingWord, { color: colors.textDark }]}
+                  style={[localStyles.connectingText, localStyles.connectingWord, { color: colors.textDark, fontSize: responsiveConnectingFontSize }]}
                 >
                   Connecting
                 </Text>
                 <View style={localStyles.connectingDots}>
-                  <Text style={[localStyles.connectingText, localStyles.connectingDot, { color: colors.textDark, opacity: Math.max(1, dotCount) >= 1 ? 1 : 0 }]}>.</Text>
-                  <Text style={[localStyles.connectingText, localStyles.connectingDot, { color: colors.textDark, opacity: Math.max(1, dotCount) >= 2 ? 1 : 0 }]}>.</Text>
-                  <Text style={[localStyles.connectingText, localStyles.connectingDot, { color: colors.textDark, opacity: Math.max(1, dotCount) >= 3 ? 1 : 0 }]}>.</Text>
+                  <Text style={[localStyles.connectingText, localStyles.connectingDot, { color: colors.textDark, fontSize: responsiveConnectingFontSize, opacity: Math.max(1, dotCount) >= 1 ? 1 : 0 }]}>.</Text>
+                  <Text style={[localStyles.connectingText, localStyles.connectingDot, { color: colors.textDark, fontSize: responsiveConnectingFontSize, opacity: Math.max(1, dotCount) >= 2 ? 1 : 0 }]}>.</Text>
+                  <Text style={[localStyles.connectingText, localStyles.connectingDot, { color: colors.textDark, fontSize: responsiveConnectingFontSize, opacity: Math.max(1, dotCount) >= 3 ? 1 : 0 }]}>.</Text>
                 </View>
               </View>
             </View>
@@ -209,7 +216,7 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
             >
               <Image
                 source={require('../assets/lillyyyyygoooar 2.png')}
-                style={{ width: 150, height: 150 }}
+                style={{ width: 230, height: 230 }}
                 resizeMode="contain"
               />
             </View>
@@ -369,12 +376,10 @@ const localStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     position: 'absolute',
-    right: 0,
-    top: 0,
+    right: -10,
+    top: -12,
     shadowOffset: { width: 6, height: 10 },
-    shadowOpacity: 0.75,
-    shadowRadius: 3,
-    elevation: 10,
+
   },
   brandTitle: {
     fontSize: 44,
