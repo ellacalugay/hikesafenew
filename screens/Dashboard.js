@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { View, TouchableOpacity, Modal, Text, Pressable, Vibration, Share, Alert, ScrollView, TouchableWithoutFeedback, BackHandler, useWindowDimensions, StyleSheet, ImageBackground } from 'react-native';
 import Animated, { Easing, runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Home, MapPin, MessageCircle, User, CheckSquare, Square, AlertTriangle, X, Users } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useNavigation } from '@react-navigation/native';
 import { styles } from '../styles/styles';
 import { useTheme } from '../context/ThemeContext';
 import { useBluetoothDevice } from '../context/BluetoothContext';
@@ -21,8 +22,8 @@ import HelpScreen from './tabs/HelpScreen';
 import ReportProblemScreen from './tabs/ReportProblemScreen';
 import MembersTab from './tabs/MembersTab';
 
-const LOCATION_SERVICES_PREF_KEY = '@hikesafe_location_services_enabled';
-const LOCATION_SERVICES_PROMPTED_KEY = '@hikesafe_location_services_prompted';
+const TAB_ORDER = ['home', 'location', 'message', 'members', 'profile'];
+const SUB_SCREENS = ['editProfile', 'chat', 'settings', 'help', 'reportProblem'];
 
 const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
   <TouchableOpacity style={styles.tabItem} onPress={onPress}>
@@ -43,7 +44,8 @@ const TabIcon = ({ icon: Icon, active, onPress, colors }) => (
 
 const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const { colors, isDarkMode } = useTheme();
-  const { activeAlert, dismissAlert, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
+  const navigation = useNavigation();
+  const { activeAlert, activeEmergencyCount, unsilencedEmergencyCount, dismissAlert, silenceActiveAlert, sendOK, sendCommand, isConnected, memberLocations } = useBluetoothDevice();
   const { lobbyCode, lobbyName, leaveLobby, isInLobby, getEmergencyContactForDevice, getMemberNickname } = useLobby();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState('home');
@@ -64,11 +66,49 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   const [skipLogoutConfirm, setSkipLogoutConfirm] = useState(false);
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [showLocationModal, setShowLocationModal] = useState(false);
-  const [showLocationServicesPrompt, setShowLocationServicesPrompt] = useState(false);
   const [showLobbyModal, setShowLobbyModal] = useState(false);
   const [showSOSAlertModal, setShowSOSAlertModal] = useState(false);
   const joinAnnounceKeyRef = useRef(null);
   const wasConnectedRef = useRef(isConnected);
+
+  const resolvedAlertLocation = useMemo(() => {
+    if (!activeAlert || activeAlert.type === 'OFFLINE') return null;
+
+    const alertLat = Number(activeAlert.lat);
+    const alertLng = Number(activeAlert.lng);
+    const hasAlertCoords =
+      Number.isFinite(alertLat) &&
+      Number.isFinite(alertLng) &&
+      !(alertLat === 0 && alertLng === 0);
+
+    if (hasAlertCoords) {
+      return { lat: alertLat, lng: alertLng, source: 'alert' };
+    }
+
+    const deviceId = typeof activeAlert.deviceId === 'number' ? activeAlert.deviceId : null;
+    if (!deviceId || !Array.isArray(memberLocations)) {
+      return null;
+    }
+
+    const member = memberLocations.find((m) =>
+      m &&
+      m.deviceId === deviceId &&
+      Number.isFinite(Number(m.latitude)) &&
+      Number.isFinite(Number(m.longitude))
+    );
+
+    if (!member) {
+      return null;
+    }
+
+    const memberLat = Number(member.latitude);
+    const memberLng = Number(member.longitude);
+    if (memberLat === 0 && memberLng === 0) {
+      return null;
+    }
+
+    return { lat: memberLat, lng: memberLng, source: 'member' };
+  }, [activeAlert, memberLocations]);
 
   const changeTab = useCallback((nextTab) => {
     setActiveTab((currentTab) => {
@@ -88,115 +128,62 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
     });
   }, []);
 
-  const showLocationServicesBlocked = useCallback(() => {
-    Alert.alert(
-      'Location Services Off',
-      'Enable Location Services in Settings to access the Location tab.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Go to Settings', onPress: () => changeTab('settings') },
-      ]
-    );
-  }, [changeTab]);
+  // Ask for location permission early (no in-app blocking popups).
+  useEffect(() => {
+    let alive = true;
 
-  const goToLocationTab = useCallback(() => {
+    (async () => {
+      try {
+        const perm = await Location.getForegroundPermissionsAsync();
+        if (!alive) return;
+        if (perm?.status !== 'granted' && perm?.canAskAgain) {
+          await Location.requestForegroundPermissionsAsync();
+        }
+      } catch {
+        // best-effort only
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const handleLocationTabPress = useCallback(() => {
     changeTab('location');
   }, [changeTab]);
 
-  const handleLocationTabPress = useCallback(async () => {
-    try {
-      const prompted = await AsyncStorage.getItem(LOCATION_SERVICES_PROMPTED_KEY);
-      if (!prompted) {
-        setShowLocationServicesPrompt(true);
-        return;
-      }
-    } catch (e) {
-      // If storage fails, fall through to location.
-    }
-
-    try {
-      const enabled = await AsyncStorage.getItem(LOCATION_SERVICES_PREF_KEY);
-      if (enabled === 'false') {
-        showLocationServicesBlocked();
-        return;
-      }
-    } catch (e) {
-      // If storage fails, fall through.
-    }
-
-    goToLocationTab();
-  }, [goToLocationTab, showLocationServicesBlocked]);
-
-  const handleLocationServicesDecision = useCallback(async (enable) => {
-    setShowLocationServicesPrompt(false);
-
-    try {
-      await AsyncStorage.setItem(LOCATION_SERVICES_PROMPTED_KEY, 'true');
-    } catch (e) {
-      // ignore
-    }
-
-    if (enable) {
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        const granted = status === 'granted';
-        try {
-          await AsyncStorage.setItem(LOCATION_SERVICES_PREF_KEY, granted ? 'true' : 'false');
-        } catch (e) {}
-        if (!granted) {
-          Alert.alert('Permission Required', 'Location permission is needed to use the compass in the Location tab.');
-          showLocationServicesBlocked();
-          return;
-        }
-      } catch (e) {
-        try { await AsyncStorage.setItem(LOCATION_SERVICES_PREF_KEY, 'false'); } catch (e2) {}
-        showLocationServicesBlocked();
-        return;
-      }
-    } else {
-      try { await AsyncStorage.setItem(LOCATION_SERVICES_PREF_KEY, 'false'); } catch (e) {}
-      showLocationServicesBlocked();
-      return;
-    }
-
-    goToLocationTab();
-  }, [goToLocationTab, showLocationServicesBlocked]);
-
-  const tabOrder = ['home', 'location', 'message', 'members', 'profile'];
-
-  const subScreens = ['editProfile', 'chat', 'settings', 'help', 'reportProblem'];
-
   const getTransitionMode = useCallback((fromTab, toTab) => {
-    const fromIsSub = subScreens.includes(fromTab);
-    const toIsSub = subScreens.includes(toTab);
+    const fromIsSub = SUB_SCREENS.includes(fromTab);
+    const toIsSub = SUB_SCREENS.includes(toTab);
 
     if (!fromIsSub && toIsSub) return 2;
     if (fromIsSub && !toIsSub) return 3;
 
-    const fromIndex = tabOrder.indexOf(fromTab);
-    const toIndex = tabOrder.indexOf(toTab);
+    const fromIndex = TAB_ORDER.indexOf(fromTab);
+    const toIndex = TAB_ORDER.indexOf(toTab);
     if (fromIndex !== -1 && toIndex !== -1) {
       const delta = Math.abs(toIndex - fromIndex);
       return delta === 1 ? 0 : 1;
     }
 
     return 1;
-  }, [subScreens, tabOrder]);
+  }, []);
 
   const getTransitionDirection = useCallback((fromTab, toTab) => {
-    const fromIndex = tabOrder.indexOf(fromTab);
-    const toIndex = tabOrder.indexOf(toTab);
+    const fromIndex = TAB_ORDER.indexOf(fromTab);
+    const toIndex = TAB_ORDER.indexOf(toTab);
 
     if (fromIndex !== -1 && toIndex !== -1) {
       return toIndex > fromIndex ? 1 : -1;
     }
 
-    const fromIsSub = subScreens.includes(fromTab);
-    const toIsSub = subScreens.includes(toTab);
+    const fromIsSub = SUB_SCREENS.includes(fromTab);
+    const toIsSub = SUB_SCREENS.includes(toTab);
     if (!fromIsSub && toIsSub) return 1;
     if (fromIsSub && !toIsSub) return -1;
     return 1;
-  }, [subScreens, tabOrder]);
+  }, []);
 
   const finishTabTransition = useCallback((toTab) => {
     renderedTabRef.current = toTab;
@@ -265,16 +252,35 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
 
   // Handle incoming SOS/MORSE/OFFLINE alerts
   useEffect(() => {
-    if (activeAlert && (activeAlert.type === 'SOS' || activeAlert.type === 'MORSE' || activeAlert.type === 'OFFLINE')) {
-      setShowSOSAlertModal(true);
-      // Vibrate to alert user (different pattern for offline)
-      if (activeAlert.type === 'OFFLINE') {
-        Vibration.vibrate([0, 300, 200, 300]);
-      } else {
-        Vibration.vibrate([0, 500, 200, 500, 200, 500]);
-      }
+    const isAlert = activeAlert && (activeAlert.type === 'SOS' || activeAlert.type === 'MORSE' || activeAlert.type === 'OFFLINE');
+    if (!isAlert) {
+      return;
     }
-  }, [activeAlert]);
+
+    // Sender phone should not self-prompt with the emergency modal.
+    if (activeAlert.localEmergency) {
+      if (showSOSAlertModal) {
+        setShowSOSAlertModal(false);
+      }
+      return;
+    }
+
+    // If someone already acknowledged "On my way", don't keep re-prompting.
+    if (activeAlert.silenced) {
+      if (showSOSAlertModal) {
+        setShowSOSAlertModal(false);
+      }
+      return;
+    }
+
+    setShowSOSAlertModal(true);
+    // Vibrate to alert user (different pattern for offline)
+    if (activeAlert.type === 'OFFLINE') {
+      Vibration.vibrate([0, 300, 200, 300]);
+    } else {
+      Vibration.vibrate([0, 500, 200, 500, 200, 500]);
+    }
+  }, [activeAlert, showSOSAlertModal]);
 
   // Broadcast join timestamp once per connected-lobby session.
   // Lobby code sync is already handled in BluetoothContext.
@@ -311,9 +317,13 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   };
 
   const handleOnMyWay = async () => {
+    if (!activeAlert || activeAlert.localEmergency) {
+      setShowSOSAlertModal(false);
+      return;
+    }
     await sendCommand('ON_MY_WAY');
+    silenceActiveAlert();
     setShowSOSAlertModal(false);
-    dismissAlert();
   };
 
   const handleOpenChat = (name) => {
@@ -451,7 +461,7 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
   }, [windowWidth, windowHeight]);
 
   // Hide bottom nav when on sub-screens
-  const showBottomNav = !subScreens.includes(activeTab);
+  const showBottomNav = !SUB_SCREENS.includes(activeTab);
 
   return (
     <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: colors.background }}>
@@ -501,39 +511,6 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
           <TabIcon icon={User} label="Prof" active={activeTab === 'profile'} onPress={() => changeTab('profile')} colors={colors} />
         </View>
       )}
-
-      {/* One-time Location Services prompt */}
-      <Modal
-        visible={showLocationServicesPrompt}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowLocationServicesPrompt(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.modalBg }]}>
-            <Text style={[styles.modalTitle, { color: colors.textDark, textAlign: 'center' }]}>Enable Location Services</Text>
-            <Text style={[styles.modalText, { color: colors.textDark, textAlign: 'center', marginBottom: 16 }]}
-            >
-              Location permission is needed to access the Location tab.
-            </Text>
-
-            <View style={{ flexDirection: 'row' }}>
-              <TouchableOpacity
-                style={[styles.modalButton, { backgroundColor: colors.inputBg, marginRight: 10, flex: 1 }]}
-                onPress={() => handleLocationServicesDecision(false)}
-              >
-                <Text style={{ color: colors.textDark, fontWeight: '600' }}>Not now</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, { backgroundColor: colors.primary, flex: 1 }]}
-                onPress={() => handleLocationServicesDecision(true)}
-              >
-                <Text style={{ color: 'white', fontWeight: '600' }}>Enable</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       {/* Logout Confirmation Modal */}
       <Modal
@@ -686,6 +663,12 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
                           await leaveLobby();
                           setShowLobbyModal(false);
                           Alert.alert('Left Lobby', 'Lobby cleared for this phone.');
+
+                          // Make lobby switching obvious: return to the Lobby join screen.
+                          navigation.reset({
+                            index: 0,
+                            routes: [{ name: 'Lobby' }],
+                          });
                         }}
                       >
                         <Text style={{ color: 'white', fontWeight: '600' }}>Leave</Text>
@@ -773,12 +756,18 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
             
             <Text style={[styles.modalText, { color: colors.textDark, textAlign: 'center', fontSize: 16, marginVertical: 8 }]}>
               {activeAlert?.type === 'OFFLINE' 
-                ? `${getMemberNickname(activeAlert?.deviceId)} has gone offline!`
-                : `${getMemberNickname(activeAlert?.deviceId)} needs help!`
+                ? `${activeAlert?.displayName || (typeof activeAlert?.deviceId === 'number' ? getMemberNickname(activeAlert.deviceId) : 'A member')} has gone offline!`
+                : `${activeAlert?.displayName || (typeof activeAlert?.deviceId === 'number' ? getMemberNickname(activeAlert.deviceId) : 'A member')} needs help!`
               }
             </Text>
 
-            {activeAlert?.type !== 'OFFLINE' && activeAlert?.deviceId ? (() => {
+            {(activeAlert?.type === 'SOS' || activeAlert?.type === 'MORSE') && ((unsilencedEmergencyCount || activeEmergencyCount || 0) > 1) ? (
+              <Text style={[styles.modalText, { color: colors.gray, textAlign: 'center', fontSize: 13, marginTop: -2 }]}>
+                {`${(unsilencedEmergencyCount || activeEmergencyCount) - 1} more emergency alert(s) are active.`}
+              </Text>
+            ) : null}
+
+            {activeAlert?.type !== 'OFFLINE' && typeof activeAlert?.deviceId === 'number' ? (() => {
               const deviceId = activeAlert.deviceId;
               const contact = getEmergencyContactForDevice ? getEmergencyContactForDevice(deviceId) : null;
               const displayName = getMemberNickname ? getMemberNickname(deviceId) : `Device ${deviceId}`;
@@ -796,14 +785,19 @@ const Dashboard = ({ onLogout, onDeleteAccount, onRequireDeviceSetup }) => {
               );
             })() : null}
             
-            {activeAlert?.lat && activeAlert?.lng && (
-              <View style={{ backgroundColor: colors.inputBg, padding: 14, borderRadius: 12, marginTop: 8 }}>
-                <Text style={{ color: colors.gray, fontSize: 11, fontWeight: '600', letterSpacing: 1, marginBottom: 4 }}>LOCATION</Text>
-                <Text style={{ color: colors.textDark, fontFamily: 'monospace', fontSize: 14, fontWeight: '600' }}>
-                  {activeAlert.lat.toFixed(6)}, {activeAlert.lng.toFixed(6)}
-                </Text>
-              </View>
-            )}
+            {resolvedAlertLocation && (
+                <View style={{ backgroundColor: colors.inputBg, padding: 14, borderRadius: 12, marginTop: 8 }}>
+                  <Text style={{ color: colors.gray, fontSize: 11, fontWeight: '600', letterSpacing: 1, marginBottom: 4 }}>LOCATION</Text>
+                  <Text style={{ color: colors.textDark, fontFamily: 'monospace', fontSize: 14, fontWeight: '600' }}>
+                    {resolvedAlertLocation.lat.toFixed(6)}, {resolvedAlertLocation.lng.toFixed(6)}
+                  </Text>
+                  {resolvedAlertLocation.source === 'member' && (
+                    <Text style={{ color: colors.gray, fontSize: 11, marginTop: 4 }}>
+                      Last known location
+                    </Text>
+                  )}
+                </View>
+              )}
             
             {activeAlert?.localEmergency ? (
               // SENDER: Show only "I am OK" button

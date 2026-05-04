@@ -13,8 +13,9 @@ import { calculateDistance } from '../../utils/math';
 const HomeTab = ({ onChangeTab, onLobbyPress }) => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const { isConnected, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, sendSOS } = useBluetoothDevice();
+  const { isConnected, connectedDevice, myLocation, memberLocations, statusMessage, loraSignalStrength, connectedDevicesCount, activeAlert, activeEmergencyCount, unsilencedEmergencyCount, sendSOS, sendOK } = useBluetoothDevice();
   const { lobbyCode, lobbyName, myNickname } = useLobby();
+  const additionalEmergencies = Math.max(0, ((unsilencedEmergencyCount || activeEmergencyCount || 0) - 1));
 
   // SOS button pulse/blink (subtle) when connected.
   const sosPulseAnim = useRef(new Animated.Value(0)).current;
@@ -89,6 +90,20 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
     await sendSOS();
     Alert.alert('SOS Sent', 'Your SOS signal has been broadcasted to all group members.');
   };
+
+  const handleSendOk = async () => {
+    if (!isConnected) {
+      Alert.alert('Not Connected', 'Please connect to your device first.');
+      return;
+    }
+
+    try {
+      await sendOK();
+      Alert.alert('OK Sent', 'Your OK signal has been sent.');
+    } catch {
+      Alert.alert('Send Failed', 'Could not send OK. Please try again.');
+    }
+  };
   
   return (
     <View style={[styles.tabContainer, { backgroundColor: 'transparent' }]}>
@@ -159,7 +174,7 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
                 {activeAlert.type === 'MORSE' ? 'MORSE EMERGENCY ACTIVE' : 'SOS EMERGENCY ACTIVE'}
               </Text>
               <Text style={localStyles.emergencySubtitle}>
-                {activeAlert.deviceId ? `Device ${activeAlert.deviceId}` : 'Connected device'} needs attention. Tap to view location.
+                {(activeAlert.displayName || (typeof activeAlert.deviceId === 'number' ? `Device ${activeAlert.deviceId}` : 'A member'))} needs attention. Tap to view location.{additionalEmergencies > 0 ? ` + ${additionalEmergencies} more active` : ''}
               </Text>
             </View>
           </TouchableOpacity>
@@ -253,6 +268,22 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
             );
           }}
         </Pressable>
+
+        {/* OK Button */}
+        <TouchableOpacity
+          onPress={handleSendOk}
+          disabled={!isConnected}
+          activeOpacity={0.85}
+          style={[
+            localStyles.okButton,
+            {
+              backgroundColor: isConnected ? colors.primary : colors.inputBg,
+              opacity: isConnected ? 1 : 0.6,
+            },
+          ]}
+        >
+          <Text style={[localStyles.okButtonText, { color: isConnected ? colors.textLight : colors.gray }]}>I am OK</Text>
+        </TouchableOpacity>
 
       </ScrollView>
     </View>
@@ -357,6 +388,22 @@ const localStyles = StyleSheet.create({
     textAlign: 'center',
     letterSpacing: 1.2,
     marginTop: 28,
+  },
+
+  okButton: {
+    alignSelf: 'center',
+    marginTop: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 16,
+    minWidth: 220,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  okButtonText: {
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.4,
   },
 
   sosPressable: {

@@ -1,6 +1,6 @@
-import * as FileSystem from 'expo-file-system';
+import { File, Directory, Paths } from 'expo-file-system';
 
-const OFFLINE_TILES_DIR = `${FileSystem.documentDirectory}offline-tiles`;
+const OFFLINE_TILES_DIR = new Directory(Paths.document, 'offline-tiles');
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 
@@ -19,21 +19,25 @@ const latToTileY = (lat, zoom) => {
   return Math.floor(y * n);
 };
 
-const ensureDirAsync = async (dirUri) => {
+const ensureDirAsync = async (dir) => {
   try {
-    await FileSystem.makeDirectoryAsync(dirUri, { intermediates: true });
-  } catch (e) {
-    // ignore EEXIST / already created
+    dir.create({ intermediates: true, idempotent: true });
+  } catch {
+    // ignore (already exists / best-effort)
   }
 };
 
-export const getOfflineTileTemplateUri = () => `${OFFLINE_TILES_DIR}/{z}/{x}/{y}.png`;
+// IMPORTANT: MapLibre expects literal "{z}/{x}/{y}" placeholders in the tile template.
+// Using `new File(..., '{z}', ...)` can URL-encode braces to %7Bz%7D, which breaks tile loading (black map).
+export const getOfflineTileTemplateUri = () => {
+  const base = String(OFFLINE_TILES_DIR?.uri || '').replace(/\/+$/, '');
+  return `${base}/{z}/{x}/{y}.png`;
+};
 
 export const clearOfflineTilesAsync = async () => {
   try {
-    const info = await FileSystem.getInfoAsync(OFFLINE_TILES_DIR);
-    if (info.exists) {
-      await FileSystem.deleteAsync(OFFLINE_TILES_DIR, { idempotent: true });
+    if (OFFLINE_TILES_DIR.exists) {
+      OFFLINE_TILES_DIR.delete();
     }
     return true;
   } catch {
@@ -41,13 +45,53 @@ export const clearOfflineTilesAsync = async () => {
   }
 };
 
-const tileUri = (z, x, y) => `${OFFLINE_TILES_DIR}/${z}/${x}/${y}.png`;
+const tileFile = (z, x, y) => new File(OFFLINE_TILES_DIR, String(z), String(x), `${y}.png`);
+const tileDir = (z, x) => new Directory(OFFLINE_TILES_DIR, String(z), String(x));
 
 const buildUrlFromTemplate = (template, z, x, y) =>
   template
     .replace('{z}', String(z))
     .replace('{x}', String(x))
     .replace('{y}', String(y));
+
+const looksLikePng = (bytes) => {
+  // PNG signature: 89 50 4E 47 0D 0A 1A 0A
+  return (
+    bytes &&
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  );
+};
+
+const looksLikeJpeg = (bytes) => {
+  // JPEG SOI: FF D8 FF
+  return bytes && bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+};
+
+const validateRasterTileFileAsync = async (file) => {
+  try {
+    if (!file || !file.exists) return false;
+    if (typeof file.size === 'number' && file.size > 0 && file.size < 64) return false;
+
+    // Read the full file (tiles are small); we only do this for a tiny sample.
+    const bytes = await file.bytes();
+    if (!bytes || bytes.length < 8) return false;
+    if (looksLikePng(bytes) || looksLikeJpeg(bytes)) return true;
+
+    // Common failure mode: HTML error page saved as .png.
+    // (e.g. starts with '<' or '{' JSON).
+    return false;
+  } catch {
+    return false;
+  }
+};
 
 const computeBBoxAround = (centerLat, centerLng, radiusKm) => {
   // Approx; good enough for small-ish radii
@@ -96,16 +140,20 @@ export const downloadOfflineRegionTilesAsync = async ({
     throw new Error('Missing tileUrlTemplate');
   }
 
+  const template = String(tileUrlTemplate);
+  if (!template.includes('{z}') || !template.includes('{x}') || !template.includes('{y}')) {
+    throw new Error('Tile URL template must include {z}, {x}, and {y}.');
+  }
+
   await ensureDirAsync(OFFLINE_TILES_DIR);
 
-  const dirPromises = new Map();
-  const ensureDirCachedAsync = async (dirUri) => {
-    if (!dirUri) return;
-    const existing = dirPromises.get(dirUri);
-    if (existing) return existing;
-    const promise = ensureDirAsync(dirUri);
-    dirPromises.set(dirUri, promise);
-    return promise;
+  const createdDirs = new Set();
+  const ensureDirCachedAsync = async (dir) => {
+    if (!dir) return;
+    const key = dir.uri;
+    if (createdDirs.has(key)) return;
+    createdDirs.add(key);
+    await ensureDirAsync(dir);
   };
 
   const bbox = computeBBoxAround(centerLat, centerLng, radiusKm);
@@ -115,6 +163,10 @@ export const downloadOfflineRegionTilesAsync = async ({
 
   let completed = 0;
   let attempted = 0;
+  let failed = 0;
+  let firstErrorMessage = null;
+  let validatedSamples = 0;
+  const MAX_VALIDATED_SAMPLES = 6;
 
   // Build a capped download queue up-front so we can process in concurrent batches.
   const downloadQueue = [];
@@ -132,6 +184,14 @@ export const downloadOfflineRegionTilesAsync = async ({
     }
   }
 
+  if (totalCapped > 0 && downloadQueue.length === 0) {
+    throw new Error('Could not build tile download queue. Check that your GPS coordinates are valid and try again.');
+  }
+
+  const sampleUrl = downloadQueue.length > 0
+    ? buildUrlFromTemplate(template, downloadQueue[0].z, downloadQueue[0].x, downloadQueue[0].y)
+    : null;
+
   const CONCURRENT_DOWNLOADS = Math.max(1, Math.min(32, Math.floor(Number(concurrentDownloads) || 8)));
 
   for (let i = 0; i < downloadQueue.length; i += CONCURRENT_DOWNLOADS) {
@@ -147,27 +207,38 @@ export const downloadOfflineRegionTilesAsync = async ({
 
         attempted += 1;
 
-        const outUri = tileUri(z, x, y);
-        const outDir = outUri.substring(0, outUri.lastIndexOf('/'));
-        await ensureDirCachedAsync(outDir);
+        const outFile = tileFile(z, x, y);
+        await ensureDirCachedAsync(tileDir(z, x));
 
         try {
-          const existing = await FileSystem.getInfoAsync(outUri);
-          if (existing.exists && existing.size > 0) {
+          if (outFile.exists && outFile.size > 0) {
             completed += 1;
           } else {
-            const url = buildUrlFromTemplate(tileUrlTemplate, z, x, y);
-            await FileSystem.downloadAsync(url, outUri);
+            const url = buildUrlFromTemplate(template, z, x, y);
+            await File.downloadFileAsync(url, outFile, { idempotent: true });
+
+            // Validate a small sample of freshly downloaded tiles to catch blocked tile servers.
+            if (validatedSamples < MAX_VALIDATED_SAMPLES) {
+              const ok = await validateRasterTileFileAsync(outFile);
+              validatedSamples += 1;
+              if (!ok) {
+                try { outFile.delete(); } catch {}
+                throw new Error('Invalid tile content (not a PNG/JPEG). Tile server may be blocked or returning HTML.');
+              }
+            }
             completed += 1;
           }
-        } catch {
-          // ignore per-tile failures; continue
+        } catch (e) {
+          failed += 1;
+          if (!firstErrorMessage) {
+            firstErrorMessage = e?.message ? String(e.message) : String(e);
+          }
         }
       })
     );
 
     if (typeof onProgress === 'function') {
-      onProgress({ completed, attempted, total: totalCapped });
+      onProgress({ completed, attempted, failed, total: totalCapped });
     }
 
     if (typeof shouldCancel === 'function' && shouldCancel()) {
@@ -175,5 +246,15 @@ export const downloadOfflineRegionTilesAsync = async ({
     }
   }
 
-  return { completed, attempted, total: totalCapped, cancelled: false };
+  if (totalCapped > 0 && attempted === 0) {
+    throw new Error('No tiles were attempted. Restart the app / Expo bundler and try again.');
+  }
+
+  if (attempted > 0 && completed === 0) {
+    throw new Error(
+      `No tiles downloaded. Check EXPO_PUBLIC_TILE_URL_TEMPLATE (reachable, usually https, returns PNG/JPG).${sampleUrl ? ` Sample URL: ${sampleUrl}` : ''}${firstErrorMessage ? ` First error: ${firstErrorMessage}` : ''}`
+    );
+  }
+
+  return { completed, attempted, failed, total: totalCapped, cancelled: false };
 };

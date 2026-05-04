@@ -31,12 +31,14 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
     isConnecting,
     isConnected,
     connectedDevice,
+    connectedDevicesList,
     availableDevices,
     myLocation,
     requestEnable,
     scanForDevices,
     connectToDevice,
     disconnect,
+    disconnectFromDevice,
   } = useBluetoothDevice();
 
   const [dotCount, setDotCount] = useState(0);
@@ -56,11 +58,21 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
   }, []);
 
   const handleDevicePress = async (device) => {
+    const isAlreadyConnected = Array.isArray(connectedDevicesList)
+      ? connectedDevicesList.some(d => d?.id === device.id)
+      : false;
+
+    if (isAlreadyConnected && typeof disconnectFromDevice === 'function') {
+      await disconnectFromDevice(device.id);
+      return;
+    }
+
     if (isConnected && connectedDevice?.id === device.id) {
       await disconnect();
-    } else {
-      await connectToDevice(device);
+      return;
     }
+
+    await connectToDevice(device);
   };
 
   const getSignalDotColor = (rssi) => {
@@ -71,6 +83,9 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
   };
 
   const renderDevice = ({ item }) => {
+    const isConnectedToItem = Array.isArray(connectedDevicesList)
+      ? connectedDevicesList.some(d => d?.id === item.id)
+      : false;
     const isCurrentDevice = connectedDevice?.id === item.id;
 
     return (
@@ -79,8 +94,8 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
           localStyles.deviceItem,
           {
             backgroundColor: colors.inputBg,
-            borderColor: isCurrentDevice ? colors.primary : colors.borderColor,
-            borderWidth: isCurrentDevice ? 2 : 1,
+            borderColor: isConnectedToItem ? colors.primary : colors.borderColor,
+            borderWidth: isConnectedToItem ? 2 : 1,
           },
         ]}
         onPress={() => handleDevicePress(item)}
@@ -89,10 +104,23 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
         <View style={localStyles.deviceLeftSection}>
           <Text style={[localStyles.deviceName, { color: colors.textDark }]}>{item.name || 'Unknown Device'}</Text>
           <Text style={[localStyles.deviceAddress, { color: colors.gray }]}>{item.address || item.id}</Text>
+          {!!item?.unverified && (
+            <Text style={[localStyles.unverifiedHint, { color: colors.gray }]}>Unverified BLE device - tap to try</Text>
+          )}
         </View>
 
         <View style={localStyles.deviceRightSection}>
           {isCurrentDevice && isConnected ? (
+            <View
+              style={[
+                localStyles.connectedPill,
+                { borderColor: colors.primary, backgroundColor: `${colors.primaryLight}20` },
+              ]}
+            >
+              <Check size={14} color={colors.primary} />
+              <Text style={[localStyles.connectedPillText, { color: colors.primary }]}>Connected</Text>
+            </View>
+          ) : isConnectedToItem ? (
             <View
               style={[
                 localStyles.connectedPill,
@@ -117,19 +145,29 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
 
   const displayedDevices = useMemo(() => {
     const list = Array.isArray(availableDevices) ? [...availableDevices] : [];
-    if (isConnected && connectedDevice?.id) {
-      const alreadyListed = list.some(d => d?.id === connectedDevice.id);
+
+    // Ensure all currently connected hubs appear in the list.
+    const connected = Array.isArray(connectedDevicesList) ? connectedDevicesList : [];
+    connected.forEach((d) => {
+      if (!d?.id) return;
+      const alreadyListed = list.some(x => x?.id === d.id);
       if (!alreadyListed) {
         list.unshift({
-          id: connectedDevice.id,
-          name: connectedDevice.name || 'Connected Device',
-          address: connectedDevice.id,
+          id: d.id,
+          name: d.name || 'Connected Device',
+          address: d.id,
           rssi: null,
         });
       }
-    }
+    });
+
     return list;
-  }, [availableDevices, isConnected, connectedDevice]);
+  }, [availableDevices, connectedDevicesList]);
+
+  const hasUnverifiedDevices = useMemo(
+    () => displayedDevices.some((d) => !!d?.unverified),
+    [displayedDevices]
+  );
 
   return (
     <ImageBackground
@@ -216,6 +254,9 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
               <Radio size={18} color={colors.primary} />
               <Text style={[localStyles.connectedInfoTitle, { color: colors.textDark }]}>
                 Connected to {connectedDevice.name}
+                {Array.isArray(connectedDevicesList) && connectedDevicesList.length > 1
+                  ? ` (+${connectedDevicesList.length - 1})`
+                  : ''}
               </Text>
             </View>
             <View style={localStyles.connectedRow}>
@@ -233,7 +274,9 @@ const DeviceSetupScreen = ({ onNext, onSkip, allowSkip = true }) => {
           <BlurView intensity={colors.glassIntensity} tint={colors.glassTint} style={StyleSheet.absoluteFillObject} />
           <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.glassOverlay }]} />
 
-          <Text style={[localStyles.listTitle, { color: colors.textDark }]}>Nearby HikeSafe Devices</Text>
+          <Text style={[localStyles.listTitle, { color: colors.textDark }]}>
+            {hasUnverifiedDevices ? 'Nearby BLE Devices' : 'Nearby HikeSafe Devices'}
+          </Text>
 
           {isScanning && availableDevices.length === 0 ? (
             <View style={localStyles.centerState}>
@@ -453,6 +496,11 @@ const localStyles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
     fontWeight: '500',
+  },
+  unverifiedHint: {
+    fontSize: 11,
+    marginTop: 4,
+    fontWeight: '600',
   },
   deviceRightSection: {
     alignItems: 'flex-end',

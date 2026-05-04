@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, BackHandler, Easing, Alert, ImageBackground, StyleSheet, Platform, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { DefaultTheme, NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
@@ -109,13 +109,35 @@ const slideFromRight = () => ({
 function AppNavigator() {
   const { colors } = useTheme();
   const navigationRef = useNavigationContainerRef();
-  const { disconnect, clearChatHistory, clearBreadcrumbs, isConnected } = useBluetoothDevice();
-  const { isLoading: userLoading, clearUser } = useUser();
+  const {
+    disconnect,
+    clearChatHistory,
+    clearBreadcrumbs,
+    clearRuntimeSessionData,
+    isConnected,
+  } = useBluetoothDevice();
+  const {
+    isLoading: userLoading,
+    clearUser,
+    firstName,
+    lastName,
+    contactName,
+    contactPhone,
+    medicalCondition,
+  } = useUser();
   const { myNickname, isLoading: lobbyLoading, clearAccount } = useLobby();
 
   const [resumeAfterReconnect, setResumeAfterReconnect] = useState(false);
   const [showReminder, setShowReminder] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
+
+  const hasOnboardingInfo = useMemo(() => {
+    const hasName = !!((firstName || '').trim() || (lastName || '').trim());
+    const hasNick = !!(myNickname || '').trim();
+    const hasEmergencyContact = !!((contactName || '').trim() || (contactPhone || '').trim());
+    const hasMedical = !!(medicalCondition || '').trim();
+    return hasName || hasNick || hasEmergencyContact || hasMedical;
+  }, [contactName, contactPhone, firstName, lastName, medicalCondition, myNickname]);
 
   // Global safety net: if the LoRa device powers off / goes out of range and the BLE link drops,
   // reset navigation to DeviceSetup from anywhere (Lobby, Dashboard, sub-screens) so the user
@@ -140,7 +162,7 @@ function AppNavigator() {
     if (currentRoute?.name === 'DeviceSetup') return;
 
     // Strict policy B: wipe stack to force the full reconnect flow.
-    setResumeAfterReconnect(false);
+    setResumeAfterReconnect(true);
     navigationRef.reset({
       index: 0,
       routes: [{ name: 'DeviceSetup' }],
@@ -159,6 +181,16 @@ function AppNavigator() {
   };
 
     const handleDeviceSetupComplete = (navigation) => {
+    if (userLoading || lobbyLoading) {
+      return;
+    }
+
+    if (resumeAfterReconnect || hasOnboardingInfo) {
+      setResumeAfterReconnect(false);
+      navigation.navigate('Lobby');
+      return;
+    }
+
     navigation.navigate('OnboardingName');
   };
 
@@ -173,6 +205,19 @@ function AppNavigator() {
   };
 
   const handleLogout = async (navigation) => {
+    try {
+      await clearAccount();
+      if (typeof clearRuntimeSessionData === 'function') {
+        await clearRuntimeSessionData({ clearPersistedChat: true, clearPersistedBreadcrumbs: true });
+      } else {
+        await Promise.all([
+          clearChatHistory?.(),
+          clearBreadcrumbs?.(),
+        ]);
+      }
+    } catch (e) {
+      console.log('Logout cleanup failed:', e?.message || e);
+    }
     await disconnect();
     setResumeAfterReconnect(false);
     navigation.reset({ index: 0, routes: [{ name: 'DeviceSetup' }] });
@@ -181,11 +226,15 @@ function AppNavigator() {
   const handleDeleteAccount = async (navigation) => {
     try {
       await clearAccount();
-      await Promise.all([
-        clearChatHistory?.(),
-        clearBreadcrumbs?.(),
-        clearUser(),
-      ]);
+      if (typeof clearRuntimeSessionData === 'function') {
+        await clearRuntimeSessionData({ clearPersistedChat: true, clearPersistedBreadcrumbs: true });
+      } else {
+        await Promise.all([
+          clearChatHistory?.(),
+          clearBreadcrumbs?.(),
+        ]);
+      }
+      await clearUser();
     } catch (e) {
       console.log('Delete account cleanup failed:', e?.message || e);
     } finally {

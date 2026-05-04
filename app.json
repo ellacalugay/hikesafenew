@@ -22,6 +22,7 @@
       "permissions": [
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
         "android.permission.FOREGROUND_SERVICE_LOCATION",
         "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
         "android.permission.WAKE_LOCK",
@@ -44,7 +45,8 @@
       "expo-asset",
       "expo-audio",
       "expo-font",
-      "@maplibre/maplibre-react-native"
+      "@maplibre/maplibre-react-native",
+      "./plugins/withRNBackgroundActionsAndroid14Fix"
     ],
     "owner": "hikesafe",
     "extra": {

@@ -29,16 +29,60 @@ const ChatScreen = ({ onBack, chatName }) => {
     connectionHealth,
     loraSignalStrength,
     myLocation,
+    myMobileId,
     getMessagesForDevice, 
-    sendMessage, 
+    sendMessage,
+    sendDirectMessage,
     sendBroadcastMessage,
+    sendLocalBroadcastMessage,
     markMessagesAsRead,
-    clearChatHistory
+    clearChatHistory,
+    localMobileNicknames,
+    remoteMobileNicknames
   } = useBluetoothDevice();
-  const { getMemberNickname } = useLobby();
+  const { getMemberNickname, myDeviceId } = useLobby();
+
+  const getIncomingSenderLabel = useMemo(() => {
+    return (msg) => {
+      if (!msg) return 'Unknown';
+
+      const fromDeviceId = msg.from;
+      const isDm = typeof msg.dmToMobileId === 'number' || typeof msg.dmFromMobileId === 'number';
+
+      if (isDm) {
+        const fromMobile = msg.dmFromMobileId || msg.mobileId;
+        const mobileId = (typeof fromMobile === 'number' && fromMobile >= 1 && fromMobile <= 4) ? fromMobile : null;
+        const isSelfHub = typeof myDeviceId === 'number' && typeof fromDeviceId === 'number' && fromDeviceId === myDeviceId;
+
+        const rawNick = mobileId
+          ? (
+            isSelfHub
+              ? (localMobileNicknames?.[mobileId] || '')
+              : (remoteMobileNicknames?.[`${fromDeviceId}-m${mobileId}`] || '')
+          )
+          : '';
+
+        const nick = /^mobile\s*\d+$/i.test(String(rawNick).trim()) ? '' : String(rawNick).trim();
+        if (nick) return nick;
+        if (mobileId) {
+          return isSelfHub ? `M${mobileId}` : `Hiker #${fromDeviceId} - M${mobileId}`;
+        }
+        return typeof fromDeviceId === 'number' && fromDeviceId > 0 ? `Hiker #${fromDeviceId}` : 'Unknown';
+      }
+
+      // Non-DM: show device nickname (never "Device 0" unless truly unknown)
+      if (typeof fromDeviceId === 'number' && fromDeviceId > 0) {
+        const nick = (getMemberNickname(fromDeviceId) || '').toString().trim();
+        if (nick && !/^device\s*#?\s*\d+$/i.test(nick)) return nick;
+        return `Hiker #${fromDeviceId}`;
+      }
+      return 'This Hub';
+    };
+  }, [getMemberNickname, localMobileNicknames, myDeviceId, remoteMobileNicknames]);
   
   const [messageText, setMessageText] = useState('');
   const [sending, setSending] = useState(false);
+  const [dmTarget, setDmTarget] = useState(null); // null | 1..4
   const scrollViewRef = useRef();
 
   const pulseAnim = useRef(new Animated.Value(0)).current;
@@ -59,11 +103,111 @@ const ChatScreen = ({ onBack, chatName }) => {
     deviceId: null 
   };
   
-  const isBroadcast = chatInfo.type === 'broadcast' || chatInfo.deviceId === 0;
-  const deviceId = chatInfo.deviceId;
+  const isLocalBroadcast = chatInfo.type === 'localBroadcast' || chatInfo.deviceId === -1;
+  const isBroadcast = isLocalBroadcast || chatInfo.type === 'broadcast' || chatInfo.deviceId === 0;
+  const deviceId = isLocalBroadcast ? -1 : chatInfo.deviceId;
+  const initialMobileId = chatInfo && typeof chatInfo.mobileId === 'number' ? chatInfo.mobileId : null;
+  const hasLockedDmTarget = !!(initialMobileId && initialMobileId >= 1 && initialMobileId <= 4);
+
+  const isSelfHubChat = !isBroadcast && typeof myDeviceId === 'number' && myDeviceId !== null && deviceId === myDeviceId;
+  const canUseDeviceLevelChat = !isBroadcast && !isLocalBroadcast && !isSelfHubChat && !hasLockedDmTarget;
+  const dmTargets = useMemo(() => {
+    if (isBroadcast || deviceId === null || deviceId === 0) return [];
+
+    // Prefer explicit nickname mappings; if we know none, don't show a confusing picker.
+    if (isSelfHubChat) {
+      const keys = localMobileNicknames ? Object.keys(localMobileNicknames) : [];
+      const ids = keys
+        .map(k => parseInt(k, 10))
+        .filter(n => !Number.isNaN(n) && n >= 1 && n <= 4);
+      const unique = Array.from(new Set(ids)).sort((a, b) => a - b);
+      const selfId = (typeof myMobileId === 'number' && myMobileId >= 1 && myMobileId <= 4) ? myMobileId : null;
+      return selfId ? unique.filter(t => t !== selfId) : unique;
+    }
+
+    const entries = remoteMobileNicknames ? Object.keys(remoteMobileNicknames) : [];
+    const ids = entries
+      .map(k => {
+        const m = String(k).match(new RegExp(`^${deviceId}-m(\\d+)$`));
+        if (!m) return NaN;
+        return parseInt(m[1], 10);
+      })
+      .filter(n => !Number.isNaN(n) && n >= 1 && n <= 4);
+    const unique = Array.from(new Set(ids)).sort((a, b) => a - b);
+
+    // For remote hubs, only offer mobile targets we actually know.
+    // If we know none yet, fall back to device-level chat (hub-to-hub) instead of forcing DM.
+    return unique;
+  }, [deviceId, isBroadcast, isSelfHubChat, localMobileNicknames, myMobileId, remoteMobileNicknames]);
+
+  const shouldShowDmPicker = useMemo(() => {
+    if (isBroadcast || deviceId === null || deviceId === 0) return false;
+    if (canUseDeviceLevelChat) return false;
+    if (hasLockedDmTarget) return false;
+    // Only show picker when we have multiple *named* choices.
+    return Array.isArray(dmTargets) && dmTargets.length > 1;
+  }, [canUseDeviceLevelChat, deviceId, dmTargets, hasLockedDmTarget, isBroadcast]);
+
+  const maxMessageLength = useMemo(() => {
+    const baseLimit = 50;
+    if (isBroadcast || isLocalBroadcast || canUseDeviceLevelChat) return baseLimit;
+
+    const targetMobile = typeof dmTarget === 'number' ? dmTarget : null;
+    const fromMobile = (typeof myMobileId === 'number' && myMobileId >= 1 && myMobileId <= 4) ? myMobileId : 0;
+    if (!targetMobile) return baseLimit;
+
+    const prefix = `__DM__:${targetMobile}:${fromMobile}:`;
+    return Math.max(1, baseLimit - prefix.length);
+  }, [canUseDeviceLevelChat, dmTarget, isBroadcast, isLocalBroadcast, myMobileId]);
+
+  // When opening a DM thread (device + mobile), preselect that mobile.
+  useEffect(() => {
+    if (isBroadcast) {
+      setDmTarget(null);
+      return;
+    }
+    if (canUseDeviceLevelChat) {
+      // Default to device-level chat; DM can be enabled by opening a per-mobile thread.
+      setDmTarget(null);
+      return;
+    }
+    if (initialMobileId && initialMobileId >= 1 && initialMobileId <= 4) {
+      setDmTarget(initialMobileId);
+      return;
+    }
+    // If there's exactly one sensible target, select it automatically.
+    if (Array.isArray(dmTargets) && dmTargets.length === 1) {
+      setDmTarget(dmTargets[0]);
+      return;
+    }
+    // Otherwise, keep unselected until the user has enough info (nicknames) to pick.
+    setDmTarget(null);
+  }, [deviceId, dmTargets, initialMobileId, isBroadcast]);
   
   // Get messages for this conversation
-  const messages = deviceId !== null ? getMessagesForDevice(deviceId) : [];
+  const baseMessages = deviceId !== null ? getMessagesForDevice(deviceId) : [];
+  const messages = useMemo(() => {
+    if (isBroadcast) return baseMessages;
+    if (canUseDeviceLevelChat) {
+      // Device-level chat (hub-to-hub): show non-DM direct messages.
+      return baseMessages.filter((m) => {
+        if (!m) return false;
+        const isDm = typeof m.dmToMobileId === 'number' || typeof m.dmFromMobileId === 'number';
+        return !isDm;
+      });
+    }
+
+    if (!dmTarget) return [];
+    // Personal chat = DM to a specific mobile on a hub.
+    return baseMessages.filter((m) => {
+      if (!m) return false;
+      const isDm = typeof m.dmToMobileId === 'number' || typeof m.dmFromMobileId === 'number';
+      if (!isDm) return false;
+      if (m.isMine) return m.dmToMobileId === dmTarget;
+      const fromMobile = m.dmFromMobileId || m.mobileId;
+      return fromMobile === dmTarget;
+    });
+  }, [baseMessages, canUseDeviceLevelChat, dmTarget, isBroadcast]);
   
   // Mark messages as read when viewing conversation
   useEffect(() => {
@@ -73,14 +217,35 @@ const ChatScreen = ({ onBack, chatName }) => {
   }, [deviceId, messages.length]);
 
   const handleSend = async () => {
-    if (!messageText.trim() || !isConnected) return;
+    const text = messageText.trim();
+    if (!text || !isConnected) return;
+
+    if (text.length > maxMessageLength) {
+      Alert.alert('Message Too Long', `Max ${maxMessageLength} characters for this chat.`);
+      return;
+    }
     
     setSending(true);
     try {
-      if (isBroadcast) {
-        await sendBroadcastMessage(messageText.trim());
+      if (isLocalBroadcast) {
+        await sendLocalBroadcastMessage(text);
+      } else if (isBroadcast) {
+        await sendBroadcastMessage(text);
       } else {
-        await sendMessage(deviceId, messageText.trim());
+        if (canUseDeviceLevelChat) {
+          // Hub-to-hub chat: send to the remote device.
+          await sendMessage(deviceId, text);
+        } else {
+          if (!dmTarget) {
+            Alert.alert('Choose Recipient', 'Choose a recipient phone (set a nickname on the other phone to make this easier).');
+            return;
+          }
+          if (isSelfHubChat && typeof myMobileId === 'number' && myMobileId >= 1 && myMobileId <= 4 && dmTarget === myMobileId) {
+            Alert.alert("Can't Message Yourself", 'Choose a different phone on this hub.');
+            return;
+          }
+          await sendDirectMessage(deviceId, dmTarget, text);
+        }
       }
       setMessageText('');
     } catch (error) {
@@ -186,7 +351,15 @@ const ChatScreen = ({ onBack, chatName }) => {
       if (isBroadcast) {
         await sendBroadcastMessage(msg.text);
       } else {
-        await sendMessage(deviceId, msg.text);
+        if (canUseDeviceLevelChat) {
+          await sendMessage(deviceId, msg.text);
+          return;
+        }
+        if (typeof msg.dmToMobileId === 'number') {
+          await sendDirectMessage(deviceId, msg.dmToMobileId, msg.text);
+          return;
+        }
+        Alert.alert('Cannot Retry', 'This message was not a mobile-targeted DM.');
       }
     } catch (error) {
       console.error('Retry error:', error);
@@ -342,9 +515,11 @@ const ChatScreen = ({ onBack, chatName }) => {
                 {isBroadcast ? 'Group Chat' : `Chat with ${chatInfo.name}`}
               </Text>
               <Text style={[localStyles.emptyText, { color: ui.onSurfaceVariant }]}>
-                {isBroadcast 
-                  ? 'Messages sent here will be broadcast to all devices in LoRa range.'
-                  : 'Start a conversation. Messages are sent via LoRa radio.'}
+                {isLocalBroadcast
+                  ? 'Messages sent here go only to phones connected to this hub.'
+                  : isBroadcast
+                    ? 'Messages sent here will be broadcast to all devices in LoRa range.'
+                    : 'Start a conversation. Messages are sent via LoRa radio.'}
               </Text>
               <View style={[localStyles.infoBox, { backgroundColor: ui.surfaceContainer, borderColor: ui.outlineVariant }]}> 
                 <AlertCircle size={16} color={ui.onSurfaceVariant} />
@@ -389,7 +564,7 @@ const ChatScreen = ({ onBack, chatName }) => {
                         <Radio size={12} color={colors.primary} />
                       </View>
                       <Text style={[localStyles.incomingMeta, { color: colors.gray }]}>
-                        {getMemberNickname(msg.from)}{msg.mobileId > 0 ? ` (Mobile ${msg.mobileId})` : ''}
+                        {getIncomingSenderLabel(msg)}
                       </Text>
                     </View>
                   )}
@@ -399,7 +574,7 @@ const ChatScreen = ({ onBack, chatName }) => {
                     <View
                       style={[
                         localStyles.bubble,
-                        msg.pending || msg.failed
+                        msg.pending || msg.awaitingAck || msg.failed
                           ? { backgroundColor: ui.surfaceContainerHighest, borderColor: msg.failed ? errorColor : ui.primary, borderWidth: 1 }
                           : { backgroundColor: ui.primary },
                         localStyles.bubbleMine,
@@ -408,8 +583,8 @@ const ChatScreen = ({ onBack, chatName }) => {
                       <Text
                         style={[
                           localStyles.bubbleText,
-                          msg.pending ? localStyles.pendingText : null,
-                          { color: msg.pending || msg.failed ? ui.onSurface : ui.onPrimary },
+                          (msg.pending || msg.awaitingAck) ? localStyles.pendingText : null,
+                          { color: (msg.pending || msg.awaitingAck || msg.failed) ? ui.onSurface : ui.onPrimary },
                         ]}
                       >
                         {msg.text}
@@ -434,14 +609,14 @@ const ChatScreen = ({ onBack, chatName }) => {
                           style={[
                             localStyles.deliveryText,
                             {
-                              color: msg.failed ? errorColor : msg.pending ? ui.onSurfaceVariant : ui.primary,
+                              color: msg.failed ? errorColor : (msg.pending || msg.awaitingAck) ? ui.onSurfaceVariant : ui.primary,
                             },
                           ]}
                         >
-                          {formatTime(msg.timestamp)} · {msg.pending ? 'PENDING SYNC' : msg.failed ? 'FAILED TO SEND' : 'SENT'}
+                          {formatTime(msg.timestamp)} · {msg.waitingForClaim ? 'CLAIMING SLOT' : msg.pending ? 'PENDING SYNC' : msg.awaitingAck ? 'WAITING FOR RECEIPT' : msg.failed ? (msg.deliveryUnconfirmed ? 'NOT CONFIRMED' : 'FAILED TO SEND') : (msg.delivered ? 'DELIVERED' : 'SENT')}
                         </Text>
-                        {!msg.pending && !msg.failed && <CheckCircle size={14} color={ui.primary} />}
-                        {msg.pending && <Clock size={14} color={ui.onSurfaceVariant} />}
+                        {!msg.pending && !msg.awaitingAck && !msg.failed && <CheckCircle size={14} color={ui.primary} />}
+                        {(msg.pending || msg.awaitingAck) && <Clock size={14} color={ui.onSurfaceVariant} />}
                         {msg.failed && <AlertCircle size={14} color={errorColor} />}
                       </>
                     ) : (
@@ -466,6 +641,54 @@ const ChatScreen = ({ onBack, chatName }) => {
 
         {/* Input Area */}
         <View style={[localStyles.composeWrap, { paddingBottom: insets.bottom + (Platform.OS === 'ios' ? 12 : 8) }]}>
+          {/* DM Recipient Picker (direct chats only) */}
+          {!isBroadcast && deviceId !== null && deviceId !== 0 && shouldShowDmPicker && (
+            <View
+              style={[
+                localStyles.dmPicker,
+                { backgroundColor: ui.surfaceContainerHigh, borderColor: ui.outlineVariant },
+              ]}
+            >
+              <Text style={[localStyles.dmPickerLabel, { color: ui.onSurfaceVariant }]}>TO</Text>
+              {dmTargets.map((t) => {
+                const key = String(t);
+                const selected = dmTarget === t;
+
+                const nick = isSelfHubChat
+                  ? (localMobileNicknames && localMobileNicknames[t] ? String(localMobileNicknames[t]) : '')
+                  : (remoteMobileNicknames && remoteMobileNicknames[`${deviceId}-m${t}`] ? String(remoteMobileNicknames[`${deviceId}-m${t}`]) : '');
+
+                const label = nick || 'Unnamed Phone';
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    onPress={() => setDmTarget(t)}
+                    style={[
+                      localStyles.dmPill,
+                      {
+                        borderColor: selected ? ui.primary : ui.outlineVariant,
+                        backgroundColor: selected ? ui.primaryContainer : 'transparent',
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={{
+                        color: selected ? ui.onSurface : ui.onSurfaceVariant,
+                        fontSize: 12,
+                        fontWeight: '800',
+                        fontFamily: 'PublicSans_700Bold',
+                      }}
+                    >
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+
+              {myMobileId ? null : null}
+            </View>
+          )}
+
           <View
             style={[
               localStyles.composeBar,
@@ -495,7 +718,7 @@ const ChatScreen = ({ onBack, chatName }) => {
                 onChangeText={setMessageText}
                 multiline
                 editable={!isOffline}
-                maxLength={200}
+                maxLength={maxMessageLength}
               />
             </View>
 
@@ -518,10 +741,10 @@ const ChatScreen = ({ onBack, chatName }) => {
           </View>
 
           {/* Character Counter */}
-          {messageText.length > 150 && (
+          {messageText.length > Math.max(0, maxMessageLength - 20) && (
             <View style={[localStyles.charCounter, { backgroundColor: ui.surfaceContainerHigh, borderColor: ui.outlineVariant }]}>
-              <Text style={{ color: messageText.length > 200 ? errorColor : ui.onSurfaceVariant, fontSize: 11, fontWeight: '700', fontFamily: 'PublicSans_700Bold' }}>
-                {messageText.length}/200
+              <Text style={{ color: messageText.length > maxMessageLength ? errorColor : ui.onSurfaceVariant, fontSize: 11, fontWeight: '700', fontFamily: 'PublicSans_700Bold' }}>
+                {messageText.length}/{maxMessageLength}
               </Text>
             </View>
           )}
@@ -532,6 +755,36 @@ const ChatScreen = ({ onBack, chatName }) => {
 };
 
 const localStyles = StyleSheet.create({
+  dmPicker: {
+    marginHorizontal: 14,
+    marginBottom: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  dmPickerLabel: {
+    fontSize: 12,
+    fontWeight: '900',
+    fontFamily: 'PublicSans_700Bold',
+    letterSpacing: 1.2,
+    marginRight: 4,
+  },
+  dmPill: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  dmPickerHint: {
+    marginLeft: 'auto',
+    fontSize: 12,
+    fontWeight: '800',
+    fontFamily: 'PublicSans_700Bold',
+  },
   topBar: {
     paddingHorizontal: 18,
     paddingBottom: 8,
