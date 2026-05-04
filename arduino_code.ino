@@ -16,6 +16,7 @@
 #include <AES.h>
 
 std::queue<String> bleCommandQueue; 
+std::queue<String> morsePlaybackQueue;
 
 AES aes; // Declare AES object
 byte aesKey[16] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F}; 
@@ -1161,13 +1162,29 @@ void pruneStaleMobiles() {
 }
 
 String morseInput = "";
+String morseWordBuffer = "";
 unsigned long pressStart  = 0;
 unsigned long lastTapTime = 0;
+unsigned long lastMorseLetterTime = 0;
 bool isPressing = false;
+// OK button long-press state (used for backspace/delete last letter)
+bool okIsPressing = false;
+unsigned long okPressStart = 0;
+
+String morsePlaybackCurrent = "";
+String morsePlaybackWord = "";
+uint8_t morsePlaybackPos = 0;
+bool morsePlaybackActive = false;
+bool morsePlaybackToneOn = false;
+unsigned long morsePlaybackNextAt = 0;
 
 const int DOT_MAX       = 250;
 const int DASH_MIN      = 400;
 const int MORSE_TIMEOUT = 1500;
+const int MORSE_WORD_TIMEOUT = 3200;
+const unsigned long MORSE_PLAYBACK_UNIT_MS = 120;
+const unsigned long MORSE_PLAYBACK_LETTER_GAP_MS = 240;
+const unsigned long BACKSPACE_LONG_PRESS_MS = 1000; // ms to hold OK to delete last letter
 
 unsigned long lastGPSCheck      = 0;
 unsigned long lastDisplayUpdate = 0;
@@ -1291,6 +1308,13 @@ void updateDisplay();
 void triggerSOS();
 void triggerOkay();
 void checkMorseInput();
+char decodeMorseSymbol(const String& code);
+const char* encodeMorseSymbol(char c);
+void flushMorseWordIfNeeded(bool force);
+void enqueueMorsePlayback(const String& raw);
+void enqueueMorseWordPlayback(const String& word);
+bool hasPendingMorsePlayback();
+void processMorsePlayback();
 void sendLoRaMessage(uint8_t msgType, uint8_t mobileID);
 void sendLoRaLocationMessage(uint8_t msgType, uint8_t mobileID, float lat, float lng, uint8_t satellites);
 void sendLoRaTextMessage(uint8_t targetDevice, String message, uint8_t mobileID);
@@ -2093,29 +2117,51 @@ void loop() {
   // --- Buttons ---
   if (digitalRead(BUTTON_SOS) == LOW && !sosActive) triggerSOS();
 
+  // OK button: support short-press actions and long-press backspace (remove last letter)
   if (digitalRead(BUTTON_OKAY) == LOW) {
-    if (hasRemoteEmergencyAlerts()) {
-      clearAllRemoteEmergencyAlerts();
-      emergencySilenced = false;
-      digitalWrite(SOS_LED, LOW);
-      digitalWrite(BUZZER,  LOW);
-      digitalWrite(GREEN_LED, HIGH);
-      pendingGreenLedOffAt = millis() + 500;
-      updateDisplay();
-      // (replaces second delay(500) — loop continues immediately)
-    } else if (sosActive || morseActive) {
-      emergencySilenced = false;
-      triggerOkay();
-    } else if (separationLevel != SEP_LEVEL_NONE) {
-      separationLevel = SEP_LEVEL_NONE;
-      separationCriticalLatched = false;
-      separationCriticalHits = 0;
-      lastKnownDistance = -1.0;
-      separationFromDevice = 0;
-      separationFromMobile = 0;
-      resetSeparationHardware();
-      sendToPhone("ALERT:SEP_ACK");
-      updateDisplay();
+    if (!okIsPressing) {
+      okIsPressing = true;
+      okPressStart = millis();
+    }
+  } else {
+    if (okIsPressing) {
+      okIsPressing = false;
+      unsigned long held = millis() - okPressStart;
+      if (held >= BACKSPACE_LONG_PRESS_MS) {
+        // Long-press: remove last letter from morseWordBuffer
+        if (morseWordBuffer.length() > 0) {
+          morseWordBuffer = morseWordBuffer.substring(0, morseWordBuffer.length() - 1);
+          sendToPhone("MORSE_DELETE");
+          digitalWrite(GREEN_LED, HIGH);
+          pendingGreenLedOffAt = millis() + 300;
+          updateDisplay();
+        }
+      } else {
+        // Short-press: original behavior (ack/okay/separation)
+        if (hasRemoteEmergencyAlerts()) {
+          clearAllRemoteEmergencyAlerts();
+          emergencySilenced = false;
+          digitalWrite(SOS_LED, LOW);
+          digitalWrite(BUZZER,  LOW);
+          digitalWrite(GREEN_LED, HIGH);
+          pendingGreenLedOffAt = millis() + 500;
+          updateDisplay();
+          // (replaces second delay(500) — loop continues immediately)
+        } else if (sosActive || morseActive) {
+          emergencySilenced = false;
+          triggerOkay();
+        } else if (separationLevel != SEP_LEVEL_NONE) {
+          separationLevel = SEP_LEVEL_NONE;
+          separationCriticalLatched = false;
+          separationCriticalHits = 0;
+          lastKnownDistance = -1.0;
+          separationFromDevice = 0;
+          separationFromMobile = 0;
+          resetSeparationHardware();
+          sendToPhone("ALERT:SEP_ACK");
+          updateDisplay();
+        }
+      }
     }
   }
 
@@ -2146,12 +2192,10 @@ void loop() {
     }
   }
 
-  if (morseInput.length() > 0) {
-    String target = "...---...";
-    if (!target.startsWith(morseInput))              checkMorseInput();
-    else if (morseInput == target)                   checkMorseInput();
-    else if (millis() - lastTapTime > MORSE_TIMEOUT) checkMorseInput();
+  if (morseInput.length() > 0 && (millis() - lastTapTime > MORSE_TIMEOUT)) {
+    checkMorseInput();
   }
+  flushMorseWordIfNeeded(false);
 
   bool focusedRemoteIsMorse = false;
   if (getFocusedRemoteEmergency(nullptr, &focusedRemoteIsMorse)) {
@@ -2169,6 +2213,8 @@ void loop() {
     blinkMorseSOSNonBlocking();
   } else if (separationAlert) {
     handleSeparationAlarmNonBlocking();
+  } else if (hasPendingMorsePlayback()) {
+    processMorsePlayback();
   } else {
     digitalWrite(SOS_LED,   LOW);
     digitalWrite(BUZZER,    LOW);
@@ -2922,6 +2968,8 @@ void receiveLoRaMessage() {
       emergencySilenced = false;
       digitalWrite(BUZZER, LOW);
       updateDisplay();
+    } else if (text.startsWith("MORSE:")) {
+      enqueueMorseWordPlayback(text.substring(6));
     }
     
     // Include targetID so the app can separate broadcast (T0) from direct messages (T<deviceId>).
@@ -3031,11 +3079,41 @@ void updateDisplay() {
       display.print((int)lastKnownDistance);
       display.print("m");
     }
-  } else if (morseInput.length() > 0) {
-    display.setTextSize(2);
-    display.setCursor(15, 24);
-    display.print(morseInput);
+  } else if (morseInput.length() > 0 || morseWordBuffer.length() > 0 || morsePlaybackWord.length() > 0) {
     display.setTextSize(1);
+    display.setCursor(0, 20);
+    
+    if (morsePlaybackWord.length() > 0) {
+      String pbWord = morsePlaybackWord;
+      if (pbWord.length() > 16) {
+        pbWord = pbWord.substring(pbWord.length() - 16);
+      }
+      display.print("RX MORSE:");
+      display.print(pbWord);
+      display.setCursor(0, 32);
+      display.print("(playing)");
+    } else if (morseWordBuffer.length() > 0) {
+      String txWord = morseWordBuffer;
+      if (txWord.length() > 16) {
+        txWord = txWord.substring(txWord.length() - 16);
+      }
+      display.print("TX MORSE:");
+      display.print(txWord);
+      display.setCursor(0, 32);
+      String sig = morseInput;
+      if (sig.length() > 16) {
+        sig = sig.substring(sig.length() - 16);
+      }
+      display.print("SIG:");
+      display.print(sig);
+    } else if (morseInput.length() > 0) {
+      String sig = morseInput;
+      if (sig.length() > 20) {
+        sig = sig.substring(sig.length() - 20);
+      }
+      display.print("SIG:");
+      display.print(sig);
+    }
   } else {
     display.setTextSize(1);
     if (gps.location.isValid()) {
@@ -3115,8 +3193,203 @@ void updateDisplay() {
 // ============================================================
 // MORSE
 // ============================================================
+char decodeMorseSymbol(const String& code) {
+  struct MorseMapEntry {
+    const char* code;
+    char letter;
+  };
+
+  static const MorseMapEntry MORSE_MAP[] = {
+    {".-", 'A'},    {"-...", 'B'},  {"-.-.", 'C'},  {"-..", 'D'},   {".", 'E'},
+    {"..-.", 'F'},  {"--.", 'G'},   {"....", 'H'},  {"..", 'I'},    {".---", 'J'},
+    {"-.-", 'K'},   {".-..", 'L'},  {"--", 'M'},    {"-.", 'N'},    {"---", 'O'},
+    {".--.", 'P'},  {"--.-", 'Q'},  {".-.", 'R'},   {"...", 'S'},   {"-", 'T'},
+    {"..-", 'U'},   {"...-", 'V'},  {".--", 'W'},   {"-..-", 'X'},  {"-.--", 'Y'},
+    {"--..", 'Z'},
+    {"-----", '0'}, {".----", '1'}, {"..---", '2'}, {"...--", '3'}, {"....-", '4'},
+    {".....", '5'}, {"-....", '6'}, {"--...", '7'}, {"---..", '8'}, {"----.", '9'}
+  };
+
+  for (unsigned int i = 0; i < (sizeof(MORSE_MAP) / sizeof(MORSE_MAP[0])); i++) {
+    if (code == MORSE_MAP[i].code) {
+      return MORSE_MAP[i].letter;
+    }
+  }
+
+  return '\0';
+}
+
+const char* encodeMorseSymbol(char c) {
+  switch (c) {
+    case 'A': return ".-";
+    case 'B': return "-...";
+    case 'C': return "-.-.";
+    case 'D': return "-..";
+    case 'E': return ".";
+    case 'F': return "..-.";
+    case 'G': return "--.";
+    case 'H': return "....";
+    case 'I': return "..";
+    case 'J': return ".---";
+    case 'K': return "-.-";
+    case 'L': return ".-..";
+    case 'M': return "--";
+    case 'N': return "-.";
+    case 'O': return "---";
+    case 'P': return ".--.";
+    case 'Q': return "--.-";
+    case 'R': return ".-.";
+    case 'S': return "...";
+    case 'T': return "-";
+    case 'U': return "..-";
+    case 'V': return "...-";
+    case 'W': return ".--";
+    case 'X': return "-..-";
+    case 'Y': return "-.--";
+    case 'Z': return "--..";
+    case '0': return "-----";
+    case '1': return ".----";
+    case '2': return "..---";
+    case '3': return "...--";
+    case '4': return "....-";
+    case '5': return ".....";
+    case '6': return "-....";
+    case '7': return "--...";
+    case '8': return "---..";
+    case '9': return "----.";
+    default: return nullptr;
+  }
+}
+
+void flushMorseWordIfNeeded(bool force) {
+  if (morseWordBuffer.length() == 0) return;
+  if (!force) {
+    if (morseInput.length() > 0) return;
+    if (lastMorseLetterTime == 0) return;
+    if (millis() - lastMorseLetterTime <= MORSE_WORD_TIMEOUT) return;
+  }
+
+  String word = morseWordBuffer;
+  morseWordBuffer = "";
+
+  sendToPhone("MORSE_WORD:" + word);
+  sendLoRaTextMessage(0, "MORSE:" + word, 0);
+  updateDisplay();
+}
+
+void enqueueMorsePlayback(const String& raw) {
+  String cleaned = "";
+  for (unsigned int i = 0; i < raw.length(); i++) {
+    char c = raw.charAt(i);
+    if (c == '.' || c == '-') {
+      cleaned += c;
+    }
+  }
+
+  if (cleaned.length() == 0) return;
+  if (cleaned.length() > 8) return;
+  if (morsePlaybackQueue.size() >= 32) return;
+
+  morsePlaybackQueue.push(cleaned);
+}
+
+void enqueueMorseWordPlayback(const String& word) {
+  String upper = word;
+  upper.trim();
+  upper.toUpperCase();
+  morsePlaybackWord = upper;
+
+  for (unsigned int i = 0; i < upper.length(); i++) {
+    char c = upper.charAt(i);
+    if (c == ' ') {
+      if (morsePlaybackQueue.size() < 32) {
+        morsePlaybackQueue.push("/");
+      }
+      continue;
+    }
+
+    const char* code = encodeMorseSymbol(c);
+    if (!code) continue;
+    enqueueMorsePlayback(String(code));
+  }
+}
+
+bool hasPendingMorsePlayback() {
+  return morsePlaybackActive || !morsePlaybackQueue.empty();
+}
+
+void processMorsePlayback() {
+  if (sosActive || morseActive || hasRemoteEmergencyAlerts() || separationAlert) {
+    morsePlaybackActive = false;
+    morsePlaybackToneOn = false;
+    morsePlaybackWord = "";
+    morsePlaybackCurrent = "";
+    morsePlaybackPos = 0;
+    while (!morsePlaybackQueue.empty()) morsePlaybackQueue.pop();
+    return;
+  }
+
+  const unsigned long now = millis();
+
+  if (!morsePlaybackActive) {
+    if (morsePlaybackQueue.empty()) return;
+    morsePlaybackCurrent = morsePlaybackQueue.front();
+    morsePlaybackQueue.pop();
+    morsePlaybackPos = 0;
+    morsePlaybackToneOn = false;
+    morsePlaybackActive = true;
+    morsePlaybackNextAt = now;
+  }
+
+  if (now < morsePlaybackNextAt) return;
+
+  if (morsePlaybackToneOn) {
+    morsePlaybackToneOn = false;
+    digitalWrite(SOS_LED, LOW);
+    digitalWrite(BUZZER, LOW);
+    morsePlaybackNextAt = now + MORSE_PLAYBACK_UNIT_MS;
+    return;
+  }
+
+  if (morsePlaybackCurrent == "/") {
+    morsePlaybackActive = false;
+    morsePlaybackCurrent = "";
+    morsePlaybackPos = 0;
+    morsePlaybackNextAt = now + (MORSE_PLAYBACK_UNIT_MS * 7UL);
+    return;
+  }
+
+  while (morsePlaybackPos < morsePlaybackCurrent.length()) {
+    char c = morsePlaybackCurrent.charAt(morsePlaybackPos++);
+    if (c != '.' && c != '-') {
+      continue;
+    }
+
+    const unsigned long toneMs = (c == '.') ? MORSE_PLAYBACK_UNIT_MS : (MORSE_PLAYBACK_UNIT_MS * 3UL);
+    morsePlaybackToneOn = true;
+    digitalWrite(SOS_LED, HIGH);
+    digitalWrite(BUZZER, HIGH);
+    morsePlaybackNextAt = now + toneMs;
+    return;
+  }
+
+  morsePlaybackActive = false;
+  morsePlaybackCurrent = "";
+  if (morsePlaybackQueue.empty()) {
+    morsePlaybackWord = "";
+  }
+  morsePlaybackPos = 0;
+  morsePlaybackNextAt = now + MORSE_PLAYBACK_LETTER_GAP_MS;
+}
+
 void checkMorseInput() {
-  if (morseInput == "...---...") {
+  String symbol = morseInput;
+  morseInput = "";
+
+  if (symbol == "...---...") {
+    // Enter emergency mode when the full SOS sequence is sent as one symbol burst.
+    morseWordBuffer = "";
+    lastMorseLetterTime = 0;
     morseActive = true;
     sosActive   = false;
     // Local sender should not buzz itself while transmitting emergency.
@@ -3150,19 +3423,27 @@ void checkMorseInput() {
     digitalWrite(SOS_LED, HIGH);
     pendingSosLedOffAt = millis() + 1000;
   } else {
-    display.clearDisplay();
-    display.setTextSize(2);
-    display.setTextColor(SSD1306_WHITE);
-    display.setCursor(20, 25);
-    display.print("INVALID");
-    display.display();
+    char decoded = decodeMorseSymbol(symbol);
+    if (decoded != '\0') {
+      if (morseWordBuffer.length() < (MAX_TEXT_LEN - 8)) {
+        morseWordBuffer += decoded;
+      }
+      lastMorseLetterTime = millis();
+      sendToPhone("MORSE_CHAR:" + String(decoded));
+    } else {
+      display.clearDisplay();
+      display.setTextSize(2);
+      display.setTextColor(SSD1306_WHITE);
+      display.setCursor(20, 25);
+      display.print("INVALID");
+      display.display();
 
-    sendToPhone("STATUS:MORSE_FAIL");
-    // Non-blocking 200 ms buzzer beep (replaces delay(200))
-    digitalWrite(BUZZER, HIGH);
-    pendingBuzzerOffAt = millis() + 200;
+      sendToPhone("STATUS:MORSE_FAIL");
+      // Non-blocking 200 ms buzzer beep (replaces delay(200))
+      digitalWrite(BUZZER, HIGH);
+      pendingBuzzerOffAt = millis() + 200;
+    }
   }
-  morseInput = "";
   updateDisplay();
 }
 
