@@ -4727,7 +4727,9 @@ export const BluetoothProvider = ({ children }) => {
 
   // Update alert handling logic
   useEffect(() => {
-    if (activeAlert?.type === 'SOS' && activeAlert.buttons.includes('Help on the Way')) {
+    const alertButtons = Array.isArray(activeAlert?.buttons) ? activeAlert.buttons : [];
+
+    if (activeAlert?.type === 'SOS' && alertButtons.includes('Help on the Way')) {
       // Attach "Help on the Way" button handler
       Alert.alert(
         '🚨 EMERGENCY ALERT',
