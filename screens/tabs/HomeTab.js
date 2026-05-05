@@ -87,8 +87,17 @@ const HomeTab = ({ onChangeTab, onLobbyPress }) => {
       return;
     }
 
-    await sendSOS();
-    Alert.alert('SOS Sent', 'Your SOS signal has been broadcasted to all group members.');
+    try {
+      const ok = await sendSOS();
+      if (ok) {
+        Alert.alert('SOS Sent', 'Your SOS signal has been broadcasted to all group members.');
+      } else {
+        Alert.alert('SOS Failed', 'Could not send SOS to the connected device. Please try again.');
+      }
+    } catch (error) {
+      console.log('SOS send failed:', error?.message || error);
+      Alert.alert('SOS Failed', 'The app could not send SOS right now. Please try again.');
+    }
   };
 
   const handleSendOk = async () => {
