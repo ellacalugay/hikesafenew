@@ -73,6 +73,11 @@ const NUS_SERVICE_UUID = '6E400001-B5A3-F393-E0A9-E50E24DCCA9E';
 const NUS_RX_CHAR_UUID = '6E400002-B5A3-F393-E0A9-E50E24DCCA9E'; // Write to this (app → device)
 const NUS_TX_CHAR_UUID = '6E400003-B5A3-F393-E0A9-E50E24DCCA9E'; // Notifications from this (device → app)
 
+const formatLatLng = (lat, lng) => {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return 'Location unavailable';
+  return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+};
+
 const BluetoothContext = createContext();
 
 // Android notification channels: channel settings (especially sound) are immutable after creation.
@@ -2393,7 +2398,7 @@ export const BluetoothProvider = ({ children }) => {
               if (!shouldThrottleEmergency(`popup-${emergencyKey}`, 12000)) {
                 Alert.alert(
                   '🚨 EMERGENCY ALERT',
-                  `${displayName} has triggered a ${type} alert!\n\nLocation: ${lat.toFixed(5)}, ${lng.toFixed(5)}\n\nCheck on this member immediately!`,
+                  `${displayName} has triggered a ${type} alert!\n\nLocation: ${formatLatLng(lat, lng)}\n\nCheck on this member immediately!`,
                   [{ text: 'View Location', style: 'default' }],
                   { cancelable: true }
                 );
@@ -4701,7 +4706,7 @@ export const BluetoothProvider = ({ children }) => {
       // Include emergency contact in the notification
       pushEmergencyNotification(
         'Emergency Alert',
-        `${displayName} triggered SOS. Location: ${lat.toFixed(5)}, ${lng.toFixed(5)}. Emergency Contact: ${emergencyContact}`,
+        `${displayName} triggered SOS. Location: ${formatLatLng(lat, lng)}. Emergency Contact: ${emergencyContact}`,
         emergencyKey
       );
     }
@@ -4733,7 +4738,7 @@ export const BluetoothProvider = ({ children }) => {
       // Attach "Help on the Way" button handler
       Alert.alert(
         '🚨 EMERGENCY ALERT',
-        `Device ${activeAlert.deviceId} triggered SOS!\n\nLocation: ${activeAlert.lat.toFixed(5)}, ${activeAlert.lng.toFixed(5)}`,
+        `Device ${activeAlert.deviceId} triggered SOS!\n\nLocation: ${formatLatLng(activeAlert.lat, activeAlert.lng)}`,
         [
           { text: 'View Location', onPress: () => {/* Navigate to location */} },
           { text: 'Help on the Way', onPress: () => handleHelpOnTheWay(activeAlert.deviceId) },

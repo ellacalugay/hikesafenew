@@ -38,9 +38,30 @@ const OFFLINE_DEFAULT_ZOOM_MAX = 15;
 const OFFLINE_MAX_TILES = 5000;
 const OFFLINE_PAN_LIMIT = RADAR_SIZE * 0.45;
 
-// Simple legacy behavior: read an explicit tile URL template from env.
-// (This mirrors the older working implementation.)
-const TILE_URL_TEMPLATE = process.env.EXPO_PUBLIC_TILE_URL_TEMPLATE || null;
+const isPlaceholderValue = (value) => {
+  const v = String(value || '').trim();
+  if (!v) return true;
+  const upper = v.toUpperCase();
+  return (
+    upper === 'YOUR_MAPTILER_KEY' ||
+    upper === 'YOUR_KEY' ||
+    upper === 'CHANGE_ME' ||
+    upper === 'CHANGEME' ||
+    upper === 'REPLACE_ME' ||
+    upper.includes('YOUR_')
+  );
+};
+
+const RAW_TILE_URL_TEMPLATE = String(process.env.EXPO_PUBLIC_TILE_URL_TEMPLATE || '').trim();
+const RAW_MAPTILER_KEY = String(process.env.EXPO_PUBLIC_MAPTILER_KEY || '').trim();
+
+const MAPTILER_KEY = isPlaceholderValue(RAW_MAPTILER_KEY) ? '' : RAW_MAPTILER_KEY;
+const MAPTILER_TEMPLATE = MAPTILER_KEY
+  ? `https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`
+  : null;
+
+const TILE_URL_TEMPLATE = RAW_TILE_URL_TEMPLATE || MAPTILER_TEMPLATE || null;
+const HAS_VALID_TILE_SOURCE = !!TILE_URL_TEMPLATE;
 
 // Calculate bearing between two points
 const calculateBearing = (lat1, lon1, lat2, lon2) => {
