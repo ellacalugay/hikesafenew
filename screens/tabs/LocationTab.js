@@ -38,8 +38,31 @@ const OFFLINE_DEFAULT_ZOOM_MAX = 15;
 const OFFLINE_MAX_TILES = 5000;
 const OFFLINE_PAN_LIMIT = RADAR_SIZE * 0.45;
 
-const DEFAULT_TILE_URL_TEMPLATE = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-const TILE_URL_TEMPLATE = process.env.EXPO_PUBLIC_TILE_URL_TEMPLATE || DEFAULT_TILE_URL_TEMPLATE;
+const isPlaceholderValue = (value) => {
+  const v = String(value || '').trim();
+  if (!v) return true;
+  const upper = v.toUpperCase();
+  return (
+    upper === 'YOUR_MAPTILER_KEY' ||
+    upper === 'YOUR_KEY' ||
+    upper === 'CHANGE_ME' ||
+    upper === 'CHANGEME' ||
+    upper === 'REPLACE_ME' ||
+    upper.includes('YOUR_')
+  );
+};
+
+const RAW_TILE_URL_TEMPLATE = String(process.env.EXPO_PUBLIC_TILE_URL_TEMPLATE || '').trim();
+const RAW_MAPTILER_KEY = String(process.env.EXPO_PUBLIC_MAPTILER_KEY || '').trim();
+
+const MAPTILER_KEY = isPlaceholderValue(RAW_MAPTILER_KEY) ? '' : RAW_MAPTILER_KEY;
+const MAPTILER_TEMPLATE = MAPTILER_KEY
+  ? `https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}.png?key=${MAPTILER_KEY}`
+  : null;
+
+const TILE_URL_TEMPLATE = isPlaceholderValue(RAW_TILE_URL_TEMPLATE)
+  ? (MAPTILER_TEMPLATE || null)
+  : (RAW_TILE_URL_TEMPLATE || MAPTILER_TEMPLATE || null);
 
 // Calculate bearing between two points
 const calculateBearing = (lat1, lon1, lat2, lon2) => {
@@ -1555,6 +1578,15 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
       Alert.alert('GPS Required', 'Wait for a valid GPS fix before downloading offline maps.');
       return;
     }
+
+    if (!TILE_URL_TEMPLATE) {
+      Alert.alert(
+        'Tile Source Missing',
+        'Set EXPO_PUBLIC_TILE_URL_TEMPLATE (or EXPO_PUBLIC_MAPTILER_KEY) to a real provider value. Placeholder values like YOUR_MAPTILER_KEY will be rejected. Example: https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}.png?key=<REAL_KEY>'
+      );
+      return;
+    }
+
     const estimate = estimateTileCountForRegion({
       centerLat: effectiveMyLocation.lat,
       centerLng: effectiveMyLocation.lng,
@@ -1673,7 +1705,7 @@ const LocationTab = ({ onLocationPress, onShowDeviceConnection }) => {
             {offlineDownloading && <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 8 }} />}
           </View>
 
-          <Text style={[localStyles.trailPoints, { color: colors.gray }]}>Tile source: {process.env.EXPO_PUBLIC_TILE_URL_TEMPLATE ? 'Configured' : 'Default fallback'}</Text>
+          <Text style={[localStyles.trailPoints, { color: colors.gray }]}>Tile source: {TILE_URL_TEMPLATE ? 'Configured' : 'Not set'}</Text>
           <Text style={[localStyles.trailPoints, { color: colors.gray }]}>
             Cached: {offlineTilesAvailable ? `${offlineMeta.tileCount} tiles` : 'None'}
           </Text>
